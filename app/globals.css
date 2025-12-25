@@ -38,6 +38,10 @@ body {
   background: linear-gradient(180deg, var(--bg-0), var(--bg-1));
   background-attachment: fixed;
   overflow-x: hidden;
+
+  /* ✅ ここに統一：ブラウザの勝手拡大を止める（本番/ローカル差の主犯） */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 /* 流れ（背景だけ transform OK） */
@@ -133,14 +137,9 @@ body::after {
 /* ---------------------------------------------
    5) ✅ “縮小事故”封じ（transform/scale の巻き込み防止）
 --------------------------------------------- */
-html {
-  font-size: 16px;
-  -webkit-text-size-adjust: 100%;
-}
-
-body {
-  text-size-adjust: 100%;
-}
+/* ❌ html の font-size 固定はやめる（環境差の原因になる） */
+/* html { font-size: 16px; -webkit-text-size-adjust: 100%; } */
+/* body { text-size-adjust: 100%; } */
 
 /* UI本体は transform を許可しない（背景はOK） */
 #_appRoot {
