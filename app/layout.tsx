@@ -6,7 +6,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="ja">
       <body>
-        {/* ✅ まずクラッシュガードで包む（本番でも原因が見える） */}
         <ClientCrashGuard>
           <ToastProvider>{children}</ToastProvider>
         </ClientCrashGuard>
