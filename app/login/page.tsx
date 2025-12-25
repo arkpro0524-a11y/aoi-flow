@@ -23,42 +23,69 @@ function GoogleG() {
   );
 }
 
-/** iOS Safari は popup が不安定/ブロックされやすいので redirect 固定 */
-function isIosSafari(): boolean {
+// ✅ iOS Safari 判定（ポップアップが死ぬことが多いので redirect 固定）
+function isIOS() {
   if (typeof navigator === "undefined") return false;
-  const ua = navigator.userAgent || "";
-  const isIOS = /iPhone|iPad|iPod/.test(ua);
-  const isSafari = /Safari/.test(ua) && !/Chrome|CriOS|FxiOS|EdgiOS/.test(ua);
-  return isIOS && isSafari;
+  return /iP(hone|od|ad)/.test(navigator.userAgent);
 }
 
 export default function LoginPage() {
   const router = useRouter();
+
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const mode = useMemo(() => (isIosSafari() ? "redirect" : "popup"), []);
+  // ✅ 画面に「どこまで進んだか」を必ず出す（スマホで詰んだ時の特効薬）
+  const [debug, setDebug] = useState<string>("init");
+
+  const mode = useMemo(() => (isIOS() ? "redirect" : "popup"), []);
 
   useEffect(() => {
-    // 永続化（先に）
-    ensureAuthPersistence().catch(() => {});
-    ensureFirestorePersistence().catch(() => {});
+    let alive = true;
 
-    // redirect で戻ってきた結果を拾う（iOS Safari 対策）
     (async () => {
       try {
-        await getRedirectResult(auth);
+        setDebug("boot: start");
+
+        // ✅ ここを「await」するのが超重要（iOS Safari）
+        setDebug("boot: ensure persistence...");
+        await ensureAuthPersistence();
+        await ensureFirestorePersistence();
+
+        // ✅ redirect で戻ってきた結果を拾う
+        setDebug("boot: getRedirectResult...");
+        const res = await getRedirectResult(auth);
+
+        // res は null のことも普通にある（OK）
+        setDebug(res?.user ? "boot: redirect result user=OK" : "boot: redirect result (none)");
+
       } catch (e: any) {
+        const code = e?.code ? String(e.code) : "unknown";
+        const msg = e?.message ? String(e.message) : "";
+        if (!alive) return;
+
+        // ✅ 絶対に画面に出す
+        setError(`ログインに失敗しました: ${code}${msg ? ` / ${msg}` : ""}`);
+        setDebug(`boot: error ${code}`);
         console.error(e);
-        setError(e?.code ? `ログインに失敗しました: ${e.code}` : "ログインに失敗しました");
       }
     })();
 
-    // 認証が入ったら遷移（ここに集約）
+    // ✅ ログイン済みなら遷移（これだけで統一）
     const unsub = onAuthStateChanged(auth, (u) => {
-      if (u) router.replace("/flow/drafts");
+      if (!alive) return;
+      if (u) {
+        setDebug("auth: signed in -> redirect /flow/drafts");
+        router.replace("/flow/drafts");
+      } else {
+        setDebug("auth: signed out");
+      }
     });
-    return () => unsub();
+
+    return () => {
+      alive = false;
+      unsub();
+    };
   }, [router]);
 
   const loginWithGoogle = async () => {
@@ -66,41 +93,39 @@ export default function LoginPage() {
     setBusy(true);
 
     try {
+      setDebug(`click: mode=${mode}`);
+
       const provider = new GoogleAuthProvider();
       provider.setCustomParameters({ prompt: "select_account" });
 
+      // ✅ クリック時にも念のため await（iOS対策の保険）
+      setDebug("click: ensure persistence...");
+      await ensureAuthPersistence();
+      await ensureFirestorePersistence();
+
       if (mode === "redirect") {
+        setDebug("click: signInWithRedirect...");
         await signInWithRedirect(auth, provider);
-        return; // ここで画面遷移するので以降は走らない
-      }
-
-      // PC: popup（失敗したら redirect に逃がす）
-      try {
+        // ここで画面遷移するので、この後は基本実行されない
+        return;
+      } else {
+        setDebug("click: signInWithPopup...");
         await signInWithPopup(auth, provider);
-        // 成功したら onAuthStateChanged 側で遷移
-      } catch (e: any) {
-        // popup系の失敗は redirect に切り替える（Safari/設定/ブロッカー等）
-        const code = e?.code || "";
-        const popupLike =
-          code === "auth/popup-blocked" ||
-          code === "auth/popup-closed-by-user" ||
-          code === "auth/cancelled-popup-request";
-
-        if (popupLike) {
-          await signInWithRedirect(auth, provider);
-          return;
-        }
-        throw e;
+        // onAuthStateChanged 側で遷移する
       }
     } catch (e: any) {
+      const code = e?.code ? String(e.code) : "unknown";
+      const msg = e?.message ? String(e.message) : "";
+      setError(`ログインに失敗しました: ${code}${msg ? ` / ${msg}` : ""}`);
+      setDebug(`click: error ${code}`);
       console.error(e);
-      setError(e?.code ? `ログインに失敗しました: ${e.code}` : "ログインに失敗しました");
+    } finally {
       setBusy(false);
     }
   };
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center px-6">
+    <div className="relative flex min-h-screen items-center justify-center px-8">
       <div className="relative w-full max-w-[620px]">
         <div
           className="pointer-events-none absolute inset-0 rounded-[34px] bg-black/40"
@@ -179,23 +204,39 @@ export default function LoginPage() {
               <span className="grid place-items-center rounded-full bg-white" style={{ width: 36, height: 36 }}>
                 <GoogleG />
               </span>
-              <span>
-                {busy ? "ログイン中..." : `Googleでログイン（${mode}）`}
-              </span>
+              <span>{busy ? "ログイン中..." : `Googleでログイン（${mode}）`}</span>
             </button>
+
+            {/* ✅ デバッグ表示：スマホで「無反応」でも必ず何か出る */}
+            <div
+              style={{
+                width: "min(520px, 100%)",
+                borderRadius: "18px",
+                border: "1px solid rgba(255,255,255,0.12)",
+                background: "rgba(255,255,255,0.06)",
+                padding: "10px 12px",
+                color: "rgba(255,255,255,0.70)",
+                fontSize: "12px",
+                marginTop: "10px",
+                textAlign: "left",
+                wordBreak: "break-word",
+              }}
+            >
+              <div>debug: {debug}</div>
+            </div>
 
             {error && (
               <div
                 style={{
                   width: "min(520px, 100%)",
                   borderRadius: "18px",
-                  border: "1px solid rgba(255,255,255,0.12)",
-                  background: "rgba(255,255,255,0.06)",
+                  border: "1px solid rgba(255,255,255,0.20)",
+                  background: "rgba(255,255,255,0.10)",
                   padding: "14px 16px",
                   color: "#FFFFFF",
                   fontSize: "14px",
-                  marginTop: "clamp(8px, 1.2vw, 14px)",
-                  whiteSpace: "pre-wrap",
+                  marginTop: "10px",
+                  wordBreak: "break-word",
                 }}
               >
                 {error}
