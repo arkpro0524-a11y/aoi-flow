@@ -1,11 +1,13 @@
 // app/login/page.tsx
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   GoogleAuthProvider,
   signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
   onAuthStateChanged,
 } from "firebase/auth";
 import { auth, ensureAuthPersistence, ensureFirestorePersistence } from "@/firebase";
@@ -21,14 +23,31 @@ function GoogleG() {
   );
 }
 
+function isIOS() {
+  if (typeof navigator === "undefined") return false;
+  return /iPhone|iPad|iPod/.test(navigator.userAgent || "");
+}
+
 export default function LoginPage() {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const ios = useMemo(() => isIOS(), []);
+
   useEffect(() => {
     ensureAuthPersistence().catch(() => {});
     ensureFirestorePersistence().catch(() => {});
+
+    // ✅ redirectで戻ってきた場合の結果/エラーを拾う（表示もする）
+    (async () => {
+      try {
+        await getRedirectResult(auth);
+      } catch (e: any) {
+        console.error(e);
+        setError(e?.code ? `ログインに失敗しました: ${e.code}` : "ログインに失敗しました");
+      }
+    })();
 
     const unsub = onAuthStateChanged(auth, (u) => {
       if (u) router.replace("/flow/drafts");
@@ -39,23 +58,47 @@ export default function LoginPage() {
   const loginWithGoogle = async () => {
     setError(null);
     setBusy(true);
+
+    const provider = new GoogleAuthProvider();
+    provider.setCustomParameters({ prompt: "select_account" });
+
+    // ✅ まず popup（基本はこれが一番安定）
     try {
-      const provider = new GoogleAuthProvider();
-      provider.setCustomParameters({ prompt: "select_account" });
       await signInWithPopup(auth, provider);
       router.replace("/flow/drafts");
+      return;
     } catch (e: any) {
-      const msg =
-        e?.code === "auth/popup-closed-by-user"
-          ? "ログインをキャンセルしました"
-          : e?.code === "auth/cancelled-popup-request"
-          ? "別のログイン画面が開いています（ポップアップを閉じて再実行）"
-          : e?.code === "auth/popup-blocked"
-          ? "ポップアップがブロックされています（Safariの設定を確認）"
-          : "ログインに失敗しました";
-      setError(msg);
       console.error(e);
-    } finally {
+
+      const code = e?.code as string | undefined;
+
+      // ✅ popupが「環境的に無理」な時だけ redirect に逃がす
+      const shouldFallback =
+        ios ||
+        code === "auth/popup-blocked" ||
+        code === "auth/operation-not-supported-in-this-environment" ||
+        code === "auth/cancelled-popup-request";
+
+      if (!shouldFallback) {
+        const msg =
+          code === "auth/popup-closed-by-user"
+            ? "ログインをキャンセルしました"
+            : code
+            ? `ログインに失敗しました: ${code}`
+            : "ログインに失敗しました";
+        setError(msg);
+        setBusy(false);
+        return;
+      }
+    }
+
+    // ✅ redirect フォールバック（戻った後は onAuthStateChanged で遷移）
+    try {
+      await signInWithRedirect(auth, provider);
+      // ここでは何もしない
+    } catch (e: any) {
+      console.error(e);
+      setError(e?.code ? `ログインに失敗しました: ${e.code}` : "ログインに失敗しました");
       setBusy(false);
     }
   };

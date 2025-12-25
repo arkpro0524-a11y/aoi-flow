@@ -1,140 +1,75 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React from "react";
 
-type Crash = {
-  type: "error" | "unhandledrejection";
-  message: string;
-  stack?: string;
-  source?: string;
-};
+type Props = { children: React.ReactNode };
 
-export default function ClientCrashGuard() {
-  const [crash, setCrash] = useState<Crash | null>(null);
+/**
+ * ✅ 目的：
+ * - 本番で「Application error」が出た時に、
+ *   “真のエラー文字列” を画面に出して原因確定できるようにする。
+ *
+ * ✅ 重要：
+ * - Hooksの条件分岐をしない（#310回避）
+ */
+export default class ClientCrashGuard extends React.Component<
+  Props,
+  { hasError: boolean; message: string }
+> {
+  constructor(props: Props) {
+    super(props);
+    this.state = { hasError: false, message: "" };
+  }
 
-  const ua = useMemo(() => {
-    if (typeof navigator === "undefined") return "";
-    return navigator.userAgent || "";
-  }, []);
-
-  useEffect(() => {
-    // 既に落ちてる/落ちかけてる状況でも拾えるよう、イベントで捕捉
-    const onError = (event: ErrorEvent) => {
-      const msg = event?.error?.message || event?.message || "Unknown client error";
-      const stack = event?.error?.stack;
-      const source = `${event?.filename || ""}:${event?.lineno || ""}:${event?.colno || ""}`;
-      setCrash({
-        type: "error",
-        message: msg,
-        stack,
-        source: source.trim() ? source : undefined,
-      });
+  static getDerivedStateFromError(err: any) {
+    return {
+      hasError: true,
+      message: err?.message ? String(err.message) : String(err),
     };
+  }
 
-    const onRejection = (event: PromiseRejectionEvent) => {
-      const reason: any = event?.reason;
-      const msg =
-        typeof reason === "string"
-          ? reason
-          : reason?.message
-          ? reason.message
-          : "Unhandled promise rejection";
-      const stack = reason?.stack;
-      setCrash({
-        type: "unhandledrejection",
-        message: msg,
-        stack,
-      });
-    };
+  componentDidCatch(err: any) {
+    // ここはログ用途（Vercel Logsにも出る）
+    console.error("[ClientCrashGuard]", err);
+  }
 
-    window.addEventListener("error", onError);
-    window.addEventListener("unhandledrejection", onRejection);
+  render() {
+    if (!this.state.hasError) return this.props.children;
 
-    return () => {
-      window.removeEventListener("error", onError);
-      window.removeEventListener("unhandledrejection", onRejection);
-    };
-  }, []);
-
-  if (!crash) return null;
-
-  return (
-    <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 99999,
-        background: "rgba(0,0,0,0.86)",
-        color: "#fff",
-        padding: 16,
-        overflow: "auto",
-        fontFamily:
-          'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
-      }}
-    >
-      <div style={{ maxWidth: 980, margin: "0 auto" }}>
-        <div style={{ fontSize: 16, fontWeight: 800, marginBottom: 8 }}>
-          💥 Client Crash Captured ({crash.type})
-        </div>
-
-        <div style={{ opacity: 0.9, marginBottom: 12, fontSize: 13 }}>
-          URL: {typeof location !== "undefined" ? location.href : ""} <br />
-          UA: {ua}
-        </div>
-
-        <div style={{ marginBottom: 12 }}>
-          <div style={{ fontWeight: 800, marginBottom: 6 }}>Message</div>
-          <pre style={{ whiteSpace: "pre-wrap", margin: 0 }}>{crash.message}</pre>
-        </div>
-
-        {crash.source && (
-          <div style={{ marginBottom: 12 }}>
-            <div style={{ fontWeight: 800, marginBottom: 6 }}>Source</div>
-            <pre style={{ whiteSpace: "pre-wrap", margin: 0 }}>{crash.source}</pre>
+    return (
+      <div
+        style={{
+          minHeight: "100vh",
+          display: "grid",
+          placeItems: "center",
+          padding: 16,
+          background: "#05070c",
+          color: "white",
+        }}
+      >
+        <div style={{ maxWidth: 860, width: "100%" }}>
+          <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 10 }}>
+            Application error (client)
           </div>
-        )}
-
-        {crash.stack && (
-          <div style={{ marginBottom: 12 }}>
-            <div style={{ fontWeight: 800, marginBottom: 6 }}>Stack</div>
-            <pre style={{ whiteSpace: "pre-wrap", margin: 0 }}>{crash.stack}</pre>
-          </div>
-        )}
-
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 16 }}>
-          <button
-            onClick={() => setCrash(null)}
+          <pre
             style={{
-              borderRadius: 10,
-              padding: "10px 12px",
-              background: "rgba(255,255,255,0.12)",
-              border: "1px solid rgba(255,255,255,0.18)",
-              color: "#fff",
-              fontWeight: 800,
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+              background: "rgba(255,255,255,0.06)",
+              border: "1px solid rgba(255,255,255,0.10)",
+              borderRadius: 14,
+              padding: 14,
+              fontSize: 13,
+              lineHeight: 1.5,
             }}
           >
-            閉じる（続行）
-          </button>
-
-          <button
-            onClick={() => location.reload()}
-            style={{
-              borderRadius: 10,
-              padding: "10px 12px",
-              background: "rgba(255,255,255,0.18)",
-              border: "1px solid rgba(255,255,255,0.18)",
-              color: "#fff",
-              fontWeight: 800,
-            }}
-          >
-            リロード
-          </button>
-        </div>
-
-        <div style={{ opacity: 0.8, marginTop: 14, fontSize: 12 }}>
-          ↑ この画面の Message/Stack をそのまま貼れば、原因を一発で確定して直せます。
+            {this.state.message}
+          </pre>
+          <div style={{ opacity: 0.7, fontSize: 12, marginTop: 10 }}>
+            この全文をそのまま貼れば原因を一発で特定できます。
+          </div>
         </div>
       </div>
-    </div>
-  );
+    );
+  }
 }
