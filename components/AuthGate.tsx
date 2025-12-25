@@ -1,4 +1,4 @@
-// components/AuthGate.tsx（差し替え推奨：最小安全版）
+// components/AuthGate.tsx
 "use client";
 
 import { onAuthStateChanged, type User } from "firebase/auth";
@@ -12,20 +12,14 @@ export default function AuthGate({ children }: { children: (u: User) => React.Re
   const [user, setUser] = useState<User | null>(null);
   const [ready, setReady] = useState(false);
 
-  // ✅ 認証購読は1回だけ
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => {
       setUser(u ?? null);
       setReady(true);
+      if (!u && pathname?.startsWith("/flow")) router.replace("/login");
     });
     return () => unsub();
-  }, []);
-
-  // ✅ ルーティング判定は別でやる（pathname変化しても購読は増えない）
-  useEffect(() => {
-    if (!ready) return;
-    if (!user && pathname?.startsWith("/flow")) router.replace("/login");
-  }, [ready, user, pathname, router]);
+  }, [router, pathname]);
 
   if (!ready) return <div className="text-white/70">Loading...</div>;
   if (!user) return null;
