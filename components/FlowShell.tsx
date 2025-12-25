@@ -9,24 +9,24 @@ import React from "react";
 type Props = { user: User | null; onLogout: () => Promise<void>; children: React.ReactNode };
 function cx(...xs: (string | false | undefined)[]) { return xs.filter(Boolean).join(" "); }
 
-/** ✅ 暗視で見やすい：ここだけ調整ポイント */
-const LOGO_PX = 130;
-const BRAND_TITLE_PX = 60;
-const BRAND_SUB_PX = 45;
-
-const TAB_PX = 30;
-const TAB_PAD_Y = 20;
-const TAB_PAD_X = 50;
-
-const LOGOUT_PX = 10;
-const LOGOUT_PAD_Y = 20;
-const LOGOUT_PAD_X = 20;
-
 export default function FlowShell({ user, onLogout, children }: Props) {
   const pathname = usePathname();
   const router = useRouter();
 
   const isActive = (href: string) => pathname === href || pathname.startsWith(href + "/");
+
+  // ✅ ここが“根本修正”：固定px → clamp()（スマホで小さく、PCで大きく）
+  const S = {
+    LOGO: "clamp(56px, 14vw, 96px)",
+    TITLE: "clamp(22px, 6vw, 44px)",
+    SUB: "clamp(12px, 3.4vw, 18px)",
+    TAB_FZ: "clamp(14px, 4.2vw, 22px)",
+    TAB_PY: "clamp(10px, 2.8vw, 16px)",
+    TAB_PX: "clamp(14px, 4.8vw, 28px)",
+    LOGOUT_FZ: "clamp(12px, 3.5vw, 14px)",
+    LOGOUT_PY: "clamp(10px, 2.8vw, 16px)",
+    LOGOUT_PX: "clamp(14px, 4.0vw, 18px)",
+  } as const;
 
   const Tab = ({ href, label }: { href: string; label: string }) => {
     const active = isActive(href);
@@ -35,10 +35,10 @@ export default function FlowShell({ user, onLogout, children }: Props) {
         href={href}
         className={cx("no-underline transition")}
         style={{
-          fontSize: TAB_PX,
+          fontSize: S.TAB_FZ,
           fontWeight: 900,
           lineHeight: 1,
-          padding: `${TAB_PAD_Y}px ${TAB_PAD_X}px`,
+          padding: `${S.TAB_PY} ${S.TAB_PX}`,
           borderRadius: 9999,
           display: "inline-flex",
           alignItems: "center",
@@ -57,6 +57,7 @@ export default function FlowShell({ user, onLogout, children }: Props) {
             height: 10,
             borderRadius: 9999,
             background: active ? "rgba(255,255,255,0.98)" : "rgba(255,255,255,0.45)",
+            flex: "0 0 auto",
           }}
         />
         {label}
@@ -80,28 +81,32 @@ export default function FlowShell({ user, onLogout, children }: Props) {
 
       {/* ヘッダー */}
       <header className="sticky top-0 z-30 border-b border-white/12 bg-black/45 backdrop-blur">
-        <div className="flex items-center justify-between gap-4 px-6 py-3">
+        {/* ✅ ここだけ：スマホは縦積み、sm以上で横並び（構成は同じ） */}
+        <div className="flex flex-col gap-3 px-3 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6">
           {/* 左 */}
-          <div className="flex items-center gap-4 shrink-0">
+          <div className="flex items-center gap-3 min-w-0">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src="/logo-aoi-flow2.png"
               alt="AOI FLOW"
-              className="rounded-2xl bg-white/8 p-1 ring-1 ring-white/10"
-              style={{ width: LOGO_PX, height: LOGO_PX }}
+              className="rounded-2xl bg-white/8 p-1 ring-1 ring-white/10 shrink-0"
+              style={{ width: S.LOGO, height: S.LOGO }}
             />
-            <div className="leading-tight">
-              <div style={{ fontSize: BRAND_TITLE_PX, fontWeight: 900, letterSpacing: "0.06em" }}>
+            <div className="leading-tight min-w-0">
+              <div
+                className="truncate"
+                style={{ fontSize: S.TITLE, fontWeight: 900, letterSpacing: "0.06em" }}
+              >
                 AOI FLOW
               </div>
-              <div style={{ fontSize: BRAND_SUB_PX, color: "rgba(255,255,255,0.70)" }}>
+              <div className="truncate" style={{ fontSize: S.SUB, color: "rgba(255,255,255,0.70)" }}>
                 Caption Studio
               </div>
             </div>
           </div>
 
           {/* 中央タブ */}
-          <div className="flex-1 min-w-0 flex justify-center">
+          <div className="min-w-0 flex justify-start sm:flex-1 sm:justify-center">
             <div
               style={{
                 display: "flex",
@@ -122,13 +127,13 @@ export default function FlowShell({ user, onLogout, children }: Props) {
           </div>
 
           {/* 右 */}
-          <div className="flex items-center gap-3 shrink-0">
+          <div className="flex items-center gap-3 justify-end shrink-0">
             <button
               onClick={logout}
-              className="rounded-full transition hover:brightness-110"
+              className="rounded-full transition hover:brightness-110 whitespace-nowrap"
               style={{
-                fontSize: LOGOUT_PX,
-                padding: `${LOGOUT_PAD_Y}px ${LOGOUT_PAD_X}px`,
+                fontSize: S.LOGOUT_FZ,
+                padding: `${S.LOGOUT_PY} ${S.LOGOUT_PX}`,
                 fontWeight: 900,
                 color: "rgba(255,255,255,0.92)",
                 background: "rgba(255,255,255,0.12)",
@@ -141,19 +146,20 @@ export default function FlowShell({ user, onLogout, children }: Props) {
         </div>
       </header>
 
-      {/* メイン枠 */}
-      <div className="mx-auto w-full max-w-7xl px-6">
-        <div className="py-6 h-[calc(100vh-5rem-3rem)] min-h-0">
+      {/* メイン枠（構成維持。pxだけスマホで軽く） */}
+      <div className="mx-auto w-full max-w-7xl px-3 sm:px-6">
+        <div className="py-4 sm:py-6 h-[calc(100vh-5rem-3rem)] min-h-0">
           <main className="h-full min-h-0">
             <div
               className={cx(
-                "w-full h-full min-h-0 rounded-3xl border border-white/10 bg-black/35 p-7 backdrop-blur",
+                "w-full h-full min-h-0 rounded-3xl border border-white/10 bg-black/35 backdrop-blur",
+                "p-4 sm:p-7",
                 "flex flex-col",
                 "[&_a]:text-white/90 [&_a:visited]:text-white/90 [&_a:hover]:text-white",
                 "[&_a]:no-underline"
               )}
             >
-             <div className="min-h-0 flex-1 overflow-auto">{children}</div>
+              <div className="min-h-0 flex-1 overflow-auto">{children}</div>
             </div>
           </main>
         </div>

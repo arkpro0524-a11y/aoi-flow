@@ -1,31 +1,18 @@
 // /app/flow/layout.tsx
 "use client";
 
-import { useEffect, useState } from "react";
-import { onAuthStateChanged, signOut, type User } from "firebase/auth";
-import { useRouter } from "next/navigation";
-import FlowShell from "@/components/FlowShell";
+import React from "react";
+import { signOut } from "firebase/auth";
 import { auth } from "@/firebase";
+import FlowShell from "@/components/FlowShell";
+import { useAuthUser } from "@/components/AuthGate";
 
 export default function FlowLayout({ children }: { children: React.ReactNode }) {
-  const router = useRouter();
-  const [user, setUser] = useState<User | null>(null);
-  const [ready, setReady] = useState(false);
-
-  useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (u) => {
-      setUser(u ?? null);
-      setReady(true);
-      if (!u) router.replace("/login");
-    });
-    return () => unsub();
-  }, [router]);
+  const user = useAuthUser();
 
   async function onLogout() {
     await signOut(auth);
   }
-
-  if (!ready) return null;
 
   return (
     <FlowShell user={user} onLogout={onLogout}>
