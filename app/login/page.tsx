@@ -1,4 +1,4 @@
-// /app/login/page.tsx
+// app/login/page.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -12,108 +12,52 @@ import {
 } from "firebase/auth";
 import { auth, ensureAuthPersistence, ensureFirestorePersistence } from "@/firebase";
 
-/**
- * ✅ 目的
- * - PC（Chrome/Safari）: signInWithPopup を優先（体験が軽い）
- * - スマホ（Safari）  : signInWithRedirect を優先（ポップアップ詰み対策）
- * - どちらでも失敗したらエラーコードを表示して原因を特定できる
- *
- * ✅ ポイント
- * - getRedirectResult は「戻ってきた時」だけ拾えばOK（常に呼んで問題なし）
- * - router.replace は「ログイン完了を検知したら」だけ
- * - ログイン後は /flow/drafts へ統一
- */
-
 function GoogleG() {
   return (
     <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true">
-      <path
-        fill="#EA4335"
-        d="M24 9.5c3.2 0 6.1 1.1 8.3 3l5.7-5.7C34.5 3.2 29.6 1 24 1 14.6 1 6.5 6.4 2.6 14.3l6.6 5.1C11 13.4 17 9.5 24 9.5z"
-      />
-      <path
-        fill="#4285F4"
-        d="M46.5 24.5c0-1.6-.1-2.8-.4-4.1H24v7.7h12.7c-.3 2-1.6 5-4.7 7l7.2 5.6c4.2-3.9 7.3-9.7 7.3-16.2z"
-      />
-      <path
-        fill="#FBBC05"
-        d="M9.2 28.6c-1-2-1.6-4.2-1.6-6.6s.6-4.6 1.5-6.6l-6.6-5.1C.9 13.6 0 17.6 0 22s1 8.4 2.6 11.7l6.6-5.1z"
-      />
-      <path
-        fill="#34A853"
-        d="M24 46c5.6 0 10.3-1.8 13.8-5l-7.2-5.6c-1.9 1.3-4.5 2.2-6.6 2.2-7 0-13-3.9-14.8-9.9l-6.6 5.1C6.5 40.6 14.6 46 24 46z"
-      />
+      <path fill="#EA4335" d="M24 9.5c3.2 0 6.1 1.1 8.3 3l5.7-5.7C34.5 3.2 29.6 1 24 1 14.6 1 6.5 6.4 2.6 14.3l6.6 5.1C11 13.4 17 9.5 24 9.5z" />
+      <path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-2.8-.4-4.1H24v7.7h12.7c-.3 2-1.6 5-4.7 7l7.2 5.6c4.2-3.9 7.3-9.7 7.3-16.2z" />
+      <path fill="#FBBC05" d="M9.2 28.6c-1-2-1.6-4.2-1.6-6.6s.6-4.6 1.5-6.6l-6.6-5.1C.9 13.6 0 17.6 0 22s1 8.4 2.6 11.7l6.6-5.1z" />
+      <path fill="#34A853" d="M24 46c5.6 0 10.3-1.8 13.8-5l-7.2-5.6c-1.9 1.3-4.5 2.2-6.6 2.2-7 0-13-3.9-14.8-9.9l-6.6 5.1C6.5 40.6 14.6 46 24 46z" />
     </svg>
   );
 }
 
-function toNiceMsg(e: any) {
-  const code = e?.code as string | undefined;
-
-  // ✅ ここが「原因特定」の命
-  if (code === "auth/unauthorized-domain") {
-    return "ログイン失敗: auth/unauthorized-domain（Firebaseの承認済みドメインに本番URLが入っていません）";
-  }
-  if (code === "auth/popup-blocked") {
-    return "ログイン失敗: auth/popup-blocked（ポップアップがブロックされています。別ブラウザ/設定確認）";
-  }
-  if (code === "auth/popup-closed-by-user") {
-    return "ログインをキャンセルしました";
-  }
-  if (code === "auth/cancelled-popup-request") {
-    return "別のログイン画面が開いています（ポップアップを閉じて再実行）";
-  }
-  if (code === "auth/operation-not-allowed") {
-    return "ログイン失敗: auth/operation-not-allowed（FirebaseでGoogleログインが有効化されていません）";
-  }
-  if (code === "auth/network-request-failed") {
-    return "ログイン失敗: auth/network-request-failed（通信/追跡防止/プライベートリレー等の影響の可能性）";
-  }
-
-  return code ? `ログインに失敗しました: ${code}` : "ログインに失敗しました";
+/** iOS Safari は popup が不安定/ブロックされやすいので redirect 固定 */
+function isIosSafari(): boolean {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent || "";
+  const isIOS = /iPhone|iPad|iPod/.test(ua);
+  const isSafari = /Safari/.test(ua) && !/Chrome|CriOS|FxiOS|EdgiOS/.test(ua);
+  return isIOS && isSafari;
 }
 
 export default function LoginPage() {
   const router = useRouter();
-
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [checking, setChecking] = useState(true);
 
-  // ✅ “スマホSafariはpopupが詰みやすい” を雑に判定（UAで十分）
-  const preferRedirect = useMemo(() => {
-    if (typeof navigator === "undefined") return false;
-    const ua = navigator.userAgent || "";
-    const isIOS = /iPhone|iPad|iPod/i.test(ua);
-    const isSafari = /Safari/i.test(ua) && !/Chrome|CriOS|FxiOS|EdgiOS/i.test(ua);
-    return isIOS && isSafari;
-  }, []);
+  const mode = useMemo(() => (isIosSafari() ? "redirect" : "popup"), []);
 
   useEffect(() => {
-    // ✅ 永続化（先に）
+    // 永続化（先に）
     ensureAuthPersistence().catch(() => {});
     ensureFirestorePersistence().catch(() => {});
 
-    // ✅ Redirectで戻ってきた結果を拾う（PCでも呼んでOK）
+    // redirect で戻ってきた結果を拾う（iOS Safari 対策）
     (async () => {
       try {
-        const res = await getRedirectResult(auth);
-        if (res?.user) {
-          router.replace("/flow/drafts");
-          return;
-        }
+        await getRedirectResult(auth);
       } catch (e: any) {
         console.error(e);
-        setError(toNiceMsg(e));
+        setError(e?.code ? `ログインに失敗しました: ${e.code}` : "ログインに失敗しました");
       }
     })();
 
-    // ✅ 現在のログイン状態監視（これが最終確定）
+    // 認証が入ったら遷移（ここに集約）
     const unsub = onAuthStateChanged(auth, (u) => {
-      setChecking(false);
       if (u) router.replace("/flow/drafts");
     });
-
     return () => unsub();
   }, [router]);
 
@@ -125,49 +69,38 @@ export default function LoginPage() {
       const provider = new GoogleAuthProvider();
       provider.setCustomParameters({ prompt: "select_account" });
 
-      // ✅ iOS Safariはredirect優先。それ以外はpopup優先。
-      if (preferRedirect) {
+      if (mode === "redirect") {
         await signInWithRedirect(auth, provider);
-        // ここでページ遷移するので、以降の処理は実質実行されない
-        return;
+        return; // ここで画面遷移するので以降は走らない
       }
 
-      // ✅ PC/Android/Chrome等：popup
-      await signInWithPopup(auth, provider);
+      // PC: popup（失敗したら redirect に逃がす）
+      try {
+        await signInWithPopup(auth, provider);
+        // 成功したら onAuthStateChanged 側で遷移
+      } catch (e: any) {
+        // popup系の失敗は redirect に切り替える（Safari/設定/ブロッカー等）
+        const code = e?.code || "";
+        const popupLike =
+          code === "auth/popup-blocked" ||
+          code === "auth/popup-closed-by-user" ||
+          code === "auth/cancelled-popup-request";
 
-      // ✅ 成功したらすぐ移動（onAuthStateChanged待ちでもいいが体感を良くする）
-      router.replace("/flow/drafts");
-    } catch (e: any) {
-      console.error(e);
-
-      // ✅ popup失敗時に “自動でredirectにフォールバック” （PCでも強い）
-      const code = e?.code as string | undefined;
-      const shouldFallbackToRedirect =
-        code === "auth/popup-blocked" ||
-        code === "auth/popup-closed-by-user" ||
-        code === "auth/cancelled-popup-request";
-
-      if (!preferRedirect && shouldFallbackToRedirect) {
-        try {
-          const provider = new GoogleAuthProvider();
-          provider.setCustomParameters({ prompt: "select_account" });
+        if (popupLike) {
           await signInWithRedirect(auth, provider);
           return;
-        } catch (e2: any) {
-          console.error(e2);
-          setError(toNiceMsg(e2));
-          setBusy(false);
-          return;
         }
+        throw e;
       }
-
-      setError(toNiceMsg(e));
+    } catch (e: any) {
+      console.error(e);
+      setError(e?.code ? `ログインに失敗しました: ${e.code}` : "ログインに失敗しました");
       setBusy(false);
     }
   };
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center px-8">
+    <div className="relative flex min-h-screen items-center justify-center px-6">
       <div className="relative w-full max-w-[620px]">
         <div
           className="pointer-events-none absolute inset-0 rounded-[34px] bg-black/40"
@@ -228,7 +161,7 @@ export default function LoginPage() {
 
             <button
               onClick={loginWithGoogle}
-              disabled={busy || checking}
+              disabled={busy}
               className="flex items-center justify-center gap-4 font-semibold transition disabled:cursor-not-allowed disabled:opacity-60"
               style={{
                 width: "min(520px, 100%)",
@@ -247,7 +180,7 @@ export default function LoginPage() {
                 <GoogleG />
               </span>
               <span>
-                {checking ? "認証確認中..." : busy ? "ログイン中..." : "Googleでログイン"}
+                {busy ? "ログイン中..." : `Googleでログイン（${mode}）`}
               </span>
             </button>
 
@@ -262,18 +195,12 @@ export default function LoginPage() {
                   color: "#FFFFFF",
                   fontSize: "14px",
                   marginTop: "clamp(8px, 1.2vw, 14px)",
-                  textAlign: "left",
                   whiteSpace: "pre-wrap",
                 }}
               >
                 {error}
               </div>
             )}
-
-            {/* ✅ デバッグ表示（消したければ消してOK） */}
-            <div className="text-xs text-white/40 mt-2">
-              {preferRedirect ? "mode: redirect (iOS Safari)" : "mode: popup"}
-            </div>
           </div>
         </div>
       </div>
