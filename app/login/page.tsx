@@ -1,66 +1,167 @@
-// app/login/page.tsx
+// /app/login/page.tsx
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   GoogleAuthProvider,
+  signInWithPopup,
   signInWithRedirect,
   getRedirectResult,
   onAuthStateChanged,
 } from "firebase/auth";
 import { auth, ensureAuthPersistence, ensureFirestorePersistence } from "@/firebase";
 
+/**
+ * ✅ 目的
+ * - PC（Chrome/Safari）: signInWithPopup を優先（体験が軽い）
+ * - スマホ（Safari）  : signInWithRedirect を優先（ポップアップ詰み対策）
+ * - どちらでも失敗したらエラーコードを表示して原因を特定できる
+ *
+ * ✅ ポイント
+ * - getRedirectResult は「戻ってきた時」だけ拾えばOK（常に呼んで問題なし）
+ * - router.replace は「ログイン完了を検知したら」だけ
+ * - ログイン後は /flow/drafts へ統一
+ */
+
 function GoogleG() {
   return (
     <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true">
-      <path fill="#EA4335" d="M24 9.5c3.2 0 6.1 1.1 8.3 3l5.7-5.7C34.5 3.2 29.6 1 24 1 14.6 1 6.5 6.4 2.6 14.3l6.6 5.1C11 13.4 17 9.5 24 9.5z" />
-      <path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-2.8-.4-4.1H24v7.7h12.7c-.3 2-1.6 5-4.7 7l7.2 5.6c4.2-3.9 7.3-9.7 7.3-16.2z" />
-      <path fill="#FBBC05" d="M9.2 28.6c-1-2-1.6-4.2-1.6-6.6s.6-4.6 1.5-6.6l-6.6-5.1C.9 13.6 0 17.6 0 22s1 8.4 2.6 11.7l6.6-5.1z" />
-      <path fill="#34A853" d="M24 46c5.6 0 10.3-1.8 13.8-5l-7.2-5.6c-1.9 1.3-4.5 2.2-6.6 2.2-7 0-13-3.9-14.8-9.9l-6.6 5.1C6.5 40.6 14.6 46 24 46z" />
+      <path
+        fill="#EA4335"
+        d="M24 9.5c3.2 0 6.1 1.1 8.3 3l5.7-5.7C34.5 3.2 29.6 1 24 1 14.6 1 6.5 6.4 2.6 14.3l6.6 5.1C11 13.4 17 9.5 24 9.5z"
+      />
+      <path
+        fill="#4285F4"
+        d="M46.5 24.5c0-1.6-.1-2.8-.4-4.1H24v7.7h12.7c-.3 2-1.6 5-4.7 7l7.2 5.6c4.2-3.9 7.3-9.7 7.3-16.2z"
+      />
+      <path
+        fill="#FBBC05"
+        d="M9.2 28.6c-1-2-1.6-4.2-1.6-6.6s.6-4.6 1.5-6.6l-6.6-5.1C.9 13.6 0 17.6 0 22s1 8.4 2.6 11.7l6.6-5.1z"
+      />
+      <path
+        fill="#34A853"
+        d="M24 46c5.6 0 10.3-1.8 13.8-5l-7.2-5.6c-1.9 1.3-4.5 2.2-6.6 2.2-7 0-13-3.9-14.8-9.9l-6.6 5.1C6.5 40.6 14.6 46 24 46z"
+      />
     </svg>
   );
 }
 
+function toNiceMsg(e: any) {
+  const code = e?.code as string | undefined;
+
+  // ✅ ここが「原因特定」の命
+  if (code === "auth/unauthorized-domain") {
+    return "ログイン失敗: auth/unauthorized-domain（Firebaseの承認済みドメインに本番URLが入っていません）";
+  }
+  if (code === "auth/popup-blocked") {
+    return "ログイン失敗: auth/popup-blocked（ポップアップがブロックされています。別ブラウザ/設定確認）";
+  }
+  if (code === "auth/popup-closed-by-user") {
+    return "ログインをキャンセルしました";
+  }
+  if (code === "auth/cancelled-popup-request") {
+    return "別のログイン画面が開いています（ポップアップを閉じて再実行）";
+  }
+  if (code === "auth/operation-not-allowed") {
+    return "ログイン失敗: auth/operation-not-allowed（FirebaseでGoogleログインが有効化されていません）";
+  }
+  if (code === "auth/network-request-failed") {
+    return "ログイン失敗: auth/network-request-failed（通信/追跡防止/プライベートリレー等の影響の可能性）";
+  }
+
+  return code ? `ログインに失敗しました: ${code}` : "ログインに失敗しました";
+}
+
 export default function LoginPage() {
   const router = useRouter();
+
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [checking, setChecking] = useState(true);
+
+  // ✅ “スマホSafariはpopupが詰みやすい” を雑に判定（UAで十分）
+  const preferRedirect = useMemo(() => {
+    if (typeof navigator === "undefined") return false;
+    const ua = navigator.userAgent || "";
+    const isIOS = /iPhone|iPad|iPod/i.test(ua);
+    const isSafari = /Safari/i.test(ua) && !/Chrome|CriOS|FxiOS|EdgiOS/i.test(ua);
+    return isIOS && isSafari;
+  }, []);
 
   useEffect(() => {
-    // 永続化（先に）
+    // ✅ 永続化（先に）
     ensureAuthPersistence().catch(() => {});
     ensureFirestorePersistence().catch(() => {});
 
-    // Redirectで戻ってきた結果を拾う（Safari対策）
+    // ✅ Redirectで戻ってきた結果を拾う（PCでも呼んでOK）
     (async () => {
       try {
-        await getRedirectResult(auth);
+        const res = await getRedirectResult(auth);
+        if (res?.user) {
+          router.replace("/flow/drafts");
+          return;
+        }
       } catch (e: any) {
         console.error(e);
-        // ✅ エラーコードを見える化（ここが超重要）
-        setError(e?.code ? `ログインに失敗しました: ${e.code}` : "ログインに失敗しました");
+        setError(toNiceMsg(e));
       }
     })();
 
-    // ログインできたらここで遷移（これだけに寄せる）
+    // ✅ 現在のログイン状態監視（これが最終確定）
     const unsub = onAuthStateChanged(auth, (u) => {
+      setChecking(false);
       if (u) router.replace("/flow/drafts");
     });
+
     return () => unsub();
   }, [router]);
 
   const loginWithGoogle = async () => {
     setError(null);
     setBusy(true);
+
     try {
       const provider = new GoogleAuthProvider();
       provider.setCustomParameters({ prompt: "select_account" });
-      await signInWithRedirect(auth, provider);
-      // ✅ ここでは遷移しない（戻ってきた後にonAuthStateChangedで遷移）
+
+      // ✅ iOS Safariはredirect優先。それ以外はpopup優先。
+      if (preferRedirect) {
+        await signInWithRedirect(auth, provider);
+        // ここでページ遷移するので、以降の処理は実質実行されない
+        return;
+      }
+
+      // ✅ PC/Android/Chrome等：popup
+      await signInWithPopup(auth, provider);
+
+      // ✅ 成功したらすぐ移動（onAuthStateChanged待ちでもいいが体感を良くする）
+      router.replace("/flow/drafts");
     } catch (e: any) {
       console.error(e);
-      setError(e?.code ? `ログインに失敗しました: ${e.code}` : "ログインに失敗しました");
+
+      // ✅ popup失敗時に “自動でredirectにフォールバック” （PCでも強い）
+      const code = e?.code as string | undefined;
+      const shouldFallbackToRedirect =
+        code === "auth/popup-blocked" ||
+        code === "auth/popup-closed-by-user" ||
+        code === "auth/cancelled-popup-request";
+
+      if (!preferRedirect && shouldFallbackToRedirect) {
+        try {
+          const provider = new GoogleAuthProvider();
+          provider.setCustomParameters({ prompt: "select_account" });
+          await signInWithRedirect(auth, provider);
+          return;
+        } catch (e2: any) {
+          console.error(e2);
+          setError(toNiceMsg(e2));
+          setBusy(false);
+          return;
+        }
+      }
+
+      setError(toNiceMsg(e));
       setBusy(false);
     }
   };
@@ -127,7 +228,7 @@ export default function LoginPage() {
 
             <button
               onClick={loginWithGoogle}
-              disabled={busy}
+              disabled={busy || checking}
               className="flex items-center justify-center gap-4 font-semibold transition disabled:cursor-not-allowed disabled:opacity-60"
               style={{
                 width: "min(520px, 100%)",
@@ -145,7 +246,9 @@ export default function LoginPage() {
               <span className="grid place-items-center rounded-full bg-white" style={{ width: 36, height: 36 }}>
                 <GoogleG />
               </span>
-              <span>{busy ? "ログイン中..." : "Googleでログイン"}</span>
+              <span>
+                {checking ? "認証確認中..." : busy ? "ログイン中..." : "Googleでログイン"}
+              </span>
             </button>
 
             {error && (
@@ -159,11 +262,18 @@ export default function LoginPage() {
                   color: "#FFFFFF",
                   fontSize: "14px",
                   marginTop: "clamp(8px, 1.2vw, 14px)",
+                  textAlign: "left",
+                  whiteSpace: "pre-wrap",
                 }}
               >
                 {error}
               </div>
             )}
+
+            {/* ✅ デバッグ表示（消したければ消してOK） */}
+            <div className="text-xs text-white/40 mt-2">
+              {preferRedirect ? "mode: redirect (iOS Safari)" : "mode: popup"}
+            </div>
           </div>
         </div>
       </div>
