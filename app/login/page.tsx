@@ -5,7 +5,8 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   GoogleAuthProvider,
-  signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
   onAuthStateChanged,
 } from "firebase/auth";
 import { auth, ensureAuthPersistence, ensureFirestorePersistence } from "@/firebase";
@@ -27,9 +28,22 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    // 永続化（先に）
     ensureAuthPersistence().catch(() => {});
     ensureFirestorePersistence().catch(() => {});
 
+    // Redirectで戻ってきた結果を拾う（Safari対策）
+    (async () => {
+      try {
+        await getRedirectResult(auth);
+      } catch (e: any) {
+        console.error(e);
+        // ✅ エラーコードを見える化（ここが超重要）
+        setError(e?.code ? `ログインに失敗しました: ${e.code}` : "ログインに失敗しました");
+      }
+    })();
+
+    // ログインできたらここで遷移（これだけに寄せる）
     const unsub = onAuthStateChanged(auth, (u) => {
       if (u) router.replace("/flow/drafts");
     });
@@ -42,20 +56,11 @@ export default function LoginPage() {
     try {
       const provider = new GoogleAuthProvider();
       provider.setCustomParameters({ prompt: "select_account" });
-      await signInWithPopup(auth, provider);
-      router.replace("/flow/drafts");
+      await signInWithRedirect(auth, provider);
+      // ✅ ここでは遷移しない（戻ってきた後にonAuthStateChangedで遷移）
     } catch (e: any) {
-      const msg =
-        e?.code === "auth/popup-closed-by-user"
-          ? "ログインをキャンセルしました"
-          : e?.code === "auth/cancelled-popup-request"
-          ? "別のログイン画面が開いています（ポップアップを閉じて再実行）"
-          : e?.code === "auth/popup-blocked"
-          ? "ポップアップがブロックされています（Safariの設定を確認）"
-          : "ログインに失敗しました";
-      setError(msg);
       console.error(e);
-    } finally {
+      setError(e?.code ? `ログインに失敗しました: ${e.code}` : "ログインに失敗しました");
       setBusy(false);
     }
   };
