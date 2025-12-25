@@ -1,14 +1,12 @@
+// app/login/page.tsx
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   GoogleAuthProvider,
   signInWithPopup,
-  signInWithRedirect,
-  getRedirectResult,
   onAuthStateChanged,
-  type User,
 } from "firebase/auth";
 import { auth, ensureAuthPersistence, ensureFirestorePersistence } from "@/firebase";
 
@@ -23,126 +21,57 @@ function GoogleG() {
   );
 }
 
-function isIOSLike(ua: string) {
-  // iPhone/iPad/iPod + iPadOS(=Macintosh but touch)
-  return /iPhone|iPad|iPod/.test(ua) || (ua.includes("Macintosh") && typeof navigator !== "undefined" && (navigator as any).maxTouchPoints > 1);
-}
-
 export default function LoginPage() {
   const router = useRouter();
-
-  const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
-  const ios = useMemo(() => (ua ? isIOSLike(ua) : false), [ua]);
-  const mode = ios ? "redirect" : "popup→fallback redirect";
-
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // ✅ デバッグログ（複数行で積む）
-  const [logs, setLogs] = useState<string[]>([]);
-  const push = (s: string) => setLogs((p) => [...p, `${new Date().toLocaleTimeString()}  ${s}`].slice(-80));
-
   useEffect(() => {
-    push(`boot: ua=${ua}`);
-    push(`boot: mode=${mode}`);
+    // 永続化（失敗してもログイン自体は続行）
+    ensureAuthPersistence().catch(() => {});
+    ensureFirestorePersistence().catch(() => {});
 
-    // 永続化（先に）
-    ensureAuthPersistence()
-      .then(() => push("boot: ensureAuthPersistence=OK"))
-      .catch((e: any) => push(`boot: ensureAuthPersistence=ERR ${e?.code || e?.message || e}`));
-
-    ensureFirestorePersistence()
-      .then(() => push("boot: ensureFirestorePersistence=OK"))
-      .catch((e: any) => push(`boot: ensureFirestorePersistence=ERR ${e?.code || e?.message || e}`));
-
-    // redirectの戻り結果を拾う
-    (async () => {
-      try {
-        const res = await getRedirectResult(auth);
-        if (res?.user) {
-          push(`boot: redirect result=USER uid=${res.user.uid}`);
-        } else {
-          push("boot: redirect result=none");
-        }
-      } catch (e: any) {
-        const code = e?.code || "unknown";
-        push(`boot: redirect result=ERR ${code}`);
-        setError(`ログインに失敗しました: ${code}`);
-      }
-    })();
-
-    // 認証状態の監視（最重要）
-    const unsub = onAuthStateChanged(
-      auth,
-      (u: User | null) => {
-        if (u) {
-          push(`auth: signed in uid=${u.uid}`);
-          router.replace("/flow/drafts");
-        } else {
-          push("auth: signed out");
-        }
-      },
-      (e: any) => {
-        const code = e?.code || "unknown";
-        push(`auth: listener ERR ${code}`);
-        setError(`ログインに失敗しました: ${code}`);
-      }
-    );
-
+    // ログイン済みなら /flow/drafts へ
+    const unsub = onAuthStateChanged(auth, (u) => {
+      if (u) router.replace("/flow/drafts");
+    });
     return () => unsub();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router]);
 
   const loginWithGoogle = async () => {
     setError(null);
     setBusy(true);
 
-    const provider = new GoogleAuthProvider();
-    provider.setCustomParameters({ prompt: "select_account" });
-
     try {
-      if (ios) {
-        push("click: signInWithRedirect (ios)");
-        await signInWithRedirect(auth, provider);
-        // ここでページ遷移するので busyは解除しない
-        return;
-      }
+      const provider = new GoogleAuthProvider();
+      provider.setCustomParameters({ prompt: "select_account" });
 
-      // PC/Android等：まずpopupを試して、ダメならredirectへ退避
-      push("click: signInWithPopup (pc)");
+      // ✅ iOS Safariでも一番安定（redirectを使わない）
       await signInWithPopup(auth, provider);
-      push("popup: success");
+
+      // onAuthStateChanged が拾って遷移するが、保険で置いてOK
       router.replace("/flow/drafts");
     } catch (e: any) {
-      const code = e?.code || "unknown";
-      push(`login: ERR ${code}`);
+      console.error(e);
 
-      // popup系がコケる環境ならredirectに切り替える
-      if (
-        code === "auth/popup-blocked" ||
-        code === "auth/popup-closed-by-user" ||
-        code === "auth/cancelled-popup-request" ||
-        code === "auth/operation-not-supported-in-this-environment"
-      ) {
-        try {
-          push("fallback: signInWithRedirect");
-          await signInWithRedirect(auth, provider);
-          return;
-        } catch (e2: any) {
-          const code2 = e2?.code || "unknown";
-          push(`fallback: ERR ${code2}`);
-          setError(`ログインに失敗しました: ${code2}`);
-        }
-      } else {
-        setError(`ログインに失敗しました: ${code}`);
-      }
+      const msg =
+        e?.code === "auth/popup-closed-by-user"
+          ? "ログインをキャンセルしました"
+          : e?.code === "auth/cancelled-popup-request"
+          ? "別のログイン画面が開いています（ポップアップを閉じて再実行）"
+          : e?.code === "auth/popup-blocked"
+          ? "ポップアップがブロックされています（iPhoneなら“Safariで開く”/広告ブロック解除を試してください）"
+          : e?.code
+          ? `ログインに失敗しました: ${e.code}`
+          : "ログインに失敗しました";
 
+      setError(msg);
       setBusy(false);
     }
   };
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center px-6">
+    <div className="relative flex min-h-screen items-center justify-center px-8">
       <div className="relative w-full max-w-[620px]">
         <div
           className="pointer-events-none absolute inset-0 rounded-[34px] bg-black/40"
@@ -235,37 +164,11 @@ export default function LoginPage() {
                   color: "#FFFFFF",
                   fontSize: "14px",
                   marginTop: "clamp(8px, 1.2vw, 14px)",
-                  textAlign: "left",
                 }}
               >
                 {error}
               </div>
             )}
-
-            {/* ✅ デバッグ表示（必ず出る） */}
-            <div
-              style={{
-                width: "min(520px, 100%)",
-                marginTop: 14,
-                borderRadius: 18,
-                border: "1px solid rgba(255,255,255,0.12)",
-                background: "rgba(0,0,0,0.35)",
-                padding: "12px 14px",
-                color: "rgba(255,255,255,0.85)",
-                fontSize: 12,
-                textAlign: "left",
-                whiteSpace: "pre-wrap",
-                lineHeight: 1.35,
-                maxHeight: 180,
-                overflow: "auto",
-              }}
-            >
-              {logs.join("\n")}
-            </div>
-
-            <div style={{ width: "min(520px, 100%)", color: "rgba(255,255,255,0.55)", fontSize: 12, textAlign: "left" }}>
-              ※ このdebugの最後の数行をそのまま貼れば、原因を一発で確定できます。
-            </div>
           </div>
         </div>
       </div>
