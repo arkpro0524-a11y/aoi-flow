@@ -64,40 +64,24 @@ const DEFAULT: DraftDoc = {
   overlayBgOpacity: 0.45,
 };
 
-/**
- * ✅ ここだけ触ればOK（見た目＆文字サイズ）
- * - 入力文字が見えない/白いボタンが見えない問題を「強制固定」で潰す
- * - 文字サイズもここで全部管理
- */
 const UI = {
-  // 2カラムの間隔
   gap: 12,
-
-  // 左右カラム幅（既存を壊さない）
   leftWidth: "56%",
   rightWidth: "44%",
-
-  // カード余白
   cardPadding: 12,
 
-  // 入力欄の高さ
   hVision: 64,
   hIG: 110,
   hX: 90,
   hMemo: 72,
   hOverlayText: 84,
 
-  // プレビュー（この値が唯一の正）
   previewMaxWidth: 400,
   previewRadius: 11,
 
-  // RangeControl の +/- ボタンサイズ
   stepBtnSize: 36,
-
-  // “読み込み中...” 表示
   showLoadingText: true,
 
-  // ✅ 文字サイズ（ここが本命）
   FONT: {
     labelPx: 12,
     chipPx: 12,
@@ -108,7 +92,6 @@ const UI = {
     overlayCanvasBasePx: 44,
   },
 
-  // ✅ “見えない” を根絶するための強制配色
   FORM: {
     bg: "rgba(0,0,0,0.55)",
     border: "rgba(255,255,255,0.18)",
@@ -117,16 +100,13 @@ const UI = {
     ring: "rgba(255,255,255,0.22)",
   },
 
-  // ✅ 右カラムを「画面内に収める」ための安全固定値
-  // FlowShell のヘッダーが sticky なので、その分だけ下げる
   rightStickyTopPx: 96,
 
-  // ✅ 下の調節枠（RangeControl）の“高さ”を詰める用
   RANGE: {
-    boxPad: 8,     // 外枠の余白（小さいほど低くなる）
-    headerMb: 6,   // ラベル行とスライダーの間
-    valuePadY: 5,  // 数値チップの上下padding
-    valuePadX: 10, // 数値チップの左右padding
+    boxPad: 8,
+    headerMb: 6,
+    valuePadY: 5,
+    valuePadX: 10,
   },
 };
 
@@ -142,7 +122,6 @@ function splitKeywords(text: string) {
     .slice(0, 12);
 }
 
-/** ✅ “入力が見えない” 対策：フォーム系を強制スタイル */
 const formStyle: React.CSSProperties = {
   background: UI.FORM.bg,
   borderColor: UI.FORM.border,
@@ -212,10 +191,6 @@ function Chip(props: { children: React.ReactNode; className?: string }) {
   );
 }
 
-/**
- * ✅ 高さを詰めた RangeControl（右カラムの“調節枠”を低くする）
- * 変更はこのコンポーネント内だけ。呼び出し側はそのまま。
- */
 function RangeControl(props: {
   label: string;
   value: number;
@@ -307,6 +282,9 @@ export default function NewDraftPage() {
   const [draftId, setDraftId] = useState<string | null>(id ?? null);
   const [d, setD] = useState<DraftDoc>({ ...DEFAULT });
 
+  // ✅「生成したメイン本文」を退避（3案を押しても本文が消えないように）
+  const [mainIg, setMainIg] = useState<string>("");
+
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
@@ -343,37 +321,27 @@ export default function NewDraftPage() {
 
         const brand: Brand = data.brand === "riva" ? "riva" : "vento";
         const phase: Phase =
-          data.phase === "ready"
-            ? "ready"
-            : data.phase === "posted"
-            ? "posted"
-            : "draft";
+          data.phase === "ready" ? "ready" : data.phase === "posted" ? "posted" : "draft";
 
         const vision = typeof data.vision === "string" ? data.vision : "";
-        const keywordsText =
-          typeof data.keywordsText === "string" ? data.keywordsText : "";
+        const keywordsText = typeof data.keywordsText === "string" ? data.keywordsText : "";
         const memo = typeof data.memo === "string" ? data.memo : "";
 
         const ig =
           typeof data.ig === "string"
             ? data.ig
             : typeof data.caption_final === "string"
-            ? data.caption_final
-            : "";
+              ? data.caption_final
+              : "";
         const x = typeof data.x === "string" ? data.x : "";
 
-        const ig3 = Array.isArray(data.ig3)
-          ? data.ig3.map(String).slice(0, 3)
-          : [];
+        const ig3 = Array.isArray(data.ig3) ? data.ig3.map(String).slice(0, 3) : [];
         const imageUrl =
-          typeof data.imageUrl === "string" && data.imageUrl
-            ? data.imageUrl
-            : undefined;
+          typeof data.imageUrl === "string" && data.imageUrl ? data.imageUrl : undefined;
 
         const overlayEnabled =
           typeof data.overlayEnabled === "boolean" ? data.overlayEnabled : true;
-        const overlayText =
-          typeof data.overlayText === "string" ? data.overlayText : ig || "";
+        const overlayText = typeof data.overlayText === "string" ? data.overlayText : ig || "";
         const overlayFontScale =
           typeof data.overlayFontScale === "number"
             ? clamp(data.overlayFontScale, 0.6, 1.6)
@@ -405,6 +373,9 @@ export default function NewDraftPage() {
           updatedAt: data.updatedAt,
           createdAt: data.createdAt,
         });
+
+        // ✅ 既存データがある場合は、それを「メイン本文」として退避
+        setMainIg(ig);
       } finally {
         setLoadBusy(false);
       }
@@ -421,8 +392,7 @@ export default function NewDraftPage() {
   }, [d.ig]);
 
   const brandLabel = d.brand === "vento" ? "VENTO" : "RIVA";
-  const phaseLabel =
-    d.phase === "draft" ? "下書き" : d.phase === "ready" ? "投稿待ち" : "投稿済み";
+  const phaseLabel = d.phase === "draft" ? "下書き" : d.phase === "ready" ? "投稿待ち" : "投稿済み";
   const canGenerate = d.vision.trim().length > 0 && !busy;
   const previewOverlayText = d.overlayText || d.ig || "";
 
@@ -497,6 +467,9 @@ export default function NewDraftPage() {
       const ig = typeof j.instagram === "string" ? j.instagram : "";
       const x = typeof j.x === "string" ? j.x : "";
       const ig3 = Array.isArray(j.ig3) ? j.ig3.map(String).slice(0, 3) : [];
+
+      // ✅ メイン本文を退避（これが “元” になる）
+      setMainIg(ig);
 
       setD((prev) => ({
         ...prev,
@@ -666,11 +639,25 @@ export default function NewDraftPage() {
     if (next === "posted") router.replace("/flow/drafts");
   }
 
+  // ✅ 3案を “採用” する処理（ここでだけ本文を書き換える）
+  async function adoptIgCandidate(text: string) {
+    const t = (text ?? "").trim();
+    if (!t) return;
+    setD((p) => ({ ...p, ig: t, overlayText: t }));
+    await saveDraft({ ig: t, overlayText: t });
+  }
+
+  // ✅ メイン本文に戻す（生成直後の本文へ）
+  function restoreMainIg() {
+    const t = (mainIg ?? "").trim();
+    if (!t) return;
+    setD((p) => ({ ...p, ig: t, overlayText: t }));
+  }
+
   return (
     <div className="h-full min-h-0 flex" style={{ gap: UI.gap }}>
-      {/* 左（今まで通り：壊さない） */}
+      {/* 左 */}
       <section className="min-h-0 flex flex-col gap-3" style={{ width: UI.leftWidth }}>
-        {/* 状態（表示は消したいが、読み込み中は残す） */}
         <div className="shrink-0 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 flex-wrap" />
           {UI.showLoadingText && loadBusy ? (
@@ -740,14 +727,32 @@ export default function NewDraftPage() {
 
         {/* IG */}
         <div className="rounded-2xl border border-white/12 bg-black/25" style={{ padding: UI.cardPadding }}>
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-2">
             <div className="text-white/80" style={{ fontSize: UI.FONT.labelPx }}>
-              Instagram本文
+              Instagram本文（メイン）
             </div>
-            <Btn variant="secondary" className="px-3 py-1" onClick={() => navigator.clipboard.writeText(d.ig)}>
-              コピー
-            </Btn>
+
+            <div className="flex items-center gap-2">
+              {/* ✅ 生成後の本文に戻す */}
+              <Btn
+                variant="ghost"
+                className="px-3 py-1"
+                disabled={!mainIg || mainIg === d.ig}
+                onClick={restoreMainIg}
+              >
+                元に戻す
+              </Btn>
+
+              <Btn
+                variant="secondary"
+                className="px-3 py-1"
+                onClick={() => navigator.clipboard.writeText(d.ig)}
+              >
+                コピー
+              </Btn>
+            </div>
           </div>
+
           <textarea
             value={d.ig}
             onChange={(e) => setD((p) => ({ ...p, ig: e.target.value }))}
@@ -798,8 +803,9 @@ export default function NewDraftPage() {
         {/* IG3 */}
         <div className="rounded-2xl border border-white/12 bg-black/20" style={{ padding: UI.cardPadding }}>
           <div className="text-white/70 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
-            補助：Instagram 3案
+            補助：Instagram 3案（短文案／押しても本文は変えない）
           </div>
+
           {d.ig3.length === 0 ? (
             <div className="text-white/45" style={{ fontSize: UI.FONT.inputPx }}>
               （まだありません）
@@ -807,61 +813,77 @@ export default function NewDraftPage() {
           ) : (
             <div className="space-y-2">
               {d.ig3.map((t, i) => (
-                <button
+                <div
                   key={i}
-                  type="button"
-                  onClick={() => setD((p) => ({ ...p, ig: t, overlayText: t }))}
-                  className="w-full text-left rounded-xl border hover:bg-black/35 transition p-3"
+                  className="w-full rounded-xl border p-3"
                   style={{
                     background: "rgba(0,0,0,0.35)",
                     borderColor: "rgba(255,255,255,0.18)",
                     color: UI.FORM.text,
-                    fontSize: UI.FONT.inputPx,
-                    lineHeight: UI.FONT.inputLineHeight as any,
                   }}
                 >
-                  <div className="text-white/55 mb-1" style={{ fontSize: UI.FONT.labelPx }}>
-                    案 {i + 1}（クリックで採用）
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <div className="text-white/55" style={{ fontSize: UI.FONT.labelPx }}>
+                      案 {i + 1}
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      {/* ✅ これでだけ本文に反映（消える問題がなくなる） */}
+                      <Btn variant="primary" className="px-3 py-1" onClick={() => adoptIgCandidate(t)}>
+                        本文に採用
+                      </Btn>
+                      {/* ✅ 押したら “文字載せ” だけ反映（本文は守る） */}
+                      <Btn
+                        variant="secondary"
+                        className="px-3 py-1"
+                        onClick={() => setD((p) => ({ ...p, overlayText: t }))}
+                      >
+                        文字に適用
+                      </Btn>
+                      <Btn
+                        variant="ghost"
+                        className="px-3 py-1"
+                        onClick={() => navigator.clipboard.writeText(t)}
+                      >
+                        コピー
+                      </Btn>
+                    </div>
                   </div>
-                  <div className="line-clamp-3">{t}</div>
-                </button>
+
+                  <div
+                    style={{
+                      fontSize: UI.FONT.inputPx,
+                      lineHeight: UI.FONT.inputLineHeight as any,
+                      whiteSpace: "pre-wrap",
+                    }}
+                  >
+                    {t}
+                  </div>
+                </div>
               ))}
             </div>
           )}
         </div>
       </section>
 
-      {/* 右（ここだけ “画面内に収める”） */}
+      {/* 右（sticky） */}
       <section
         className="min-h-0 flex flex-col gap-4"
         style={{
           width: UI.rightWidth,
-
-          // ✅ stickyで右カラムを画面内に固定
           position: "sticky",
           top: UI.rightStickyTopPx,
           alignSelf: "flex-start",
-
-          // ✅ 右カラム自体の高さを「画面 - ヘッダー分」に固定
           height: `calc(100vh - ${UI.rightStickyTopPx}px)`,
         }}
       >
-        {/* ✅ 右の中身だけスクロール */}
-        <div
-          className="min-h-0"
-          style={{
-            flex: 1,
-            overflow: "auto",
-            paddingBottom: 8,
-          }}
-        >
+        <div className="min-h-0" style={{ flex: 1, overflow: "auto", paddingBottom: 8 }}>
           <div className="rounded-2xl border border-white/12 bg-black/25" style={{ padding: UI.cardPadding }}>
             <div className="text-white/80 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
-        
+              正方形プレビュー（成果物）
             </div>
 
             <div className="rounded-2xl border border-white/12 bg-black/30 p-3">
-              {/* プレビュー枠 */}
               <div
                 className="mx-auto"
                 style={{
@@ -884,12 +906,10 @@ export default function NewDraftPage() {
                     style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }}
                   />
                 ) : (
-                  <div className="h-full w-full grid place-items-center text-sm text-white/55">
-                    NO IMAGE
-                  </div>
+                  <div className="h-full w-full grid place-items-center text-sm text-white/55">NO IMAGE</div>
                 )}
 
-                {d.overlayEnabled && previewOverlayText.trim() ? (
+                {d.overlayEnabled && (d.overlayText || d.ig).trim() ? (
                   <div
                     style={{
                       position: "absolute",
@@ -914,7 +934,7 @@ export default function NewDraftPage() {
                         whiteSpace: "pre-wrap",
                       }}
                     >
-                      {previewOverlayText}
+                      {(d.overlayText || d.ig).trim()}
                     </div>
                   </div>
                 ) : null}
@@ -923,10 +943,7 @@ export default function NewDraftPage() {
               <div className="mt-4 grid gap-3">
                 <div className="flex items-center justify-between gap-2 flex-wrap">
                   <Chip className="text-white/95">文字表示</Chip>
-                  <Btn
-                    variant="secondary"
-                    onClick={() => setD((p) => ({ ...p, overlayEnabled: !p.overlayEnabled }))}
-                  >
+                  <Btn variant="secondary" onClick={() => setD((p) => ({ ...p, overlayEnabled: !p.overlayEnabled }))}>
                     {d.overlayEnabled ? "ON" : "OFF"}
                   </Btn>
                 </div>
