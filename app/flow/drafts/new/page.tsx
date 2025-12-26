@@ -282,9 +282,6 @@ export default function NewDraftPage() {
   const [draftId, setDraftId] = useState<string | null>(id ?? null);
   const [d, setD] = useState<DraftDoc>({ ...DEFAULT });
 
-  // ✅「生成したメイン本文」を退避（3案を押しても本文が消えないように）
-  const [mainIg, setMainIg] = useState<string>("");
-
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
@@ -341,7 +338,11 @@ export default function NewDraftPage() {
 
         const overlayEnabled =
           typeof data.overlayEnabled === "boolean" ? data.overlayEnabled : true;
-        const overlayText = typeof data.overlayText === "string" ? data.overlayText : ig || "";
+
+        // overlayText が無い時だけ ig を初期値にする（以後は overlayText を守る）
+        const overlayText =
+          typeof data.overlayText === "string" ? data.overlayText : (ig || "");
+
         const overlayFontScale =
           typeof data.overlayFontScale === "number"
             ? clamp(data.overlayFontScale, 0.6, 1.6)
@@ -373,9 +374,6 @@ export default function NewDraftPage() {
           updatedAt: data.updatedAt,
           createdAt: data.createdAt,
         });
-
-        // ✅ 既存データがある場合は、それを「メイン本文」として退避
-        setMainIg(ig);
       } finally {
         setLoadBusy(false);
       }
@@ -383,18 +381,10 @@ export default function NewDraftPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [uid, id]);
 
-  useEffect(() => {
-    setD((prev) => ({
-      ...prev,
-      overlayText: prev.overlayText || prev.ig || "",
-    }));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [d.ig]);
-
   const brandLabel = d.brand === "vento" ? "VENTO" : "RIVA";
-  const phaseLabel = d.phase === "draft" ? "下書き" : d.phase === "ready" ? "投稿待ち" : "投稿済み";
+  const phaseLabel =
+    d.phase === "draft" ? "下書き" : d.phase === "ready" ? "投稿待ち" : "投稿済み";
   const canGenerate = d.vision.trim().length > 0 && !busy;
-  const previewOverlayText = d.overlayText || d.ig || "";
 
   async function saveDraft(partial?: Partial<DraftDoc>) {
     if (!uid) return;
@@ -468,18 +458,23 @@ export default function NewDraftPage() {
       const x = typeof j.x === "string" ? j.x : "";
       const ig3 = Array.isArray(j.ig3) ? j.ig3.map(String).slice(0, 3) : [];
 
-      // ✅ メイン本文を退避（これが “元” になる）
-      setMainIg(ig);
-
+      // ✅ 本文は生成結果で更新（これはメインの1つだけ）
+      // ✅ overlayText は「未入力の時だけ」自動で ig を入れる（勝手に上書きしない）
       setD((prev) => ({
         ...prev,
         ig,
         x,
         ig3,
-        overlayText: prev.overlayText || ig,
+        overlayText: prev.overlayText?.trim() ? prev.overlayText : ig,
       }));
 
-      await saveDraft({ ig, x, ig3, phase: "draft", overlayText: ig });
+      await saveDraft({
+        ig,
+        x,
+        ig3,
+        phase: "draft",
+        overlayText: d.overlayText?.trim() ? d.overlayText : ig,
+      });
     } catch (e) {
       console.error(e);
       alert("文章生成に失敗しました");
@@ -567,8 +562,9 @@ export default function NewDraftPage() {
       ctx.drawImage(img, x, y, w, h);
     }
 
-    if (d.overlayEnabled && d.overlayText.trim()) {
-      const text = d.overlayText.trim();
+    const overlayText = (d.overlayText || "").trim();
+    if (d.overlayEnabled && overlayText) {
+      const text = overlayText;
 
       const fontScale = clamp(d.overlayFontScale, 0.6, 1.6);
       const fontPx = Math.round(UI.FONT.overlayCanvasBasePx * fontScale);
@@ -639,20 +635,14 @@ export default function NewDraftPage() {
     if (next === "posted") router.replace("/flow/drafts");
   }
 
-  // ✅ 3案を “採用” する処理（ここでだけ本文を書き換える）
-  async function adoptIgCandidate(text: string) {
+  // ✅ IG3は「本文を絶対に書き換えない」ための専用処理
+  function applyIg3ToOverlayOnly(text: string) {
     const t = (text ?? "").trim();
     if (!t) return;
-    setD((p) => ({ ...p, ig: t, overlayText: t }));
-    await saveDraft({ ig: t, overlayText: t });
+    setD((p) => ({ ...p, overlayText: t }));
   }
 
-  // ✅ メイン本文に戻す（生成直後の本文へ）
-  function restoreMainIg() {
-    const t = (mainIg ?? "").trim();
-    if (!t) return;
-    setD((p) => ({ ...p, ig: t, overlayText: t }));
-  }
+  const previewOverlayText = (d.overlayText || "").trim();
 
   return (
     <div className="h-full min-h-0 flex" style={{ gap: UI.gap }}>
@@ -731,26 +721,13 @@ export default function NewDraftPage() {
             <div className="text-white/80" style={{ fontSize: UI.FONT.labelPx }}>
               Instagram本文（メイン）
             </div>
-
-            <div className="flex items-center gap-2">
-              {/* ✅ 生成後の本文に戻す */}
-              <Btn
-                variant="ghost"
-                className="px-3 py-1"
-                disabled={!mainIg || mainIg === d.ig}
-                onClick={restoreMainIg}
-              >
-                元に戻す
-              </Btn>
-
-              <Btn
-                variant="secondary"
-                className="px-3 py-1"
-                onClick={() => navigator.clipboard.writeText(d.ig)}
-              >
-                コピー
-              </Btn>
-            </div>
+            <Btn
+              variant="secondary"
+              className="px-3 py-1"
+              onClick={() => navigator.clipboard.writeText(d.ig)}
+            >
+              コピー
+            </Btn>
           </div>
 
           <textarea
@@ -767,7 +744,11 @@ export default function NewDraftPage() {
             <div className="text-white/80" style={{ fontSize: UI.FONT.labelPx }}>
               X本文
             </div>
-            <Btn variant="secondary" className="px-3 py-1" onClick={() => navigator.clipboard.writeText(d.x)}>
+            <Btn
+              variant="secondary"
+              className="px-3 py-1"
+              onClick={() => navigator.clipboard.writeText(d.x)}
+            >
               コピー
             </Btn>
           </div>
@@ -803,7 +784,7 @@ export default function NewDraftPage() {
         {/* IG3 */}
         <div className="rounded-2xl border border-white/12 bg-black/20" style={{ padding: UI.cardPadding }}>
           <div className="text-white/70 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
-            補助：Instagram 3案（短文案／押しても本文は変えない）
+            補助：Instagram 3案（※本文は絶対に上書きしない）
           </div>
 
           {d.ig3.length === 0 ? (
@@ -828,18 +809,15 @@ export default function NewDraftPage() {
                     </div>
 
                     <div className="flex items-center gap-2">
-                      {/* ✅ これでだけ本文に反映（消える問題がなくなる） */}
-                      <Btn variant="primary" className="px-3 py-1" onClick={() => adoptIgCandidate(t)}>
-                        本文に採用
-                      </Btn>
-                      {/* ✅ 押したら “文字載せ” だけ反映（本文は守る） */}
+                      {/* ✅ 本文は触らず、プレビュー文字だけ */}
                       <Btn
                         variant="secondary"
                         className="px-3 py-1"
-                        onClick={() => setD((p) => ({ ...p, overlayText: t }))}
+                        onClick={() => applyIg3ToOverlayOnly(t)}
                       >
                         文字に適用
                       </Btn>
+
                       <Btn
                         variant="ghost"
                         className="px-3 py-1"
@@ -903,13 +881,20 @@ export default function NewDraftPage() {
                     src={d.imageUrl}
                     alt="preview"
                     draggable={false}
-                    style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }}
+                    style={{
+                      width: "100%",
+                      height: "100%",
+                      objectFit: "contain",
+                      display: "block",
+                    }}
                   />
                 ) : (
-                  <div className="h-full w-full grid place-items-center text-sm text-white/55">NO IMAGE</div>
+                  <div className="h-full w-full grid place-items-center text-sm text-white/55">
+                    NO IMAGE
+                  </div>
                 )}
 
-                {d.overlayEnabled && (d.overlayText || d.ig).trim() ? (
+                {d.overlayEnabled && previewOverlayText ? (
                   <div
                     style={{
                       position: "absolute",
@@ -927,14 +912,15 @@ export default function NewDraftPage() {
                         fontWeight: 900,
                         lineHeight: 1.35,
                         fontSize: `${Math.round(
-                          UI.FONT.overlayPreviewBasePx * clamp(d.overlayFontScale, 0.6, 1.6)
+                          UI.FONT.overlayPreviewBasePx *
+                            clamp(d.overlayFontScale, 0.6, 1.6)
                         )}px`,
                         color: "rgba(255,255,255,0.95)",
                         textShadow: "0 2px 10px rgba(0,0,0,0.45)",
                         whiteSpace: "pre-wrap",
                       }}
                     >
-                      {(d.overlayText || d.ig).trim()}
+                      {previewOverlayText}
                     </div>
                   </div>
                 ) : null}
@@ -943,14 +929,20 @@ export default function NewDraftPage() {
               <div className="mt-4 grid gap-3">
                 <div className="flex items-center justify-between gap-2 flex-wrap">
                   <Chip className="text-white/95">文字表示</Chip>
-                  <Btn variant="secondary" onClick={() => setD((p) => ({ ...p, overlayEnabled: !p.overlayEnabled }))}>
+                  <Btn
+                    variant="secondary"
+                    onClick={() => setD((p) => ({ ...p, overlayEnabled: !p.overlayEnabled }))}
+                  >
                     {d.overlayEnabled ? "ON" : "OFF"}
                   </Btn>
                 </div>
 
-                <div className="rounded-2xl border border-white/12 bg-black/25" style={{ padding: UI.cardPadding }}>
+                <div
+                  className="rounded-2xl border border-white/12 bg-black/25"
+                  style={{ padding: UI.cardPadding }}
+                >
                   <div className="text-white/80 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
-                    載せる文字
+                    載せる文字（※本文とは別）
                   </div>
                   <textarea
                     value={d.overlayText}
