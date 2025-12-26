@@ -4,7 +4,14 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
-import { addDoc, collection, doc, getDoc, serverTimestamp, updateDoc } from "firebase/firestore";
+import {
+  addDoc,
+  collection,
+  doc,
+  getDoc,
+  serverTimestamp,
+  updateDoc,
+} from "firebase/firestore";
 import { auth, db } from "@/firebase";
 
 type Brand = "vento" | "riva";
@@ -68,7 +75,7 @@ const UI = {
 
   // 左右カラム幅
   leftWidth: "56%",
-  rightWidth: "44%",
+  rightWidth: "44%", // ✅ 安定（%で指定）
 
   // カード余白
   cardPadding: 12,
@@ -80,7 +87,7 @@ const UI = {
   hMemo: 72,
   hOverlayText: 84,
 
-  // プレビュー
+  // プレビュー（この値が唯一の正）
   previewMaxWidth: 520,
   previewRadius: 11,
 
@@ -92,18 +99,18 @@ const UI = {
 
   // ✅ 文字サイズ（ここが本命）
   FONT: {
-    labelPx: 12,        // 「Vision」「Keywords」などの見出し
-    chipPx: 12,         // Chip
-    inputPx: 14,        // input/textarea の入力文字
+    labelPx: 12,
+    chipPx: 12,
+    inputPx: 14,
     inputLineHeight: 1.55,
-    buttonPx: 13,       // Btn
-    overlayPreviewBasePx: 18, // 右プレビュー上の文字（scale=1 の時）
-    overlayCanvasBasePx: 44,  // 保存される画像の文字（scale=1 の時）
+    buttonPx: 13,
+    overlayPreviewBasePx: 18,
+    overlayCanvasBasePx: 44,
   },
 
   // ✅ “見えない” を根絶するための強制配色
   FORM: {
-    bg: "rgba(0,0,0,0.55)",        // 入力背景
+    bg: "rgba(0,0,0,0.55)",
     border: "rgba(255,255,255,0.18)",
     text: "rgba(255,255,255,0.96)",
     placeholder: "rgba(255,255,255,0.45)",
@@ -149,7 +156,6 @@ function Btn(props: {
     "select-none whitespace-nowrap";
 
   const styles: Record<string, string> = {
-    // ✅ 白ボタンが背景と同化する時があるので「枠＆影」を強めに固定
     primary:
       "bg-white text-black hover:bg-white/92 border border-white/80 shadow-[0_14px_34px_rgba(0,0,0,0.60)]",
     secondary:
@@ -211,19 +217,30 @@ function RangeControl(props: {
   };
 
   const bump = (delta: number) => set(v + delta);
-
   const size = UI.stepBtnSize;
 
   return (
-    <div className="rounded-2xl border border-white/14 bg-black/25" style={{ padding: UI.cardPadding }}>
+    <div
+      className="rounded-2xl border border-white/14 bg-black/25"
+      style={{ padding: UI.cardPadding }}
+    >
       <div className="flex items-center justify-between gap-3 mb-3">
         <div className="text-white/85" style={{ fontSize: UI.FONT.labelPx }}>
           {props.label}
         </div>
 
         <div className="flex items-center gap-2">
-          <Btn variant="secondary" className="px-0" onClick={() => bump(-props.step)} title="小さく">
-            <span style={{ width: size, height: size, display: "grid", placeItems: "center" }}>−</span>
+          <Btn
+            variant="secondary"
+            className="px-0"
+            onClick={() => bump(-props.step)}
+            title="小さく"
+          >
+            <span
+              style={{ width: size, height: size, display: "grid", placeItems: "center" }}
+            >
+              −
+            </span>
           </Btn>
 
           <div
@@ -233,8 +250,17 @@ function RangeControl(props: {
             {props.format(v)}
           </div>
 
-          <Btn variant="secondary" className="px-0" onClick={() => bump(props.step)} title="大きく">
-            <span style={{ width: size, height: size, display: "grid", placeItems: "center" }}>+</span>
+          <Btn
+            variant="secondary"
+            className="px-0"
+            onClick={() => bump(props.step)}
+            title="大きく"
+          >
+            <span
+              style={{ width: size, height: size, display: "grid", placeItems: "center" }}
+            >
+              +
+            </span>
           </Btn>
         </div>
       </div>
@@ -299,7 +325,8 @@ export default function NewDraftPage() {
         const data = snap.data() as any;
 
         const brand: Brand = data.brand === "riva" ? "riva" : "vento";
-        const phase: Phase = data.phase === "ready" ? "ready" : data.phase === "posted" ? "posted" : "draft";
+        const phase: Phase =
+          data.phase === "ready" ? "ready" : data.phase === "posted" ? "posted" : "draft";
 
         const vision = typeof data.vision === "string" ? data.vision : "";
         const keywordsText = typeof data.keywordsText === "string" ? data.keywordsText : "";
@@ -314,15 +341,22 @@ export default function NewDraftPage() {
         const x = typeof data.x === "string" ? data.x : "";
 
         const ig3 = Array.isArray(data.ig3) ? data.ig3.map(String).slice(0, 3) : [];
-        const imageUrl = typeof data.imageUrl === "string" && data.imageUrl ? data.imageUrl : undefined;
+        const imageUrl =
+          typeof data.imageUrl === "string" && data.imageUrl ? data.imageUrl : undefined;
 
-        const overlayEnabled = typeof data.overlayEnabled === "boolean" ? data.overlayEnabled : true;
+        const overlayEnabled =
+          typeof data.overlayEnabled === "boolean" ? data.overlayEnabled : true;
         const overlayText = typeof data.overlayText === "string" ? data.overlayText : ig || "";
         const overlayFontScale =
-          typeof data.overlayFontScale === "number" ? clamp(data.overlayFontScale, 0.6, 1.6) : 1.0;
-        const overlayY = typeof data.overlayY === "number" ? clamp(data.overlayY, 0, 100) : 75;
+          typeof data.overlayFontScale === "number"
+            ? clamp(data.overlayFontScale, 0.6, 1.6)
+            : 1.0;
+        const overlayY =
+          typeof data.overlayY === "number" ? clamp(data.overlayY, 0, 100) : 75;
         const overlayBgOpacity =
-          typeof data.overlayBgOpacity === "number" ? clamp(data.overlayBgOpacity, 0, 0.85) : 0.45;
+          typeof data.overlayBgOpacity === "number"
+            ? clamp(data.overlayBgOpacity, 0, 0.85)
+            : 0.45;
 
         setDraftId(id);
         setD({
@@ -535,7 +569,6 @@ export default function NewDraftPage() {
     if (d.overlayEnabled && d.overlayText.trim()) {
       const text = d.overlayText.trim();
 
-      // ✅ 保存画像の文字サイズも CONST で統一（ここが重要）
       const fontScale = clamp(d.overlayFontScale, 0.6, 1.6);
       const fontPx = Math.round(UI.FONT.overlayCanvasBasePx * fontScale);
 
@@ -746,19 +779,20 @@ export default function NewDraftPage() {
           ) : (
             <div className="space-y-2">
               {d.ig3.map((t, i) => (
-                  <button
-                   key={i}
-                   type="button"
-                   onClick={() => setD((p) => ({ ...p, ig: t, overlayText: t }))}
-                   className="w-full text-left rounded-xl border hover:bg-black/35 transition p-3"
-                   style={{
-                    background: "rgba(0,0,0,0.35)",          // ✅ 背景を強制（白化対策）
-                    borderColor: "rgba(255,255,255,0.18)",   // ✅ 枠も強制
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => setD((p) => ({ ...p, ig: t, overlayText: t }))}
+                  className="w-full text-left rounded-xl border hover:bg-black/35 transition p-3"
+                  style={{
+                    background: "rgba(0,0,0,0.35)",
+                    borderColor: "rgba(255,255,255,0.18)",
                     color: UI.FORM.text,
                     fontSize: UI.FONT.inputPx,
                     lineHeight: UI.FONT.inputLineHeight as any,
-             }}
-                  >                  <div className="text-white/55 mb-1" style={{ fontSize: UI.FONT.labelPx }}>
+                  }}
+                >
+                  <div className="text-white/55 mb-1" style={{ fontSize: UI.FONT.labelPx }}>
                     案 {i + 1}（クリックで採用）
                   </div>
                   <div className="line-clamp-3">{t}</div>
@@ -780,7 +814,8 @@ export default function NewDraftPage() {
             <div
               className="mx-auto"
               style={{
-                width: `min(${UI.previewMaxWidth}px, 100%)`,
+                width: "100%",
+                maxWidth: UI.previewMaxWidth, // ✅ 直書き禁止：ここだけで制御
                 aspectRatio: "1 / 1",
                 borderRadius: UI.previewRadius,
                 overflow: "hidden",
@@ -798,7 +833,9 @@ export default function NewDraftPage() {
                   style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }}
                 />
               ) : (
-                <div className="h-full w-full grid place-items-center text-sm text-white/55">NO IMAGE</div>
+                <div className="h-full w-full grid place-items-center text-sm text-white/55">
+                  NO IMAGE
+                </div>
               )}
 
               {d.overlayEnabled && previewOverlayText.trim() ? (
@@ -818,8 +855,9 @@ export default function NewDraftPage() {
                       textAlign: "center",
                       fontWeight: 900,
                       lineHeight: 1.35,
-                      // ✅ プレビュー文字サイズは CONST から
-                      fontSize: `${Math.round(UI.FONT.overlayPreviewBasePx * clamp(d.overlayFontScale, 0.6, 1.6))}px`,
+                      fontSize: `${Math.round(
+                        UI.FONT.overlayPreviewBasePx * clamp(d.overlayFontScale, 0.6, 1.6)
+                      )}px`,
                       color: "rgba(255,255,255,0.95)",
                       textShadow: "0 2px 10px rgba(0,0,0,0.45)",
                       whiteSpace: "pre-wrap",
