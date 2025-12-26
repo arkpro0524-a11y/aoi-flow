@@ -3,11 +3,22 @@
 @tailwind utilities;
 
 /* ---------------------------------------------
-   1) リセット
+   1) リセット（基準固定）
 --------------------------------------------- */
 html,
 body {
   height: 100%;
+}
+
+/* ✅ Tailwind(rem)の基準を固定（これが全体巨大化の最短対策） */
+html {
+  font-size: 16px;
+}
+
+/* ✅ iOS/Safariの勝手な文字拡大（text inflation）を確実に止める */
+body {
+  -webkit-text-size-adjust: none;
+  text-size-adjust: none;
 }
 
 * {
@@ -38,10 +49,6 @@ body {
   background: linear-gradient(180deg, var(--bg-0), var(--bg-1));
   background-attachment: fixed;
   overflow-x: hidden;
-
-  /* ✅ ここに統一：ブラウザの勝手拡大を止める（本番/ローカル差の主犯） */
-  -webkit-text-size-adjust: 100%;
-  text-size-adjust: 100%;
 }
 
 /* 流れ（背景だけ transform OK） */
@@ -126,22 +133,12 @@ body::after {
 }
 
 /* ---------------------------------------------
-   4) ✅ UI本体を前面に固定（ここが安定化の核心）
-   - #_vignette と background(before/after) の上に出す
+   4) UI本体を前面に固定
 --------------------------------------------- */
 #_appRoot {
   position: relative;
   z-index: 1;
-}
 
-/* ---------------------------------------------
-   5) ✅ “縮小事故”封じ（transform/scale の巻き込み防止）
---------------------------------------------- */
-/* ❌ html の font-size 固定はやめる（環境差の原因になる） */
-/* html { font-size: 16px; -webkit-text-size-adjust: 100%; } */
-/* body { text-size-adjust: 100%; } */
-
-/* UI本体は transform を許可しない（背景はOK） */
-#_appRoot {
+  /* ✅ UI本体は transform を禁止（スケール事故の巻き込み防止） */
   transform: none;
 }
