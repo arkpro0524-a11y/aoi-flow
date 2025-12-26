@@ -88,7 +88,7 @@ const UI = {
   hOverlayText: 84,
 
   // プレビュー（この値が唯一の正）
-  previewMaxWidth: 520,
+  previewMaxWidth: 240,
   previewRadius: 11,
 
   // RangeControl の +/- ボタンサイズ
