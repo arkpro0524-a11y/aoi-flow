@@ -856,9 +856,6 @@ export default function NewDraftPage() {
           }}
         >
           <div className="rounded-2xl border border-white/12 bg-black/25" style={{ padding: UI.cardPadding }}>
-            <div className="text-white/80 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
-              正方形プレビュー（成果物）
-            </div>
 
             <div className="rounded-2xl border border-white/12 bg-black/30 p-3">
               {/* プレビュー枠 */}
