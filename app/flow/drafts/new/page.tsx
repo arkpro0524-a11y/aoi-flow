@@ -67,8 +67,8 @@ const UI = {
   gap: 12,
 
   // 左右カラム幅
-  leftWidth: "50%",
-  rightWidth: "50%",
+  leftWidth: "56%",
+  rightWidth: "44%",
 
   // カード余白
   cardPadding: 12,
@@ -81,8 +81,8 @@ const UI = {
   hOverlayText: 84,
 
   // プレビュー
-  previewMaxWidth: 850,
-  previewRadius: 18,
+  previewMaxWidth: 520,
+  previewRadius: 11,
 
   // RangeControl の +/- ボタンサイズ
   stepBtnSize: 36,
@@ -608,7 +608,7 @@ export default function NewDraftPage() {
   return (
     <div className="h-full min-h-0 flex" style={{ gap: UI.gap }}>
       {/* 左 */}
-      <section className="min-h-0 flex flex-col gap-4" style={{ width: UI.leftWidth }}>
+      <section className="min-h-0 flex flex-col gap-3" style={{ width: UI.leftWidth }}>
         {/* 状態（表示は消したいが、読み込み中は残す） */}
         <div className="shrink-0 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 flex-wrap" />
