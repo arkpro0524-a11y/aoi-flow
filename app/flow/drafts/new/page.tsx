@@ -73,7 +73,7 @@ const UI = {
   // 2カラムの間隔
   gap: 12,
 
-  // 左右カラム幅
+  // 左右カラム幅（既存を壊さない）
   leftWidth: "56%",
   rightWidth: "44%",
 
@@ -118,8 +118,16 @@ const UI = {
   },
 
   // ✅ 右カラムを「画面内に収める」ための安全固定値
-  // FlowShell のヘッダーが sticky なので、その分だけ下げる（だいたい 88〜104px）
+  // FlowShell のヘッダーが sticky なので、その分だけ下げる
   rightStickyTopPx: 96,
+
+  // ✅ 下の調節枠（RangeControl）の“高さ”を詰める用
+  RANGE: {
+    boxPad: 8,     // 外枠の余白（小さいほど低くなる）
+    headerMb: 6,   // ラベル行とスライダーの間
+    valuePadY: 5,  // 数値チップの上下padding
+    valuePadX: 10, // 数値チップの左右padding
+  },
 };
 
 function clamp(n: number, min: number, max: number) {
@@ -204,6 +212,10 @@ function Chip(props: { children: React.ReactNode; className?: string }) {
   );
 }
 
+/**
+ * ✅ 高さを詰めた RangeControl（右カラムの“調節枠”を低くする）
+ * 変更はこのコンポーネント内だけ。呼び出し側はそのまま。
+ */
 function RangeControl(props: {
   label: string;
   value: number;
@@ -226,42 +238,47 @@ function RangeControl(props: {
   return (
     <div
       className="rounded-2xl border border-white/14 bg-black/25"
-      style={{ padding: UI.cardPadding }}
+      style={{ padding: UI.RANGE.boxPad }}
     >
-      <div className="flex items-center justify-between gap-3 mb-3">
-        <div className="text-white/85" style={{ fontSize: UI.FONT.labelPx }}>
+      <div
+        className="flex items-center justify-between gap-2"
+        style={{ marginBottom: UI.RANGE.headerMb }}
+      >
+        <div className="text-white/85 font-bold" style={{ fontSize: UI.FONT.labelPx }}>
           {props.label}
         </div>
 
-        <div className="flex items-center gap-2">
-          <Btn
-            variant="secondary"
-            className="px-0"
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
             onClick={() => bump(-props.step)}
+            className="rounded-full border border-white/25 bg-white/12 hover:bg-white/18 transition"
+            style={{ width: size, height: size, fontWeight: 900 }}
             title="小さく"
           >
-            <span style={{ width: size, height: size, display: "grid", placeItems: "center" }}>
-              −
-            </span>
-          </Btn>
+            −
+          </button>
 
           <div
-            className="min-w-[88px] text-center font-black text-white/95 rounded-full px-3 py-2 bg-black/60 border border-white/25"
-            style={{ fontSize: UI.FONT.labelPx }}
+            className="text-center font-black text-white/95 rounded-full bg-black/55 border border-white/22"
+            style={{
+              fontSize: UI.FONT.labelPx,
+              padding: `${UI.RANGE.valuePadY}px ${UI.RANGE.valuePadX}px`,
+              minWidth: 68,
+            }}
           >
             {props.format(v)}
           </div>
 
-          <Btn
-            variant="secondary"
-            className="px-0"
+          <button
+            type="button"
             onClick={() => bump(props.step)}
+            className="rounded-full border border-white/25 bg-white/12 hover:bg-white/18 transition"
+            style={{ width: size, height: size, fontWeight: 900 }}
             title="大きく"
           >
-            <span style={{ width: size, height: size, display: "grid", placeItems: "center" }}>
-              +
-            </span>
-          </Btn>
+            +
+          </button>
         </div>
       </div>
 
@@ -326,27 +343,37 @@ export default function NewDraftPage() {
 
         const brand: Brand = data.brand === "riva" ? "riva" : "vento";
         const phase: Phase =
-          data.phase === "ready" ? "ready" : data.phase === "posted" ? "posted" : "draft";
+          data.phase === "ready"
+            ? "ready"
+            : data.phase === "posted"
+            ? "posted"
+            : "draft";
 
         const vision = typeof data.vision === "string" ? data.vision : "";
-        const keywordsText = typeof data.keywordsText === "string" ? data.keywordsText : "";
+        const keywordsText =
+          typeof data.keywordsText === "string" ? data.keywordsText : "";
         const memo = typeof data.memo === "string" ? data.memo : "";
 
         const ig =
           typeof data.ig === "string"
             ? data.ig
             : typeof data.caption_final === "string"
-              ? data.caption_final
-              : "";
+            ? data.caption_final
+            : "";
         const x = typeof data.x === "string" ? data.x : "";
 
-        const ig3 = Array.isArray(data.ig3) ? data.ig3.map(String).slice(0, 3) : [];
+        const ig3 = Array.isArray(data.ig3)
+          ? data.ig3.map(String).slice(0, 3)
+          : [];
         const imageUrl =
-          typeof data.imageUrl === "string" && data.imageUrl ? data.imageUrl : undefined;
+          typeof data.imageUrl === "string" && data.imageUrl
+            ? data.imageUrl
+            : undefined;
 
         const overlayEnabled =
           typeof data.overlayEnabled === "boolean" ? data.overlayEnabled : true;
-        const overlayText = typeof data.overlayText === "string" ? data.overlayText : ig || "";
+        const overlayText =
+          typeof data.overlayText === "string" ? data.overlayText : ig || "";
         const overlayFontScale =
           typeof data.overlayFontScale === "number"
             ? clamp(data.overlayFontScale, 0.6, 1.6)
@@ -394,7 +421,8 @@ export default function NewDraftPage() {
   }, [d.ig]);
 
   const brandLabel = d.brand === "vento" ? "VENTO" : "RIVA";
-  const phaseLabel = d.phase === "draft" ? "下書き" : d.phase === "ready" ? "投稿待ち" : "投稿済み";
+  const phaseLabel =
+    d.phase === "draft" ? "下書き" : d.phase === "ready" ? "投稿待ち" : "投稿済み";
   const canGenerate = d.vision.trim().length > 0 && !busy;
   const previewOverlayText = d.overlayText || d.ig || "";
 
@@ -808,13 +836,17 @@ export default function NewDraftPage() {
         className="min-h-0 flex flex-col gap-4"
         style={{
           width: UI.rightWidth,
+
+          // ✅ stickyで右カラムを画面内に固定
           position: "sticky",
           top: UI.rightStickyTopPx,
           alignSelf: "flex-start",
+
+          // ✅ 右カラム自体の高さを「画面 - ヘッダー分」に固定
           height: `calc(100vh - ${UI.rightStickyTopPx}px)`,
         }}
       >
-        {/* 右の中だけスクロール（ページ全体のスクロールを減らす） */}
+        {/* ✅ 右の中身だけスクロール */}
         <div
           className="min-h-0"
           style={{
@@ -829,7 +861,7 @@ export default function NewDraftPage() {
             </div>
 
             <div className="rounded-2xl border border-white/12 bg-black/30 p-3">
-              {/* プレビュー枠（ここは maxWidth を唯一の正に） */}
+              {/* プレビュー枠 */}
               <div
                 className="mx-auto"
                 style={{
@@ -852,7 +884,9 @@ export default function NewDraftPage() {
                     style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }}
                   />
                 ) : (
-                  <div className="h-full w-full grid place-items-center text-sm text-white/55">NO IMAGE</div>
+                  <div className="h-full w-full grid place-items-center text-sm text-white/55">
+                    NO IMAGE
+                  </div>
                 )}
 
                 {d.overlayEnabled && previewOverlayText.trim() ? (
@@ -889,7 +923,10 @@ export default function NewDraftPage() {
               <div className="mt-4 grid gap-3">
                 <div className="flex items-center justify-between gap-2 flex-wrap">
                   <Chip className="text-white/95">文字表示</Chip>
-                  <Btn variant="secondary" onClick={() => setD((p) => ({ ...p, overlayEnabled: !p.overlayEnabled }))}>
+                  <Btn
+                    variant="secondary"
+                    onClick={() => setD((p) => ({ ...p, overlayEnabled: !p.overlayEnabled }))}
+                  >
                     {d.overlayEnabled ? "ON" : "OFF"}
                   </Btn>
                 </div>
