@@ -94,7 +94,7 @@ const UI = {
   FONT: {
     labelPx: 12,        // 「Vision」「Keywords」などの見出し
     chipPx: 12,         // Chip
-    inputPx: 20,        // input/textarea の入力文字
+    inputPx: 10,        // input/textarea の入力文字
     inputLineHeight: 1.55,
     buttonPx: 13,       // Btn
     overlayPreviewBasePx: 18, // 右プレビュー上の文字（scale=1 の時）
