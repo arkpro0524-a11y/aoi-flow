@@ -64,28 +64,28 @@ const DEFAULT: DraftDoc = {
  */
 const UI = {
   // 2カラムの間隔
-  gap: 20,
+  gap: 12,
 
   // 左右カラム幅
   leftWidth: "50%",
   rightWidth: "50%",
 
   // カード余白
-  cardPadding: 16,
+  cardPadding: 12,
 
   // 入力欄の高さ
-  hVision: 96,
-  hIG: 140,
-  hX: 110,
-  hMemo: 92,
-  hOverlayText: 110,
+  hVision: 64,
+  hIG: 110,
+  hX: 90,
+  hMemo: 72,
+  hOverlayText: 84,
 
   // プレビュー
-  previewMaxWidth: 900,
+  previewMaxWidth: 850,
   previewRadius: 18,
 
   // RangeControl の +/- ボタンサイズ
-  stepBtnSize: 44,
+  stepBtnSize: 36,
 
   // “読み込み中...” 表示
   showLoadingText: true,
@@ -94,7 +94,7 @@ const UI = {
   FONT: {
     labelPx: 12,        // 「Vision」「Keywords」などの見出し
     chipPx: 12,         // Chip
-    inputPx: 10,        // input/textarea の入力文字
+    inputPx: 14,        // input/textarea の入力文字
     inputLineHeight: 1.55,
     buttonPx: 13,       // Btn
     overlayPreviewBasePx: 18, // 右プレビュー上の文字（scale=1 の時）
