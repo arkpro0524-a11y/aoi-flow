@@ -4,7 +4,15 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { onAuthStateChanged } from "firebase/auth";
-import { collection, getDocs, limit, orderBy, query, where, type DocumentData } from "firebase/firestore";
+import {
+  collection,
+  getDocs,
+  limit,
+  orderBy,
+  query,
+  where,
+  type DocumentData,
+} from "firebase/firestore";
 import { auth, db } from "@/firebase";
 import { useToast } from "@/components/ToastProvider";
 
@@ -21,14 +29,24 @@ type DraftRow = {
   updatedAt?: any;
 };
 
-const HEADER_TITLE_PX = 28; // ✅ 「下書き一覧」タイトル
-const CARD_H = 350;
-const BRAND_W = 250;
-const PLATE_H = 230;
-const THUMB_BOX = 300;
+/**
+ * ✅ ここだけ：サイズ調整（巨人UIを解消）
+ * - ロジック/Firestore/Link は一切触らない
+ * - “一覧” として見やすい標準サイズへ
+ */
+const HEADER_TITLE_PX = 20; // 28 → 20
+const CARD_H = 160;         // 350 → 160
+const BRAND_W = 140;        // 250 → 140
+const PLATE_H = 110;        // 230 → 110
+const THUMB_BOX = 130;      // 300 → 130
 const THUMB_PAD = 0;
-const TITLE_PX = 45;
-const BRAND_PX = 40;
+const TITLE_PX = 20;        // 45 → 20
+const BRAND_PX = 20;        // 40 → 20
+
+// 余白も標準に
+const PAGE_PAD = 16;        // 20相当
+const CARD_PAD = 14;        // 20 → 14
+const COL_GAP = 14;         // 20 → 14
 
 export default function DraftsPage() {
   const toast = useToast();
@@ -41,7 +59,10 @@ export default function DraftsPage() {
   }, []);
 
   useEffect(() => {
-    if (!uid) { setRows([]); return; }
+    if (!uid) {
+      setRows([]);
+      return;
+    }
     (async () => {
       try {
         const qy = query(
@@ -55,15 +76,24 @@ export default function DraftsPage() {
         const list: DraftRow[] = snap.docs.map((doc) => {
           const data = doc.data() as DocumentData;
           const brand: Brand = data.brand === "riva" ? "riva" : "vento";
-          const phase: Phase = data.phase === "ready" ? "ready" : data.phase === "posted" ? "posted" : "draft";
+          const phase: Phase =
+            data.phase === "ready"
+              ? "ready"
+              : data.phase === "posted"
+              ? "posted"
+              : "draft";
           return {
             id: doc.id,
             userId: uid,
             brand,
             phase,
             vision: typeof data.vision === "string" ? data.vision : "",
-            caption_final: typeof data.caption_final === "string" ? data.caption_final : "",
-            imageUrl: typeof data.imageUrl === "string" && data.imageUrl ? data.imageUrl : undefined,
+            caption_final:
+              typeof data.caption_final === "string" ? data.caption_final : "",
+            imageUrl:
+              typeof data.imageUrl === "string" && data.imageUrl
+                ? data.imageUrl
+                : undefined,
             updatedAt: data.updatedAt,
           };
         });
@@ -77,11 +107,11 @@ export default function DraftsPage() {
 
   return (
     <div className="h-full flex flex-col">
-      <div className="shrink-0 border-b border-white/10 p-5">
+      <div className="shrink-0 border-b border-white/10" style={{ padding: PAGE_PAD }}>
         <div style={{ fontSize: HEADER_TITLE_PX, fontWeight: 900 }}>下書き一覧</div>
       </div>
 
-      <div className="overflow-y-auto p-5 space-y-4">
+      <div className="overflow-y-auto space-y-3" style={{ padding: PAGE_PAD }}>
         {rows.length === 0 ? (
           <div className="rounded-2xl border border-white/10 bg-black/25 p-5 text-sm text-white/75">
             下書きがまだありません。
@@ -98,10 +128,10 @@ export default function DraftsPage() {
                 style={{
                   height: CARD_H,
                   display: "grid",
-                  gridTemplateColumns: `${BRAND_W}px ${THUMB_BOX}px 1fr 28px`,
-                  columnGap: 20,
+                  gridTemplateColumns: `${BRAND_W}px ${THUMB_BOX}px 1fr 24px`,
+                  columnGap: COL_GAP,
                   alignItems: "center",
-                  padding: 20,
+                  padding: CARD_PAD,
                 }}
               >
                 <div
@@ -110,14 +140,25 @@ export default function DraftsPage() {
                              flex items-center justify-center"
                   style={{ height: PLATE_H }}
                 >
-                  <span style={{ fontSize: BRAND_PX, fontWeight: 900, letterSpacing: "0.38em", color: "#000" }}>
+                  <span
+                    style={{
+                      fontSize: BRAND_PX,
+                      fontWeight: 900,
+                      letterSpacing: "0.30em",
+                      color: "#000",
+                    }}
+                  >
                     {d.brand.toUpperCase()}
                   </span>
                 </div>
 
                 <div
                   className="rounded-xl bg-white/6 overflow-hidden flex items-center justify-center ring-1 ring-white/10"
-                  style={{ width: THUMB_BOX, height: THUMB_BOX, padding: THUMB_PAD }}
+                  style={{
+                    width: THUMB_BOX,
+                    height: THUMB_BOX,
+                    padding: THUMB_PAD,
+                  }}
                 >
                   {d.imageUrl ? (
                     // eslint-disable-next-line @next/next/no-img-element
@@ -125,7 +166,12 @@ export default function DraftsPage() {
                       src={d.imageUrl}
                       alt="thumb"
                       draggable={false}
-                      style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }}
+                      style={{
+                        width: "100%",
+                        height: "100%",
+                        objectFit: "contain",
+                        display: "block",
+                      }}
                     />
                   ) : (
                     <div className="text-xs text-white/40">NO IMAGE</div>
@@ -137,7 +183,7 @@ export default function DraftsPage() {
                     style={{
                       fontSize: TITLE_PX,
                       fontWeight: 900,
-                      lineHeight: 1.1,
+                      lineHeight: 1.15,
                       color: "rgba(255,255,255,0.95)",
                       whiteSpace: "nowrap",
                       overflow: "hidden",
@@ -148,7 +194,9 @@ export default function DraftsPage() {
                   </div>
                 </div>
 
-                <div className="text-2xl text-white/35 group-hover:text-white/80 transition text-right">→</div>
+                <div className="text-xl text-white/35 group-hover:text-white/80 transition text-right">
+                  →
+                </div>
               </div>
             </Link>
           ))
