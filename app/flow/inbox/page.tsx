@@ -23,22 +23,29 @@ type Draft = {
  * ✅ 見た目だけをここで管理（ロジックは触らない）
  * - 1) 紫文字（リンク色）を根絶：Linkに text-white を強制
  * - 2) 一覧として標準サイズに縮小（タイトル・余白・カード・画像）
+ * - 3) 画像の“暴走”を完全停止：画像枠の高さ固定＋position:relative＋imgを100%で閉じ込める
  */
 const UI = {
-  headerTitlePx: 20,        // 28 → 20
+  // ===== ヘッダー =====
+  headerTitlePx: 20,        // 28 → 20（大きすぎを抑える）
   headerPad: 16,            // p-5(20) → 16
+
+  // ===== 一覧全体 =====
   bodyPad: 16,              // p-5(20) → 16
   rowGap: 12,               // space-y-4(16) → 12
 
+  // ===== カード =====
   cardPad: 14,              // p-5(20) → 14
-  cardRadius: 22,           // rounded-3xl → 22px相当
+  cardRadius: 22,           // rounded-3xl相当（pxで固定）
 
+  // ===== 文字 =====
   brandPx: 12,              // ブランド表示
   badgePx: 11,              // 「投稿待ち」バッジ
   textPx: 14,               // 本文
   textLineH: 1.55,
 
-  imgH: 160,                // h-40(160) → そのまま。小さくしたければ 140 などに
+  // ===== 画像 =====
+  imgH: 160,                // 高さ固定（小さくしたければ 140 など）
 };
 
 export default function InboxPage() {
@@ -50,7 +57,10 @@ export default function InboxPage() {
   const [rows, setRows] = useState<Draft[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // ✅ 認証状態を state として確定させる（スマホでの不安定さを潰す）
+  /**
+   * ✅ 認証状態を state として確定させる
+   * - スマホ等で “一瞬uidがnullになる” みたいな挙動を抑える
+   */
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => {
       setUid(u?.uid ?? null);
@@ -59,7 +69,10 @@ export default function InboxPage() {
     return () => unsub();
   }, []);
 
-  // ✅ uid が確定してから Firestore を購読
+  /**
+   * ✅ uid が確定してから Firestore を購読
+   * - READY（投稿待ち）だけを監視して一覧化
+   */
   useEffect(() => {
     if (authLoading) return;
 
@@ -101,10 +114,7 @@ export default function InboxPage() {
       {/* =========================
           ヘッダー（サイズ縮小）
       ========================= */}
-      <div
-        className="shrink-0 border-b border-white/10"
-        style={{ padding: UI.headerPad }}
-      >
+      <div className="shrink-0 border-b border-white/10" style={{ padding: UI.headerPad }}>
         <div style={{ fontSize: UI.headerTitlePx, fontWeight: 900 }}>投稿待ち</div>
 
         {authLoading ? (
@@ -119,10 +129,7 @@ export default function InboxPage() {
       {/* =========================
           一覧（余白縮小）
       ========================= */}
-      <div
-        className="overflow-y-auto"
-        style={{ padding: UI.bodyPad }}
-      >
+      <div className="overflow-y-auto" style={{ padding: UI.bodyPad }}>
         <div style={{ display: "grid", gap: UI.rowGap }}>
           {authLoading ? (
             <div className="rounded-2xl border border-white/10 bg-black/25 p-6 text-sm text-white/70">
@@ -143,16 +150,12 @@ export default function InboxPage() {
                 href={`/flow/drafts/new?id=${encodeURIComponent(d.id)}`}
 
                 /**
-                 * ✅ 紫文字対策の本体
-                 * Link(=aタグ)はブラウザ既定色が出やすいので
-                 * - text-white/90
-                 * - visited:text-white/90
-                 * を強制して “紫リンク” を消す
+                 * ✅ 紫リンク色を完全に潰す
+                 * - Link（aタグ）はブラウザ既定の visited 色が出やすい
+                 * - text-white/90 と visited:text-white/90 を強制して “紫” を根絶
                  */
                 className="block no-underline text-white/90 visited:text-white/90 hover:text-white"
-                style={{
-                  borderRadius: UI.cardRadius,
-                }}
+                style={{ borderRadius: UI.cardRadius }}
               >
                 <div
                   className="border border-white/10 bg-black/25 transition hover:bg-black/30"
@@ -162,13 +165,8 @@ export default function InboxPage() {
                   }}
                 >
                   <div className="flex items-center justify-between">
-                    <div
-                      className="text-white/85"
-                      style={{ fontSize: UI.brandPx }}
-                    >
-                      <span className="font-black tracking-[0.22em]">
-                        {d.brand.toUpperCase()}
-                      </span>
+                    <div className="text-white/85" style={{ fontSize: UI.brandPx }}>
+                      <span className="font-black tracking-[0.22em]">{d.brand.toUpperCase()}</span>
                     </div>
 
                     <div
@@ -192,15 +190,28 @@ export default function InboxPage() {
                     {d.caption_final || d.vision || "（本文なし）"}
                   </div>
 
+                  {/* =========================
+                      画像（暴走を止める）
+                      - 枠の高さを固定
+                      - position:relative で「この中だけが世界」にする
+                      - img を width/height 100% で閉じ込める
+                  ========================= */}
                   {d.imageUrl && (
-                    <div className="mt-3 overflow-hidden rounded-2xl bg-black/30 ring-1 ring-white/10">
+                    <div
+                      className="mt-3 overflow-hidden rounded-2xl bg-black/30 ring-1 ring-white/10"
+                      style={{
+                        height: UI.imgH,
+                        position: "relative",
+                      }}
+                    >
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
                         src={d.imageUrl}
                         alt="img"
+                        draggable={false}
                         style={{
-                          height: UI.imgH,
                           width: "100%",
+                          height: "100%",
                           objectFit: "cover",
                           display: "block",
                         }}
