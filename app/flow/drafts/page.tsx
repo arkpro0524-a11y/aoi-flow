@@ -35,10 +35,10 @@ type DraftRow = {
  * - “一覧” として見やすい標準サイズへ
  */
 const HEADER_TITLE_PX = 20; // 28 → 20
-const CARD_H = 160;         // 350 → 160
-const BRAND_W = 140;        // 250 → 140
-const PLATE_H = 110;        // 230 → 110
-const THUMB_BOX = 130;      // 300 → 130
+const CARD_H = 100;         // 350 → 160
+const BRAND_W = 80;        // 250 → 140
+const PLATE_H = 90;        // 230 → 110
+const THUMB_BOX = 100;      // 300 → 130
 const THUMB_PAD = 0;
 const TITLE_PX = 20;        // 45 → 20
 const BRAND_PX = 20;        // 40 → 20
