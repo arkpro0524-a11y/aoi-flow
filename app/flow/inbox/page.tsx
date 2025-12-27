@@ -19,6 +19,28 @@ type Draft = {
   updatedAt?: any;
 };
 
+/**
+ * ✅ 見た目だけをここで管理（ロジックは触らない）
+ * - 1) 紫文字（リンク色）を根絶：Linkに text-white を強制
+ * - 2) 一覧として標準サイズに縮小（タイトル・余白・カード・画像）
+ */
+const UI = {
+  headerTitlePx: 20,        // 28 → 20
+  headerPad: 16,            // p-5(20) → 16
+  bodyPad: 16,              // p-5(20) → 16
+  rowGap: 12,               // space-y-4(16) → 12
+
+  cardPad: 14,              // p-5(20) → 14
+  cardRadius: 22,           // rounded-3xl → 22px相当
+
+  brandPx: 12,              // ブランド表示
+  badgePx: 11,              // 「投稿待ち」バッジ
+  textPx: 14,               // 本文
+  textLineH: 1.55,
+
+  imgH: 160,                // h-40(160) → そのまま。小さくしたければ 140 などに
+};
+
 export default function InboxPage() {
   const toast = useToast();
 
@@ -76,8 +98,14 @@ export default function InboxPage() {
 
   return (
     <div className="h-full flex flex-col">
-      <div className="shrink-0 border-b border-white/10 p-5">
-        <div style={{ fontSize: 28, fontWeight: 900 }}>投稿待ち</div>
+      {/* =========================
+          ヘッダー（サイズ縮小）
+      ========================= */}
+      <div
+        className="shrink-0 border-b border-white/10"
+        style={{ padding: UI.headerPad }}
+      >
+        <div style={{ fontSize: UI.headerTitlePx, fontWeight: 900 }}>投稿待ち</div>
 
         {authLoading ? (
           <div className="text-sm text-white/60 mt-1">認証確認中...</div>
@@ -88,48 +116,102 @@ export default function InboxPage() {
         )}
       </div>
 
-      <div className="overflow-y-auto p-5 space-y-4">
-        {authLoading ? (
-          <div className="rounded-2xl border border-white/10 bg-black/25 p-6 text-sm text-white/70">
-            認証確認中...
-          </div>
-        ) : !uid ? (
-          <div className="rounded-2xl border border-white/10 bg-black/25 p-6 text-sm text-white/70">
-            ログインしてください。
-          </div>
-        ) : ready.length === 0 ? (
-          <div className="rounded-2xl border border-white/10 bg-black/25 p-6 text-sm text-white/70">
-            投稿待ちがありません。「新規作成 → 投稿待ちにする」で追加されます。
-          </div>
-        ) : (
-          ready.map((d) => (
-            <Link
-              key={d.id}
-              href={`/flow/drafts/new?id=${encodeURIComponent(d.id)}`}
-              className="block rounded-3xl border border-white/10 bg-black/25 p-5 transition hover:bg-black/30"
-            >
-              <div className="flex items-center justify-between">
-                <div className="text-sm text-white/80">
-                  <span className="font-black tracking-[0.22em]">{d.brand.toUpperCase()}</span>
-                </div>
-                <div className="rounded-full bg-white/10 px-3 py-1 text-[11px] text-white/85 ring-1 ring-white/10">
-                  投稿待ち
-                </div>
-              </div>
+      {/* =========================
+          一覧（余白縮小）
+      ========================= */}
+      <div
+        className="overflow-y-auto"
+        style={{ padding: UI.bodyPad }}
+      >
+        <div style={{ display: "grid", gap: UI.rowGap }}>
+          {authLoading ? (
+            <div className="rounded-2xl border border-white/10 bg-black/25 p-6 text-sm text-white/70">
+              認証確認中...
+            </div>
+          ) : !uid ? (
+            <div className="rounded-2xl border border-white/10 bg-black/25 p-6 text-sm text-white/70">
+              ログインしてください。
+            </div>
+          ) : ready.length === 0 ? (
+            <div className="rounded-2xl border border-white/10 bg-black/25 p-6 text-sm text-white/70">
+              投稿待ちがありません。「新規作成 → 投稿待ちにする」で追加されます。
+            </div>
+          ) : (
+            ready.map((d) => (
+              <Link
+                key={d.id}
+                href={`/flow/drafts/new?id=${encodeURIComponent(d.id)}`}
 
-              <div className="mt-3 line-clamp-2 text-sm text-white/90">
-                {d.caption_final || d.vision || "（本文なし）"}
-              </div>
+                /**
+                 * ✅ 紫文字対策の本体
+                 * Link(=aタグ)はブラウザ既定色が出やすいので
+                 * - text-white/90
+                 * - visited:text-white/90
+                 * を強制して “紫リンク” を消す
+                 */
+                className="block no-underline text-white/90 visited:text-white/90 hover:text-white"
+                style={{
+                  borderRadius: UI.cardRadius,
+                }}
+              >
+                <div
+                  className="border border-white/10 bg-black/25 transition hover:bg-black/30"
+                  style={{
+                    borderRadius: UI.cardRadius,
+                    padding: UI.cardPad,
+                  }}
+                >
+                  <div className="flex items-center justify-between">
+                    <div
+                      className="text-white/85"
+                      style={{ fontSize: UI.brandPx }}
+                    >
+                      <span className="font-black tracking-[0.22em]">
+                        {d.brand.toUpperCase()}
+                      </span>
+                    </div>
 
-              {d.imageUrl && (
-                <div className="mt-3 overflow-hidden rounded-2xl bg-black/30 ring-1 ring-white/10">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={d.imageUrl} alt="img" className="h-40 w-full object-cover" />
+                    <div
+                      className="rounded-full bg-white/10 ring-1 ring-white/10 text-white/85"
+                      style={{
+                        fontSize: UI.badgePx,
+                        padding: "6px 10px",
+                      }}
+                    >
+                      投稿待ち
+                    </div>
+                  </div>
+
+                  <div
+                    className="mt-3 line-clamp-2 text-white/90"
+                    style={{
+                      fontSize: UI.textPx,
+                      lineHeight: UI.textLineH as any,
+                    }}
+                  >
+                    {d.caption_final || d.vision || "（本文なし）"}
+                  </div>
+
+                  {d.imageUrl && (
+                    <div className="mt-3 overflow-hidden rounded-2xl bg-black/30 ring-1 ring-white/10">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={d.imageUrl}
+                        alt="img"
+                        style={{
+                          height: UI.imgH,
+                          width: "100%",
+                          objectFit: "cover",
+                          display: "block",
+                        }}
+                      />
+                    </div>
+                  )}
                 </div>
-              )}
-            </Link>
-          ))
-        )}
+              </Link>
+            ))
+          )}
+        </div>
       </div>
     </div>
   );
