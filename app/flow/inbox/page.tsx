@@ -20,32 +20,32 @@ type Draft = {
 };
 
 /**
- * ✅ 見た目だけをここで管理（ロジックは触らない）
- * - 1) 紫文字（リンク色）を根絶：Linkに text-white を強制
- * - 2) 一覧として標準サイズに縮小（タイトル・余白・カード・画像）
- * - 3) 画像の“暴走”を完全停止：画像枠の高さ固定＋position:relative＋imgを100%で閉じ込める
+ * ✅ INBOX（投稿待ち）を /drafts と同じ「一覧カードUI」に統一する
+ * 目的：
+ * 1) 紫文字（visitedリンク色）を根絶 → Link に text-white/ visited:text-white を強制
+ * 2) “でかすぎ” を解消 → 高さ・幅・文字サイズを一覧標準へ
+ * 3) 画像が暴走して巨大化するのを止める → 枠サイズ固定 + imgを100%で閉じ込める
+ *
+ * 注意：
+ * - Firestoreの条件（phase == ready）などロジックは維持
+ * - 見た目だけをここで調整
  */
+
+// ===== 一覧としての標準サイズ（PCでもデカすぎない）=====
 const UI = {
-  // ===== ヘッダー =====
-  headerTitlePx: 20,        // 28 → 20（大きすぎを抑える）
-  headerPad: 16,            // p-5(20) → 16
+  headerTitlePx: 20, // 28 → 20
+  pagePad: 16,
 
-  // ===== 一覧全体 =====
-  bodyPad: 16,              // p-5(20) → 16
-  rowGap: 12,               // space-y-4(16) → 12
+  cardH: 160,        // 1行カードの高さ
+  cardPad: 14,
+  colGap: 14,
 
-  // ===== カード =====
-  cardPad: 14,              // p-5(20) → 14
-  cardRadius: 22,           // rounded-3xl相当（pxで固定）
+  brandW: 140,
+  plateH: 110,
+  brandPx: 20,
 
-  // ===== 文字 =====
-  brandPx: 12,              // ブランド表示
-  badgePx: 11,              // 「投稿待ち」バッジ
-  textPx: 14,               // 本文
-  textLineH: 1.55,
-
-  // ===== 画像 =====
-  imgH: 160,                // 高さ固定（小さくしたければ 140 など）
+  thumbBox: 130,     // 画像枠（正方形）
+  titlePx: 20,       // 本文（タイトル扱い）文字サイズ
 };
 
 export default function InboxPage() {
@@ -57,10 +57,7 @@ export default function InboxPage() {
   const [rows, setRows] = useState<Draft[]>([]);
   const [loading, setLoading] = useState(true);
 
-  /**
-   * ✅ 認証状態を state として確定させる
-   * - スマホ等で “一瞬uidがnullになる” みたいな挙動を抑える
-   */
+  // ✅ 認証状態を確定（ロジックはそのまま）
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => {
       setUid(u?.uid ?? null);
@@ -69,10 +66,7 @@ export default function InboxPage() {
     return () => unsub();
   }, []);
 
-  /**
-   * ✅ uid が確定してから Firestore を購読
-   * - READY（投稿待ち）だけを監視して一覧化
-   */
+  // ✅ uid確定後、READYだけ購読
   useEffect(() => {
     if (authLoading) return;
 
@@ -111,10 +105,8 @@ export default function InboxPage() {
 
   return (
     <div className="h-full flex flex-col">
-      {/* =========================
-          ヘッダー（サイズ縮小）
-      ========================= */}
-      <div className="shrink-0 border-b border-white/10" style={{ padding: UI.headerPad }}>
+      {/* ===== ヘッダー ===== */}
+      <div className="shrink-0 border-b border-white/10" style={{ padding: UI.pagePad }}>
         <div style={{ fontSize: UI.headerTitlePx, fontWeight: 900 }}>投稿待ち</div>
 
         {authLoading ? (
@@ -126,88 +118,77 @@ export default function InboxPage() {
         )}
       </div>
 
-      {/* =========================
-          一覧（余白縮小）
-      ========================= */}
-      <div className="overflow-y-auto" style={{ padding: UI.bodyPad }}>
-        <div style={{ display: "grid", gap: UI.rowGap }}>
-          {authLoading ? (
-            <div className="rounded-2xl border border-white/10 bg-black/25 p-6 text-sm text-white/70">
-              認証確認中...
-            </div>
-          ) : !uid ? (
-            <div className="rounded-2xl border border-white/10 bg-black/25 p-6 text-sm text-white/70">
-              ログインしてください。
-            </div>
-          ) : ready.length === 0 ? (
-            <div className="rounded-2xl border border-white/10 bg-black/25 p-6 text-sm text-white/70">
-              投稿待ちがありません。「新規作成 → 投稿待ちにする」で追加されます。
-            </div>
-          ) : (
-            ready.map((d) => (
+      {/* ===== 一覧 ===== */}
+      <div className="overflow-y-auto" style={{ padding: UI.pagePad }}>
+        {authLoading ? (
+          <div className="rounded-2xl border border-white/10 bg-black/25 p-6 text-sm text-white/70">
+            認証確認中...
+          </div>
+        ) : !uid ? (
+          <div className="rounded-2xl border border-white/10 bg-black/25 p-6 text-sm text-white/70">
+            ログインしてください。
+          </div>
+        ) : ready.length === 0 ? (
+          <div className="rounded-2xl border border-white/10 bg-black/25 p-6 text-sm text-white/70">
+            投稿待ちがありません。「新規作成 → 投稿待ちにする」で追加されます。
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {ready.map((d) => (
               <Link
                 key={d.id}
                 href={`/flow/drafts/new?id=${encodeURIComponent(d.id)}`}
 
                 /**
-                 * ✅ 紫リンク色を完全に潰す
-                 * - Link（aタグ）はブラウザ既定の visited 色が出やすい
-                 * - text-white/90 と visited:text-white/90 を強制して “紫” を根絶
+                 * ✅ 紫リンク色を完全に潰す（最重要）
+                 * aタグの既定色/visited色が出ても、ここで上書きする
                  */
                 className="block no-underline text-white/90 visited:text-white/90 hover:text-white"
-                style={{ borderRadius: UI.cardRadius }}
               >
                 <div
-                  className="border border-white/10 bg-black/25 transition hover:bg-black/30"
+                  className="group rounded-2xl border border-white/10 bg-black/25 hover:bg-black/30 transition"
                   style={{
-                    borderRadius: UI.cardRadius,
+                    height: UI.cardH,
+                    display: "grid",
+                    gridTemplateColumns: `${UI.brandW}px ${UI.thumbBox}px 1fr 24px`,
+                    columnGap: UI.colGap,
+                    alignItems: "center",
                     padding: UI.cardPad,
                   }}
                 >
-                  <div className="flex items-center justify-between">
-                    <div className="text-white/85" style={{ fontSize: UI.brandPx }}>
-                      <span className="font-black tracking-[0.22em]">{d.brand.toUpperCase()}</span>
-                    </div>
-
-                    <div
-                      className="rounded-full bg-white/10 ring-1 ring-white/10 text-white/85"
+                  {/* 左：ブランド板 */}
+                  <div
+                    className="rounded-xl bg-gradient-to-b from-[#f2f2f2] via-[#cfcfcf] to-[#9b9b9b]
+                               border border-black/25 shadow-[inset_0_1px_0_rgba(255,255,255,0.7),inset_0_-10px_22px_rgba(0,0,0,0.25),0_8px_18px_rgba(0,0,0,0.25)]
+                               flex items-center justify-center"
+                    style={{ height: UI.plateH }}
+                  >
+                    <span
                       style={{
-                        fontSize: UI.badgePx,
-                        padding: "6px 10px",
+                        fontSize: UI.brandPx,
+                        fontWeight: 900,
+                        letterSpacing: "0.30em",
+                        color: "#000",
                       }}
                     >
-                      投稿待ち
-                    </div>
+                      {(d.brand || "vento").toUpperCase()}
+                    </span>
                   </div>
 
+                  {/* 中：画像（暴走防止：枠固定 + img 100%） */}
                   <div
-                    className="mt-3 line-clamp-2 text-white/90"
+                    className="rounded-xl bg-white/6 overflow-hidden flex items-center justify-center ring-1 ring-white/10"
                     style={{
-                      fontSize: UI.textPx,
-                      lineHeight: UI.textLineH as any,
+                      width: UI.thumbBox,
+                      height: UI.thumbBox,
+                      position: "relative",
                     }}
                   >
-                    {d.caption_final || d.vision || "（本文なし）"}
-                  </div>
-
-                  {/* =========================
-                      画像（暴走を止める）
-                      - 枠の高さを固定
-                      - position:relative で「この中だけが世界」にする
-                      - img を width/height 100% で閉じ込める
-                  ========================= */}
-                  {d.imageUrl && (
-                    <div
-                      className="mt-3 overflow-hidden rounded-2xl bg-black/30 ring-1 ring-white/10"
-                      style={{
-                        height: UI.imgH,
-                        position: "relative",
-                      }}
-                    >
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                    {d.imageUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
                       <img
                         src={d.imageUrl}
-                        alt="img"
+                        alt="thumb"
                         draggable={false}
                         style={{
                           width: "100%",
@@ -216,13 +197,42 @@ export default function InboxPage() {
                           display: "block",
                         }}
                       />
+                    ) : (
+                      <div className="text-xs text-white/40">NO IMAGE</div>
+                    )}
+                  </div>
+
+                  {/* 右：本文（1行に収める） */}
+                  <div style={{ minWidth: 0 }}>
+                    <div
+                      style={{
+                        fontSize: UI.titlePx,
+                        fontWeight: 900,
+                        lineHeight: 1.15,
+                        color: "rgba(255,255,255,0.95)",
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
+                      {d.caption_final || d.vision || "（本文なし）"}
                     </div>
-                  )}
+
+                    {/* 補助：ステータスを小さく（邪魔なら消してOK） */}
+                    <div className="mt-2 text-xs text-white/55">
+                      投稿待ち（READY）
+                    </div>
+                  </div>
+
+                  {/* → */}
+                  <div className="text-xl text-white/35 group-hover:text-white/80 transition text-right">
+                    →
+                  </div>
                 </div>
               </Link>
-            ))
-          )}
-        </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
