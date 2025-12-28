@@ -1,3 +1,4 @@
+// /app/flow/drafts/page.tsx
 "use client";
 
 import Link from "next/link";
@@ -17,7 +18,6 @@ import { useToast } from "@/components/ToastProvider";
 
 type Brand = "vento" | "riva";
 type Phase = "draft" | "ready" | "posted";
-
 type DraftRow = {
   id: string;
   userId: string;
@@ -25,9 +25,26 @@ type DraftRow = {
   phase: Phase;
   vision: string;
   caption_final: string;
-  imageUrl?: string; // ✅ data:image でもURLでもOK
+  imageUrl?: string;
   updatedAt?: any;
 };
+
+/**
+ * ✅ サイズ調整（巨人UIを解消）
+ * - ロジック/Firestore/Link は一切触らない
+ */
+const HEADER_TITLE_PX = 20;
+const CARD_H = 160;
+const BRAND_W = 140;
+const PLATE_H = 110;
+const THUMB_BOX = 130;
+const THUMB_PAD = 0;
+const TITLE_PX = 20;
+const BRAND_PX = 20;
+
+const PAGE_PAD = 16;
+const CARD_PAD = 14;
+const COL_GAP = 14;
 
 export default function DraftsPage() {
   const toast = useToast();
@@ -44,7 +61,6 @@ export default function DraftsPage() {
       setRows([]);
       return;
     }
-
     (async () => {
       try {
         const qy = query(
@@ -58,7 +74,6 @@ export default function DraftsPage() {
 
         const list: DraftRow[] = snap.docs.map((doc) => {
           const data = doc.data() as DocumentData;
-
           const brand: Brand = data.brand === "riva" ? "riva" : "vento";
           const phase: Phase =
             data.phase === "ready"
@@ -67,19 +82,18 @@ export default function DraftsPage() {
                 ? "posted"
                 : "draft";
 
-          const imageUrl =
-            typeof data.imageUrl === "string" && data.imageUrl
-              ? data.imageUrl
-              : undefined;
-
           return {
             id: doc.id,
             userId: uid,
             brand,
             phase,
             vision: typeof data.vision === "string" ? data.vision : "",
-            caption_final: typeof data.caption_final === "string" ? data.caption_final : "",
-            imageUrl,
+            caption_final:
+              typeof data.caption_final === "string" ? data.caption_final : "",
+            imageUrl:
+              typeof data.imageUrl === "string" && data.imageUrl
+                ? data.imageUrl
+                : undefined,
             updatedAt: data.updatedAt,
           };
         });
@@ -94,85 +108,102 @@ export default function DraftsPage() {
   }, [uid, toast]);
 
   return (
-    <div className="w-full">
-      <div className="font-black text-white/95 mb-3" style={{ fontSize: 20 }}>
-        下書き一覧
+    <div className="h-full flex flex-col">
+      <div className="shrink-0 border-b border-white/10" style={{ padding: PAGE_PAD }}>
+        <div style={{ fontSize: HEADER_TITLE_PX, fontWeight: 900 }}>下書き一覧</div>
       </div>
 
-      {rows.length === 0 ? (
-        <div className="rounded-2xl border border-white/10 bg-black/25 p-5 text-sm text-white/75">
-          下書きがまだありません。
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {rows.map((d) => (
+      <div className="overflow-y-auto space-y-3" style={{ padding: PAGE_PAD }}>
+        {rows.length === 0 ? (
+          <div className="rounded-2xl border border-white/10 bg-black/25 p-5 text-sm text-white/75">
+            下書きがまだありません。
+          </div>
+        ) : (
+          rows.map((d) => (
             <Link
               key={d.id}
               href={`/flow/drafts/new?id=${encodeURIComponent(d.id)}`}
               className="block no-underline text-white/90 visited:text-white/90 hover:text-white"
             >
-              {/* ✅ PC/スマホ自動：スマホは縦、PCは横 */}
-              <div className="rounded-2xl border border-white/10 bg-black/25 hover:bg-black/30 transition p-3">
-                <div className="flex flex-col md:flex-row md:items-center gap-3">
-                  {/* ブランドプレート */}
-                  <div className="shrink-0 w-full md:w-[140px]">
-                    <div className="rounded-xl bg-white/80 text-black font-black grid place-items-center h-[54px] md:h-[110px]">
-                      {d.brand.toUpperCase()}
-                    </div>
-                  </div>
+              <div
+                className="group rounded-2xl border border-white/10 bg-black/25 hover:bg-black/30 transition"
+                style={{
+                  height: CARD_H,
+                  display: "grid",
+                  gridTemplateColumns: `${BRAND_W}px ${THUMB_BOX}px 1fr 24px`,
+                  columnGap: COL_GAP,
+                  alignItems: "center",
+                  padding: CARD_PAD,
+                }}
+              >
+                <div
+                  className="rounded-xl bg-gradient-to-b from-[#f2f2f2] via-[#cfcfcf] to-[#9b9b9b]
+                             border border-black/25 shadow-[inset_0_1px_0_rgba(255,255,255,0.7),inset_0_-10px_22px_rgba(0,0,0,0.25),0_8px_18px_rgba(0,0,0,0.25)]
+                             flex items-center justify-center"
+                  style={{ height: PLATE_H }}
+                >
+                  <span
+                    style={{
+                      fontSize: BRAND_PX,
+                      fontWeight: 900,
+                      letterSpacing: "0.30em",
+                      color: "#000",
+                    }}
+                  >
+                    {d.brand.toUpperCase()}
+                  </span>
+                </div>
 
-                  {/* サムネ */}
-                  <div className="shrink-0 w-full md:w-[130px]">
-                    <div className="rounded-xl bg-white/6 overflow-hidden ring-1 ring-white/10 w-full aspect-square md:w-[130px] md:h-[130px] grid place-items-center">
-                      {d.imageUrl ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={d.imageUrl}
-                          alt="thumb"
-                          draggable={false}
-                          style={{
-                            width: "100%",
-                            height: "100%",
-                            objectFit: "contain",
-                            display: "block",
-                          }}
-                        />
-                      ) : (
-                        <div className="text-xs text-white/40">NO IMAGE</div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* 本文 */}
-                  <div className="min-w-0 flex-1">
-                    <div
-                      className="font-black text-white/95"
+                <div
+                  className="rounded-xl bg-white/6 overflow-hidden flex items-center justify-center ring-1 ring-white/10"
+                  style={{
+                    width: THUMB_BOX,
+                    height: THUMB_BOX,
+                    padding: THUMB_PAD,
+                  }}
+                >
+                  {d.imageUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={d.imageUrl}
+                      alt="thumb"
+                      draggable={false}
                       style={{
-                        fontSize: 18,
-                        lineHeight: 1.2,
-                        whiteSpace: "nowrap",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
+                        width: "100%",
+                        height: "100%",
+                        objectFit: "contain",
+                        display: "block",
                       }}
-                    >
-                      {d.caption_final || d.vision || "（未入力）"}
-                    </div>
+                    />
+                  ) : (
+                    <div className="text-xs text-white/40">NO IMAGE</div>
+                  )}
+                </div>
 
-                    <div className="mt-2 text-xs text-white/55">
-                      {d.phase === "ready" ? "投稿待ち（READY）" : d.phase === "posted" ? "投稿済み" : "下書き"}
-                    </div>
+                <div style={{ minWidth: 0 }}>
+                  <div
+                    style={{
+                      fontSize: TITLE_PX,
+                      fontWeight: 900,
+                      lineHeight: 1.15,
+                      color: "rgba(255,255,255,0.95)",
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                    }}
+                  >
+                    {d.caption_final || d.vision || "（未入力）"}
                   </div>
+                </div>
 
-                  {/* 矢印 */}
-                  <div className="shrink-0 text-white/35 text-xl md:text-2xl text-right">
-                    →
-                  </div>
+                <div className="text-xl text-white/35 group-hover:text-white/80 transition text-right">
+                  →
                 </div>
               </div>
             </Link>
-          ))}
-        </div>
-      )}
+          ))
+        )}
+      </div>
     </div>
   );
 }

@@ -9,13 +9,6 @@ export const metadata = {
   themeColor: "#0A1020",
 };
 
-// ✅ これを明示（PCが「スマホ幅扱い」になる事故を止める）
-export const viewport = {
-  width: "device-width",
-  initialScale: 1,
-  maximumScale: 1,
-};
-
 export default function RootLayout({
   children,
 }: {
