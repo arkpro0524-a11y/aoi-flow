@@ -438,11 +438,9 @@ export default function NewDraftPage() {
 
     setBusy(true);
     try {
-      // ✅ 追加：Firebase ID Token（Bearer必須）
       const token = await auth.currentUser?.getIdToken(true);
       if (!token) throw new Error("no token");
 
-      // ✅ 修正：APIに合わせて brandId で送る（vento/riva）
       const body = {
         brandId: d.brand,
         vision,
@@ -466,8 +464,6 @@ export default function NewDraftPage() {
       const x = typeof j.x === "string" ? j.x : "";
       const ig3 = Array.isArray(j.ig3) ? j.ig3.map(String).slice(0, 3) : [];
 
-      // ✅ 本文は生成結果で更新（これはメインの1つだけ）
-      // ✅ overlayText は「未入力の時だけ」自動で ig を入れる（勝手に上書きしない）
       setD((prev) => ({
         ...prev,
         ig,
@@ -502,11 +498,9 @@ export default function NewDraftPage() {
 
     setBusy(true);
     try {
-      // ✅ 追加：Firebase ID Token（Bearer必須）
       const token = await auth.currentUser?.getIdToken(true);
       if (!token) throw new Error("no token");
 
-      // ✅ 修正：APIに合わせて brandId で送る（vento/riva）
       const body = {
         brandId: d.brand,
         vision,
@@ -660,12 +654,175 @@ export default function NewDraftPage() {
 
   const previewOverlayText = (d.overlayText || "").trim();
 
+  // ============================
+  // ✅ プレビューUI（PC/スマホ共通で使う）
+  // （PC側のDOMは崩さないため、スマホは“同等表示”を別枠で用意）
+  // ============================
+  const PreviewBlock = (props: { compact?: boolean }) => {
+    const compact = !!props.compact;
+
+    const maxW = compact ? 360 : UI.previewMaxWidth;
+    const padOuter = compact ? 10 : UI.cardPadding;
+
+    return (
+      <div className="rounded-2xl border border-white/12 bg-black/25" style={{ padding: padOuter }}>
+        <div className="text-white/80 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
+          正方形プレビュー（成果物）
+        </div>
+
+        <div className="rounded-2xl border border-white/12 bg-black/30 p-3">
+          <div
+            className="mx-auto"
+            style={{
+              width: "100%",
+              maxWidth: maxW,
+              aspectRatio: "1 / 1",
+              borderRadius: UI.previewRadius,
+              overflow: "hidden",
+              position: "relative",
+              background: "rgba(255,255,255,0.04)",
+              border: "1px solid rgba(255,255,255,0.10)",
+            }}
+          >
+            {d.imageUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={d.imageUrl}
+                alt="preview"
+                draggable={false}
+                style={{
+                  width: "100%",
+                  height: "100%",
+                  objectFit: "contain",
+                  display: "block",
+                }}
+              />
+            ) : (
+              <div className="h-full w-full grid place-items-center text-sm text-white/55">
+                NO IMAGE
+              </div>
+            )}
+
+            {d.overlayEnabled && previewOverlayText ? (
+              <div
+                style={{
+                  position: "absolute",
+                  left: 0,
+                  right: 0,
+                  top: `${clamp(d.overlayY, 0, 100)}%`,
+                  transform: "translateY(-50%)",
+                  padding: "14px 14px",
+                  background: `rgba(0,0,0,${clamp(d.overlayBgOpacity, 0, 0.85)})`,
+                }}
+              >
+                <div
+                  style={{
+                    textAlign: "center",
+                    fontWeight: 900,
+                    lineHeight: 1.35,
+                    fontSize: `${Math.round(
+                      UI.FONT.overlayPreviewBasePx * clamp(d.overlayFontScale, 0.6, 1.6)
+                    )}px`,
+                    color: "rgba(255,255,255,0.95)",
+                    textShadow: "0 2px 10px rgba(0,0,0,0.45)",
+                    whiteSpace: "pre-wrap",
+                  }}
+                >
+                  {previewOverlayText}
+                </div>
+              </div>
+            ) : null}
+          </div>
+
+          <div className="mt-4 grid gap-3">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <Chip className="text-white/95">文字表示</Chip>
+              <Btn
+                variant="secondary"
+                onClick={() => setD((p) => ({ ...p, overlayEnabled: !p.overlayEnabled }))}
+              >
+                {d.overlayEnabled ? "ON" : "OFF"}
+              </Btn>
+            </div>
+
+            <div
+              className="rounded-2xl border border-white/12 bg-black/25"
+              style={{ padding: UI.cardPadding }}
+            >
+              <div className="text-white/80 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
+                載せる文字（※本文とは別）
+              </div>
+              <textarea
+                value={d.overlayText}
+                onChange={(e) => setD((p) => ({ ...p, overlayText: e.target.value }))}
+                className="w-full rounded-xl border p-3 outline-none"
+                style={{ ...formStyle, minHeight: UI.hOverlayText }}
+              />
+            </div>
+
+            <RangeControl
+              label="文字サイズ"
+              value={d.overlayFontScale}
+              min={0.6}
+              max={1.6}
+              step={0.05}
+              format={(v) => v.toFixed(2)}
+              onChange={(v) => setD((p) => ({ ...p, overlayFontScale: v }))}
+            />
+            <RangeControl
+              label="位置（上下）"
+              value={d.overlayY}
+              min={0}
+              max={100}
+              step={1}
+              format={(v) => String(Math.round(v))}
+              onChange={(v) => setD((p) => ({ ...p, overlayY: v }))}
+            />
+            <RangeControl
+              label="背景帯の濃さ"
+              value={d.overlayBgOpacity}
+              min={0}
+              max={0.85}
+              step={0.05}
+              format={(v) => v.toFixed(2)}
+              onChange={(v) => setD((p) => ({ ...p, overlayBgOpacity: v }))}
+            />
+
+            <div className="flex flex-wrap gap-2">
+              <Btn variant="primary" disabled={busy} onClick={saveCompositeAsImageUrl}>
+                文字入り画像を保存
+              </Btn>
+              <Btn variant="ghost" disabled={!uid || busy} onClick={() => saveDraft()}>
+                調整を保存
+              </Btn>
+            </div>
+
+            <div className="text-white/55" style={{ fontSize: UI.FONT.labelPx }}>
+              ※ 保存される画像は 1024×1024 のPNGです。
+            </div>
+          </div>
+
+          <canvas ref={canvasRef} style={{ display: "none" }} />
+        </div>
+      </div>
+    );
+  };
+
   return (
-    <div className="h-full min-h-0 flex" style={{ gap: UI.gap }}>
-      {/* 左 */}
-      <section className="min-h-0 flex flex-col gap-3" style={{ width: UI.leftWidth }}>
-        <div className="shrink-0 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2 flex-wrap" />
+    <div className="h-full min-h-0">
+      {/* ============================
+          ✅ スマホ専用UI（md未満だけ表示）
+          - PCレイアウトは一切崩さない
+          - 画面を縦並びにして安定させる
+         ============================ */}
+      <div className="block md:hidden h-full min-h-0 overflow-y-auto" style={{ padding: 12 }}>
+        {/* 上部ステータス */}
+        <div className="flex items-center justify-between gap-3 mb-3">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Chip>
+              {brandLabel} / {phaseLabel}
+            </Chip>
+          </div>
           {UI.showLoadingText && loadBusy ? (
             <div className="text-white/75" style={{ fontSize: UI.FONT.labelPx }}>
               読み込み中...
@@ -674,11 +831,15 @@ export default function NewDraftPage() {
         </div>
 
         {/* Brand / Vision / Keywords / 操作 */}
-        <div className="rounded-2xl border border-white/12 bg-black/25" style={{ padding: UI.cardPadding }}>
+        <div
+          className="rounded-2xl border border-white/12 bg-black/25"
+          style={{ padding: UI.cardPadding }}
+        >
           <div className="text-white/80 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
             Brand
           </div>
-          <div className="flex items-center gap-2">
+
+          <div className="flex items-center gap-2 flex-wrap">
             <Btn
               variant={d.brand === "vento" ? "primary" : "secondary"}
               onClick={() => setD((p) => ({ ...p, brand: "vento" }))}
@@ -691,9 +852,6 @@ export default function NewDraftPage() {
             >
               RIVA
             </Btn>
-            <Chip className="ml-2">
-              {brandLabel} / {phaseLabel}
-            </Chip>
           </div>
 
           <div className="text-white/80 mt-4 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
@@ -731,8 +889,16 @@ export default function NewDraftPage() {
           </div>
         </div>
 
+        {/* プレビュー（スマホはここで表示） */}
+        <div className="mt-3">
+          <PreviewBlock compact />
+        </div>
+
         {/* IG */}
-        <div className="rounded-2xl border border-white/12 bg-black/25" style={{ padding: UI.cardPadding }}>
+        <div
+          className="mt-3 rounded-2xl border border-white/12 bg-black/25"
+          style={{ padding: UI.cardPadding }}
+        >
           <div className="flex items-center justify-between gap-2">
             <div className="text-white/80" style={{ fontSize: UI.FONT.labelPx }}>
               Instagram本文（メイン）
@@ -755,7 +921,10 @@ export default function NewDraftPage() {
         </div>
 
         {/* X */}
-        <div className="rounded-2xl border border-white/12 bg-black/25" style={{ padding: UI.cardPadding }}>
+        <div
+          className="mt-3 rounded-2xl border border-white/12 bg-black/25"
+          style={{ padding: UI.cardPadding }}
+        >
           <div className="flex items-center justify-between">
             <div className="text-white/80" style={{ fontSize: UI.FONT.labelPx }}>
               X本文
@@ -777,7 +946,10 @@ export default function NewDraftPage() {
         </div>
 
         {/* メモ + 状態 */}
-        <div className="rounded-2xl border border-white/12 bg-black/25" style={{ padding: UI.cardPadding }}>
+        <div
+          className="mt-3 rounded-2xl border border-white/12 bg-black/25"
+          style={{ padding: UI.cardPadding }}
+        >
           <div className="text-white/80 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
             メモ（任意）
           </div>
@@ -798,7 +970,10 @@ export default function NewDraftPage() {
         </div>
 
         {/* IG3 */}
-        <div className="rounded-2xl border border-white/12 bg-black/20" style={{ padding: UI.cardPadding }}>
+        <div
+          className="mt-3 rounded-2xl border border-white/12 bg-black/20"
+          style={{ padding: UI.cardPadding }}
+        >
           <div className="text-white/70 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
             補助：Instagram 3案（※本文は絶対に上書きしない）
           </div>
@@ -825,7 +1000,6 @@ export default function NewDraftPage() {
                     </div>
 
                     <div className="flex items-center gap-2">
-                      {/* ✅ 本文は触らず、プレビュー文字だけ */}
                       <Btn
                         variant="secondary"
                         className="px-3 py-1"
@@ -858,163 +1032,391 @@ export default function NewDraftPage() {
             </div>
           )}
         </div>
-      </section>
 
-      {/* 右（sticky） */}
-      <section
-        className="min-h-0 flex flex-col gap-4"
-        style={{
-          width: UI.rightWidth,
-          position: "sticky",
-          top: UI.rightStickyTopPx,
-          alignSelf: "flex-start",
-          height: `calc(100vh - ${UI.rightStickyTopPx}px)`,
-        }}
-      >
-        <div className="min-h-0" style={{ flex: 1, overflow: "auto", paddingBottom: 8 }}>
-          <div className="rounded-2xl border border-white/12 bg-black/25" style={{ padding: UI.cardPadding }}>
-            <div className="text-white/80 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
-              正方形プレビュー（成果物）
+        <div className="h-8" />
+      </div>
+
+      {/* ============================
+          ✅ PC専用UI（md以上だけ表示）
+          - ここはあなたの“現行PCレイアウトDOM”をそのまま残す
+          - 変更は wrapper のみ（hidden/md:block）
+         ============================ */}
+      <div className="hidden md:block h-full min-h-0">
+        <div className="h-full min-h-0 flex" style={{ gap: UI.gap }}>
+          {/* 左 */}
+          <section className="min-h-0 flex flex-col gap-3" style={{ width: UI.leftWidth }}>
+            <div className="shrink-0 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2 flex-wrap" />
+              {UI.showLoadingText && loadBusy ? (
+                <div className="text-white/75" style={{ fontSize: UI.FONT.labelPx }}>
+                  読み込み中...
+                </div>
+              ) : null}
             </div>
 
-            <div className="rounded-2xl border border-white/12 bg-black/30 p-3">
-              <div
-                className="mx-auto"
-                style={{
-                  width: "100%",
-                  maxWidth: UI.previewMaxWidth,
-                  aspectRatio: "1 / 1",
-                  borderRadius: UI.previewRadius,
-                  overflow: "hidden",
-                  position: "relative",
-                  background: "rgba(255,255,255,0.04)",
-                  border: "1px solid rgba(255,255,255,0.10)",
-                }}
-              >
-                {d.imageUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={d.imageUrl}
-                    alt="preview"
-                    draggable={false}
-                    style={{
-                      width: "100%",
-                      height: "100%",
-                      objectFit: "contain",
-                      display: "block",
-                    }}
-                  />
-                ) : (
-                  <div className="h-full w-full grid place-items-center text-sm text-white/55">
-                    NO IMAGE
-                  </div>
-                )}
+            {/* Brand / Vision / Keywords / 操作 */}
+            <div
+              className="rounded-2xl border border-white/12 bg-black/25"
+              style={{ padding: UI.cardPadding }}
+            >
+              <div className="text-white/80 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
+                Brand
+              </div>
+              <div className="flex items-center gap-2">
+                <Btn
+                  variant={d.brand === "vento" ? "primary" : "secondary"}
+                  onClick={() => setD((p) => ({ ...p, brand: "vento" }))}
+                >
+                  VENTO
+                </Btn>
+                <Btn
+                  variant={d.brand === "riva" ? "primary" : "secondary"}
+                  onClick={() => setD((p) => ({ ...p, brand: "riva" }))}
+                >
+                  RIVA
+                </Btn>
+                <Chip className="ml-2">
+                  {brandLabel} / {phaseLabel}
+                </Chip>
+              </div>
 
-                {d.overlayEnabled && previewOverlayText ? (
-                  <div
-                    style={{
-                      position: "absolute",
-                      left: 0,
-                      right: 0,
-                      top: `${clamp(d.overlayY, 0, 100)}%`,
-                      transform: "translateY(-50%)",
-                      padding: "14px 14px",
-                      background: `rgba(0,0,0,${clamp(d.overlayBgOpacity, 0, 0.85)})`,
-                    }}
-                  >
+              <div className="text-white/80 mt-4 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
+                Vision（必須）
+              </div>
+              <textarea
+                value={d.vision}
+                onChange={(e) => setD((p) => ({ ...p, vision: e.target.value }))}
+                className="w-full rounded-xl border p-3 outline-none"
+                style={{ ...formStyle, minHeight: UI.hVision }}
+                placeholder="例：RIVAの世界観（誠実・丁寧・クラシック）を1〜2行で"
+              />
+
+              <div className="text-white/80 mt-4 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
+                Keywords（任意）
+              </div>
+              <input
+                value={d.keywordsText}
+                onChange={(e) => setD((p) => ({ ...p, keywordsText: e.target.value }))}
+                className="w-full rounded-xl border p-3 outline-none"
+                style={formStyle}
+                placeholder="例：クラシック, 丁寧, 木目, 余白"
+              />
+
+              <div className="mt-4 flex flex-wrap gap-2">
+                <Btn variant="primary" disabled={!canGenerate} onClick={generateCaptions}>
+                  文章を生成（IG＋X）
+                </Btn>
+                <Btn variant="secondary" disabled={!canGenerate} onClick={generateImage}>
+                  画像を生成（正方形）
+                </Btn>
+                <Btn variant="ghost" disabled={!uid || busy} onClick={() => saveDraft()}>
+                  保存
+                </Btn>
+              </div>
+            </div>
+
+            {/* IG */}
+            <div
+              className="rounded-2xl border border-white/12 bg-black/25"
+              style={{ padding: UI.cardPadding }}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-white/80" style={{ fontSize: UI.FONT.labelPx }}>
+                  Instagram本文（メイン）
+                </div>
+                <Btn
+                  variant="secondary"
+                  className="px-3 py-1"
+                  onClick={() => navigator.clipboard.writeText(d.ig)}
+                >
+                  コピー
+                </Btn>
+              </div>
+
+              <textarea
+                value={d.ig}
+                onChange={(e) => setD((p) => ({ ...p, ig: e.target.value }))}
+                className="mt-2 w-full rounded-xl border p-3 outline-none"
+                style={{ ...formStyle, minHeight: UI.hIG }}
+              />
+            </div>
+
+            {/* X */}
+            <div
+              className="rounded-2xl border border-white/12 bg-black/25"
+              style={{ padding: UI.cardPadding }}
+            >
+              <div className="flex items-center justify-between">
+                <div className="text-white/80" style={{ fontSize: UI.FONT.labelPx }}>
+                  X本文
+                </div>
+                <Btn
+                  variant="secondary"
+                  className="px-3 py-1"
+                  onClick={() => navigator.clipboard.writeText(d.x)}
+                >
+                  コピー
+                </Btn>
+              </div>
+              <textarea
+                value={d.x}
+                onChange={(e) => setD((p) => ({ ...p, x: e.target.value }))}
+                className="mt-2 w-full rounded-xl border p-3 outline-none"
+                style={{ ...formStyle, minHeight: UI.hX }}
+              />
+            </div>
+
+            {/* メモ + 状態 */}
+            <div
+              className="rounded-2xl border border-white/12 bg-black/25"
+              style={{ padding: UI.cardPadding }}
+            >
+              <div className="text-white/80 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
+                メモ（任意）
+              </div>
+              <textarea
+                value={d.memo}
+                onChange={(e) => setD((p) => ({ ...p, memo: e.target.value }))}
+                className="w-full rounded-xl border p-3 outline-none"
+                style={{ ...formStyle, minHeight: UI.hMemo }}
+              />
+              <div className="mt-3 flex gap-2 flex-wrap">
+                <Btn variant="primary" disabled={!uid || busy} onClick={() => setPhase("ready")}>
+                  投稿待ちにする
+                </Btn>
+                <Btn variant="secondary" disabled={!uid || busy} onClick={() => setPhase("posted")}>
+                  投稿済みにする
+                </Btn>
+              </div>
+            </div>
+
+            {/* IG3 */}
+            <div
+              className="rounded-2xl border border-white/12 bg-black/20"
+              style={{ padding: UI.cardPadding }}
+            >
+              <div className="text-white/70 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
+                補助：Instagram 3案（※本文は絶対に上書きしない）
+              </div>
+
+              {d.ig3.length === 0 ? (
+                <div className="text-white/45" style={{ fontSize: UI.FONT.inputPx }}>
+                  （まだありません）
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {d.ig3.map((t, i) => (
                     <div
+                      key={i}
+                      className="w-full rounded-xl border p-3"
                       style={{
-                        textAlign: "center",
-                        fontWeight: 900,
-                        lineHeight: 1.35,
-                        fontSize: `${Math.round(
-                          UI.FONT.overlayPreviewBasePx *
-                            clamp(d.overlayFontScale, 0.6, 1.6)
-                        )}px`,
-                        color: "rgba(255,255,255,0.95)",
-                        textShadow: "0 2px 10px rgba(0,0,0,0.45)",
-                        whiteSpace: "pre-wrap",
+                        background: "rgba(0,0,0,0.35)",
+                        borderColor: "rgba(255,255,255,0.18)",
+                        color: UI.FORM.text,
                       }}
                     >
-                      {previewOverlayText}
+                      <div className="flex items-center justify-between gap-2 mb-2">
+                        <div className="text-white/55" style={{ fontSize: UI.FONT.labelPx }}>
+                          案 {i + 1}
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          {/* ✅ 本文は触らず、プレビュー文字だけ */}
+                          <Btn
+                            variant="secondary"
+                            className="px-3 py-1"
+                            onClick={() => applyIg3ToOverlayOnly(t)}
+                          >
+                            文字に適用
+                          </Btn>
+
+                          <Btn
+                            variant="ghost"
+                            className="px-3 py-1"
+                            onClick={() => navigator.clipboard.writeText(t)}
+                          >
+                            コピー
+                          </Btn>
+                        </div>
+                      </div>
+
+                      <div
+                        style={{
+                          fontSize: UI.FONT.inputPx,
+                          lineHeight: UI.FONT.inputLineHeight as any,
+                          whiteSpace: "pre-wrap",
+                        }}
+                      >
+                        {t}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </section>
+
+          {/* 右（sticky） */}
+          <section
+            className="min-h-0 flex flex-col gap-4"
+            style={{
+              width: UI.rightWidth,
+              position: "sticky",
+              top: UI.rightStickyTopPx,
+              alignSelf: "flex-start",
+              height: `calc(100vh - ${UI.rightStickyTopPx}px)`,
+            }}
+          >
+            <div className="min-h-0" style={{ flex: 1, overflow: "auto", paddingBottom: 8 }}>
+              {/* ✅ PCのプレビュー（現行を維持するため、そのまま構造を残す） */}
+              <div
+                className="rounded-2xl border border-white/12 bg-black/25"
+                style={{ padding: UI.cardPadding }}
+              >
+                <div className="text-white/80 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
+                  正方形プレビュー（成果物）
+                </div>
+
+                <div className="rounded-2xl border border-white/12 bg-black/30 p-3">
+                  <div
+                    className="mx-auto"
+                    style={{
+                      width: "100%",
+                      maxWidth: UI.previewMaxWidth,
+                      aspectRatio: "1 / 1",
+                      borderRadius: UI.previewRadius,
+                      overflow: "hidden",
+                      position: "relative",
+                      background: "rgba(255,255,255,0.04)",
+                      border: "1px solid rgba(255,255,255,0.10)",
+                    }}
+                  >
+                    {d.imageUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={d.imageUrl}
+                        alt="preview"
+                        draggable={false}
+                        style={{
+                          width: "100%",
+                          height: "100%",
+                          objectFit: "contain",
+                          display: "block",
+                        }}
+                      />
+                    ) : (
+                      <div className="h-full w-full grid place-items-center text-sm text-white/55">
+                        NO IMAGE
+                      </div>
+                    )}
+
+                    {d.overlayEnabled && previewOverlayText ? (
+                      <div
+                        style={{
+                          position: "absolute",
+                          left: 0,
+                          right: 0,
+                          top: `${clamp(d.overlayY, 0, 100)}%`,
+                          transform: "translateY(-50%)",
+                          padding: "14px 14px",
+                          background: `rgba(0,0,0,${clamp(d.overlayBgOpacity, 0, 0.85)})`,
+                        }}
+                      >
+                        <div
+                          style={{
+                            textAlign: "center",
+                            fontWeight: 900,
+                            lineHeight: 1.35,
+                            fontSize: `${Math.round(
+                              UI.FONT.overlayPreviewBasePx *
+                                clamp(d.overlayFontScale, 0.6, 1.6)
+                            )}px`,
+                            color: "rgba(255,255,255,0.95)",
+                            textShadow: "0 2px 10px rgba(0,0,0,0.45)",
+                            whiteSpace: "pre-wrap",
+                          }}
+                        >
+                          {previewOverlayText}
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+
+                  <div className="mt-4 grid gap-3">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <Chip className="text-white/95">文字表示</Chip>
+                      <Btn
+                        variant="secondary"
+                        onClick={() => setD((p) => ({ ...p, overlayEnabled: !p.overlayEnabled }))}
+                      >
+                        {d.overlayEnabled ? "ON" : "OFF"}
+                      </Btn>
+                    </div>
+
+                    <div
+                      className="rounded-2xl border border-white/12 bg-black/25"
+                      style={{ padding: UI.cardPadding }}
+                    >
+                      <div className="text-white/80 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
+                        載せる文字（※本文とは別）
+                      </div>
+                      <textarea
+                        value={d.overlayText}
+                        onChange={(e) => setD((p) => ({ ...p, overlayText: e.target.value }))}
+                        className="w-full rounded-xl border p-3 outline-none"
+                        style={{ ...formStyle, minHeight: UI.hOverlayText }}
+                      />
+                    </div>
+
+                    <RangeControl
+                      label="文字サイズ"
+                      value={d.overlayFontScale}
+                      min={0.6}
+                      max={1.6}
+                      step={0.05}
+                      format={(v) => v.toFixed(2)}
+                      onChange={(v) => setD((p) => ({ ...p, overlayFontScale: v }))}
+                    />
+                    <RangeControl
+                      label="位置（上下）"
+                      value={d.overlayY}
+                      min={0}
+                      max={100}
+                      step={1}
+                      format={(v) => String(Math.round(v))}
+                      onChange={(v) => setD((p) => ({ ...p, overlayY: v }))}
+                    />
+                    <RangeControl
+                      label="背景帯の濃さ"
+                      value={d.overlayBgOpacity}
+                      min={0}
+                      max={0.85}
+                      step={0.05}
+                      format={(v) => v.toFixed(2)}
+                      onChange={(v) => setD((p) => ({ ...p, overlayBgOpacity: v }))}
+                    />
+
+                    <div className="flex flex-wrap gap-2">
+                      <Btn variant="primary" disabled={busy} onClick={saveCompositeAsImageUrl}>
+                        文字入り画像を保存
+                      </Btn>
+                      <Btn variant="ghost" disabled={!uid || busy} onClick={() => saveDraft()}>
+                        調整を保存
+                      </Btn>
+                    </div>
+
+                    <div className="text-white/55" style={{ fontSize: UI.FONT.labelPx }}>
+                      ※ 保存される画像は 1024×1024 のPNGです。
                     </div>
                   </div>
-                ) : null}
-              </div>
 
-              <div className="mt-4 grid gap-3">
-                <div className="flex items-center justify-between gap-2 flex-wrap">
-                  <Chip className="text-white/95">文字表示</Chip>
-                  <Btn
-                    variant="secondary"
-                    onClick={() => setD((p) => ({ ...p, overlayEnabled: !p.overlayEnabled }))}
-                  >
-                    {d.overlayEnabled ? "ON" : "OFF"}
-                  </Btn>
-                </div>
-
-                <div
-                  className="rounded-2xl border border-white/12 bg-black/25"
-                  style={{ padding: UI.cardPadding }}
-                >
-                  <div className="text-white/80 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
-                    載せる文字（※本文とは別）
-                  </div>
-                  <textarea
-                    value={d.overlayText}
-                    onChange={(e) => setD((p) => ({ ...p, overlayText: e.target.value }))}
-                    className="w-full rounded-xl border p-3 outline-none"
-                    style={{ ...formStyle, minHeight: UI.hOverlayText }}
-                  />
-                </div>
-
-                <RangeControl
-                  label="文字サイズ"
-                  value={d.overlayFontScale}
-                  min={0.6}
-                  max={1.6}
-                  step={0.05}
-                  format={(v) => v.toFixed(2)}
-                  onChange={(v) => setD((p) => ({ ...p, overlayFontScale: v }))}
-                />
-                <RangeControl
-                  label="位置（上下）"
-                  value={d.overlayY}
-                  min={0}
-                  max={100}
-                  step={1}
-                  format={(v) => String(Math.round(v))}
-                  onChange={(v) => setD((p) => ({ ...p, overlayY: v }))}
-                />
-                <RangeControl
-                  label="背景帯の濃さ"
-                  value={d.overlayBgOpacity}
-                  min={0}
-                  max={0.85}
-                  step={0.05}
-                  format={(v) => v.toFixed(2)}
-                  onChange={(v) => setD((p) => ({ ...p, overlayBgOpacity: v }))}
-                />
-
-                <div className="flex flex-wrap gap-2">
-                  <Btn variant="primary" disabled={busy} onClick={saveCompositeAsImageUrl}>
-                    文字入り画像を保存
-                  </Btn>
-                  <Btn variant="ghost" disabled={!uid || busy} onClick={() => saveDraft()}>
-                    調整を保存
-                  </Btn>
-                </div>
-
-                <div className="text-white/55" style={{ fontSize: UI.FONT.labelPx }}>
-                  ※ 保存される画像は 1024×1024 のPNGです。
+                  <canvas ref={canvasRef} style={{ display: "none" }} />
                 </div>
               </div>
-
-              <canvas ref={canvasRef} style={{ display: "none" }} />
             </div>
-          </div>
+          </section>
         </div>
-      </section>
+      </div>
     </div>
   );
 }
