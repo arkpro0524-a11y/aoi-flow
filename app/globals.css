@@ -157,3 +157,28 @@ body::after {
   /* ✅ UI本体は transform を禁止（スケール事故防止） */
   transform: none;
 }
+
+/* ================================
+   ✅ 幅つぶし犯人特定（デバッグ用）
+   これを入れると各箱に枠線が出ます
+================================ */
+
+/* 1) 画面全体（赤） */
+html, body {
+  outline: 4px solid rgba(255, 0, 0, 0.35);
+}
+
+/* 2) あなたのアプリ本体（緑） */
+#_appRoot {
+  outline: 4px solid rgba(0, 255, 0, 0.35);
+}
+
+/* 3) Next.js の root (もしあれば) */
+#__next {
+  outline: 4px solid rgba(0, 160, 255, 0.35);
+}
+
+/* 4) 一時：横スクロールを“出す”（画面外に逃げてるか確認） */
+body {
+  overflow-x: auto !important;   /* ←重要 */
+}
