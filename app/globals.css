@@ -25,17 +25,18 @@ body {
   height: 100%;
 }
 
-/* ✅ rem基準を固定（巨大化対策） */
+/* ✅ rem基準を固定（巨大化対策：ここがズレると全部デカくなる） */
 html {
   font-size: 16px;
 }
 
-/* ✅ iOS/Safari text inflation を止める */
+/* ✅ “勝手に文字を大きくする” を止める（iOS/Safari対策） */
 body {
-  -webkit-text-size-adjust: none;
-  text-size-adjust: none;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
+/* ✅ transform/zoom事故の温床を減らす */
 * {
   box-sizing: border-box;
 }
@@ -66,7 +67,7 @@ body {
   overflow-x: hidden;
 }
 
-/* 流れ（背景だけ transform OK） */
+/* 背景レイヤ（ここでtransform OK） */
 body::before {
   content: "";
   position: fixed;
@@ -133,7 +134,7 @@ body::after {
   mix-blend-mode: overlay;
 }
 
-/* ビネット（締まり） */
+/* ビネット */
 #_vignette {
   position: fixed;
   inset: 0;
@@ -148,12 +149,12 @@ body::after {
 }
 
 /* ---------------------------------------------
-   4) UI本体を前面に固定（背景より上）
+   4) UI本体（背景より上）
 --------------------------------------------- */
 #_appRoot {
   position: relative;
   z-index: 1;
 
-  /* ✅ UI本体は transform を禁止（スケール事故防止） */
-  transform: none;
+  /* ✅ UI本体は transform / zoom を使わせない */
+  transform: none !important;
 }
