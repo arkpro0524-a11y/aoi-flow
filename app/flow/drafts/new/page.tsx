@@ -1,10 +1,17 @@
-// /app/flow/drafts/new/page.tsx
+// FILE: /app/flow/drafts/new/page.tsx
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
-import { addDoc, collection, doc, getDoc, serverTimestamp, updateDoc } from "firebase/firestore";
+import {
+  addDoc,
+  collection,
+  doc,
+  getDoc,
+  serverTimestamp,
+  updateDoc,
+} from "firebase/firestore";
 import { auth, db } from "@/firebase";
 
 type Brand = "vento" | "riva";
@@ -23,7 +30,7 @@ type DraftDoc = {
   x: string;
 
   ig3: string[];
-  imageUrl?: string;
+  imageUrl?: string; // data:image でもURLでもOK
 
   overlayEnabled: boolean;
   overlayText: string;
@@ -57,50 +64,10 @@ const DEFAULT: DraftDoc = {
   overlayBgOpacity: 0.45,
 };
 
-const UI = {
-  gap: 12,
-  leftWidth: "56%",
-  rightWidth: "44%",
-  cardPadding: 12,
-
-  hVision: 64,
-  hIG: 110,
-  hX: 90,
-  hMemo: 72,
-  hOverlayText: 84,
-
-  previewMaxWidth: 400,
-  previewRadius: 11,
-
-  stepBtnSize: 36,
-  showLoadingText: true,
-
-  FONT: {
-    labelPx: 12,
-    chipPx: 12,
-    inputPx: 14,
-    inputLineHeight: 1.55,
-    buttonPx: 13,
-    overlayPreviewBasePx: 18,
-    overlayCanvasBasePx: 44,
-  },
-
-  FORM: {
-    bg: "rgba(0,0,0,0.55)",
-    border: "rgba(255,255,255,0.18)",
-    text: "rgba(255,255,255,0.96)",
-    placeholder: "rgba(255,255,255,0.45)",
-    ring: "rgba(255,255,255,0.22)",
-  },
-
-  rightStickyTopPx: 96,
-
-  RANGE: {
-    boxPad: 8,
-    headerMb: 6,
-    valuePadY: 5,
-    valuePadX: 10,
-  },
+const formStyle: React.CSSProperties = {
+  background: "rgba(255,255,255,0.08)",
+  borderColor: "rgba(255,255,255,0.18)",
+  color: "rgba(255,255,255,0.92)",
 };
 
 function clamp(n: number, min: number, max: number) {
@@ -115,39 +82,27 @@ function splitKeywords(text: string) {
     .slice(0, 12);
 }
 
-const formStyle: React.CSSProperties = {
-  background: UI.FORM.bg,
-  borderColor: UI.FORM.border,
-  color: UI.FORM.text,
-  caretColor: UI.FORM.text,
-  fontSize: UI.FONT.inputPx,
-  lineHeight: UI.FONT.inputLineHeight as any,
-};
-
-// 省略：Btn / Chip / RangeControl はあなたのまま（そのままコピペでOK）
-function Btn(props: any) {
+function Btn(props: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  disabled?: boolean;
+  variant?: "primary" | "secondary" | "ghost";
+  className?: string;
+}) {
   const variant = props.variant ?? "primary";
   const disabled = !!props.disabled;
 
   const base =
-    "inline-flex items-center justify-center gap-2 rounded-full px-5 py-2 font-black transition " +
-    "select-none whitespace-nowrap";
-
+    "inline-flex items-center justify-center gap-2 rounded-full px-5 py-2 font-black transition select-none whitespace-nowrap";
   const styles: Record<string, string> = {
-    primary:
-      "bg-white text-black hover:bg-white/92 border border-white/80 shadow-[0_14px_34px_rgba(0,0,0,0.60)]",
-    secondary:
-      "bg-white/18 text-white hover:bg-white/26 border border-white/40 shadow-[0_12px_28px_rgba(0,0,0,0.55)]",
-    ghost:
-      "bg-black/10 text-white/92 hover:bg-white/10 border border-white/30 shadow-[0_10px_24px_rgba(0,0,0,0.40)]",
-    danger:
-      "bg-red-500/92 text-white hover:bg-red-500 border border-red-200/40 shadow-[0_14px_34px_rgba(0,0,0,0.60)]",
+    primary: "bg-white text-black hover:bg-white/92 border border-white/80",
+    secondary: "bg-white/18 text-white hover:bg-white/26 border border-white/40",
+    ghost: "bg-black/10 text-white/92 hover:bg-white/10 border border-white/30",
   };
 
   return (
     <button
       type="button"
-      title={props.title}
       onClick={props.onClick}
       disabled={disabled}
       className={[
@@ -156,81 +111,58 @@ function Btn(props: any) {
         disabled ? "opacity-40 cursor-not-allowed" : "active:scale-[0.99]",
         props.className ?? "",
       ].join(" ")}
-      style={{ fontSize: UI.FONT.buttonPx }}
+      style={{ fontSize: 13 }}
     >
       {props.children}
     </button>
   );
 }
 
-function Chip(props: any) {
+function ChipLabel({ label }: { label: string }) {
   return (
     <div
-      className={[
-        "inline-flex items-center rounded-full px-3 py-1 font-bold",
-        "bg-black/55 border border-white/25 text-white/90",
-        props.className ?? "",
-      ].join(" ")}
-      style={{ fontSize: UI.FONT.chipPx }}
+      className="inline-flex items-center rounded-full px-3 py-1 font-bold bg-black/55 border border-white/25 text-white/90"
+      style={{ fontSize: 12 }}
     >
-      {props.children}
+      {label}
     </div>
   );
 }
 
-function RangeControl(props: any) {
-  const v = props.value;
-
-  const set = (next: number) => {
-    const fixed = Number(next.toFixed(4));
-    props.onChange(clamp(fixed, props.min, props.max));
-  };
-
-  const bump = (delta: number) => set(v + delta);
-  const size = UI.stepBtnSize;
+function RangeControl(props: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  format: (v: number) => string;
+  onChange: (v: number) => void;
+}) {
+  const { label, value, min, max, step, format, onChange } = props;
 
   return (
-    <div className="rounded-2xl border border-white/14 bg-black/25" style={{ padding: UI.RANGE.boxPad }}>
-      <div className="flex items-center justify-between gap-2" style={{ marginBottom: UI.RANGE.headerMb }}>
-        <div className="text-white/85 font-bold" style={{ fontSize: UI.FONT.labelPx }}>
-          {props.label}
-        </div>
-
-        <div className="flex items-center gap-1.5">
-          <button
-            type="button"
-            onClick={() => bump(-props.step)}
-            className="rounded-full border border-white/25 bg-white/12 hover:bg-white/18 transition"
-            style={{ width: size, height: size, fontWeight: 900 }}
-            title="小さく"
-          >
-            −
-          </button>
-
-          <div
-            className="text-center font-black text-white/95 rounded-full bg-black/55 border border-white/22"
-            style={{
-              fontSize: UI.FONT.labelPx,
-              padding: `${UI.RANGE.valuePadY}px ${UI.RANGE.valuePadX}px`,
-              minWidth: 68,
-            }}
-          >
-            {props.format(v)}
-          </div>
-
-          <button
-            type="button"
-            onClick={() => bump(props.step)}
-            className="rounded-full border border-white/25 bg-white/12 hover:bg-white/18 transition"
-            style={{ width: size, height: size, fontWeight: 900 }}
-            title="大きく"
-          >
-            +
-          </button>
+    <div className="rounded-2xl border border-white/12 bg-black/25 p-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="text-white/80 text-xs">{label}</div>
+        <div className="text-white/90 text-xs font-black tabular-nums">
+          {format(value)}
         </div>
       </div>
 
-      <input type="range" min={props.min} max={props.max} step={props.step} value={v} onChange={(e) => set(Number(e.target.value))} className="w-full" />
+      <input
+        className="mt-2 w-full"
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+      />
+
+      <div className="mt-1 flex justify-between text-[11px] text-white/40 tabular-nums">
+        <span>{format(min)}</span>
+        <span>{format(max)}</span>
+      </div>
     </div>
   );
 }
@@ -281,46 +213,40 @@ export default function NewDraftPage() {
 
         const data = snap.data() as any;
 
-        const brand: Brand = data.brand === "riva" ? "riva" : "vento";
-        const phase: Phase = data.phase === "ready" ? "ready" : data.phase === "posted" ? "posted" : "draft";
-
-        const vision = typeof data.vision === "string" ? data.vision : "";
-        const keywordsText = typeof data.keywordsText === "string" ? data.keywordsText : "";
-        const memo = typeof data.memo === "string" ? data.memo : "";
-
-        const ig =
-          typeof data.ig === "string" ? data.ig : typeof data.caption_final === "string" ? data.caption_final : "";
-        const x = typeof data.x === "string" ? data.x : "";
-
-        const ig3 = Array.isArray(data.ig3) ? data.ig3.map(String).slice(0, 3) : [];
-        const imageUrl = typeof data.imageUrl === "string" && data.imageUrl ? data.imageUrl : undefined;
-
-        const overlayEnabled = typeof data.overlayEnabled === "boolean" ? data.overlayEnabled : true;
-        const overlayText = typeof data.overlayText === "string" ? data.overlayText : (ig || "");
-
-        const overlayFontScale =
-          typeof data.overlayFontScale === "number" ? clamp(data.overlayFontScale, 0.6, 1.6) : 1.0;
-        const overlayY = typeof data.overlayY === "number" ? clamp(data.overlayY, 0, 100) : 75;
-        const overlayBgOpacity =
-          typeof data.overlayBgOpacity === "number" ? clamp(data.overlayBgOpacity, 0, 0.85) : 0.45;
-
         setDraftId(id);
         setD({
           userId: uid,
-          brand,
-          phase,
-          vision,
-          keywordsText,
-          memo,
-          ig,
-          x,
-          ig3,
-          imageUrl,
-          overlayEnabled,
-          overlayText,
-          overlayFontScale,
-          overlayY,
-          overlayBgOpacity,
+          brand: data.brand === "riva" ? "riva" : "vento",
+          phase:
+            data.phase === "ready"
+              ? "ready"
+              : data.phase === "posted"
+              ? "posted"
+              : "draft",
+          vision: typeof data.vision === "string" ? data.vision : "",
+          keywordsText:
+            typeof data.keywordsText === "string" ? data.keywordsText : "",
+          memo: typeof data.memo === "string" ? data.memo : "",
+          ig: typeof data.ig === "string" ? data.ig : "",
+          x: typeof data.x === "string" ? data.x : "",
+          ig3: Array.isArray(data.ig3) ? data.ig3.map(String).slice(0, 3) : [],
+          imageUrl:
+            typeof data.imageUrl === "string" && data.imageUrl
+              ? data.imageUrl
+              : undefined,
+          overlayEnabled:
+            typeof data.overlayEnabled === "boolean" ? data.overlayEnabled : true,
+          overlayText:
+            typeof data.overlayText === "string" ? data.overlayText : "",
+          overlayFontScale:
+            typeof data.overlayFontScale === "number"
+              ? data.overlayFontScale
+              : 1.0,
+          overlayY: typeof data.overlayY === "number" ? data.overlayY : 75,
+          overlayBgOpacity:
+            typeof data.overlayBgOpacity === "number"
+              ? data.overlayBgOpacity
+              : 0.45,
           updatedAt: data.updatedAt,
           createdAt: data.createdAt,
         });
@@ -330,18 +256,6 @@ export default function NewDraftPage() {
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [uid, id]);
-
-  const brandLabel = d.brand === "vento" ? "VENTO" : "RIVA";
-  const phaseLabel = d.phase === "draft" ? "下書き" : d.phase === "ready" ? "投稿待ち" : "投稿済み";
-  const canGenerate = d.vision.trim().length > 0 && !busy;
-
-  // ✅ Firestoreへ保存する画像URLを軽くする（data:image/... は保存しない）
-  function safeImageUrlForFirestore(url?: string) {
-    const s = (url ?? "").trim();
-    if (!s) return null;
-    if (s.startsWith("data:image/")) return null; // ← ここがポイント（壊れ方を止める）
-    return s;
-  }
 
   async function saveDraft(partial?: Partial<DraftDoc>) {
     if (!uid) return;
@@ -355,57 +269,366 @@ export default function NewDraftPage() {
       vision: next.vision,
       keywordsText: next.keywordsText,
       memo: next.memo,
-
       ig: next.ig,
       x: next.x,
       ig3: next.ig3,
-
-      // ✅ ここだけ “軽量化” （base64はDBに入れない）
-      imageUrl: safeImageUrlForFirestore(next.imageUrl),
-
+      imageUrl: next.imageUrl ?? null, // まず復旧優先で保存
       caption_final: next.ig,
-
       overlayEnabled: next.overlayEnabled,
       overlayText: next.overlayText,
       overlayFontScale: next.overlayFontScale,
       overlayY: next.overlayY,
       overlayBgOpacity: next.overlayBgOpacity,
-
       updatedAt: serverTimestamp(),
     };
 
-    try {
-      if (!draftId) {
-        payload.createdAt = serverTimestamp();
-        const ref = await addDoc(collection(db, "drafts"), payload);
-        setDraftId(ref.id);
-        router.replace(`/flow/drafts/new?id=${encodeURIComponent(ref.id)}`);
-      } else {
-        await updateDoc(doc(db, "drafts", draftId), payload);
-      }
+    if (!draftId) {
+      payload.createdAt = serverTimestamp();
+      const ref = await addDoc(collection(db, "drafts"), payload);
+      setDraftId(ref.id);
+      router.replace(`/flow/drafts/new?id=${encodeURIComponent(ref.id)}`);
+    } else {
+      await updateDoc(doc(db, "drafts", draftId), payload);
+    }
 
-      // ✅ 保存した内容と画面の内容を必ず一致させる
-      setD(next);
+    setD(next);
+  }
+
+  async function generateCaptions() {
+    if (!uid) return;
+    if (!d.vision.trim()) return alert("Vision（必須）を入力してください");
+
+    setBusy(true);
+    try {
+      const token = await auth.currentUser?.getIdToken(true);
+      if (!token) throw new Error("no token");
+
+      const r = await fetch("/api/generate-captions", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          brandId: d.brand,
+          vision: d.vision.trim(),
+          keywords: splitKeywords(d.keywordsText),
+          tone: "",
+        }),
+      });
+
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || "caption error");
+
+      const ig = typeof j.instagram === "string" ? j.instagram : "";
+      const x = typeof j.x === "string" ? j.x : "";
+      const ig3 = Array.isArray(j.ig3) ? j.ig3.map(String).slice(0, 3) : [];
+
+      const nextOverlay = (d.overlayText || "").trim()
+        ? d.overlayText
+        : ig;
+
+      setD((p) => ({ ...p, ig, x, ig3, overlayText: nextOverlay }));
+      await saveDraft({ ig, x, ig3, overlayText: nextOverlay, phase: "draft" });
     } catch (e) {
       console.error(e);
-      alert("保存に失敗しました（画像が大きすぎる可能性）");
-      // ここで落ちても画面は維持（編集継続できる）
+      alert("文章生成に失敗しました");
+    } finally {
+      setBusy(false);
     }
   }
 
-  // 以下：あなたのコード（generateCaptions / generateImage / canvas合成 / UI表示）はそのまま使ってOK
-  // ただし「保存される画像」は Firestore には入らないので、一覧で表示したいなら次は Storage 化が必要
+  async function generateImage() {
+    if (!uid) return;
+    if (!d.vision.trim()) return alert("Vision（必須）を入力してください");
 
-  // --- ここから下、あなたの元コードをそのまま貼り付けてOK ---
-  // （省略：この先は貼ると長すぎるので、今のあなたのファイルの saveDraft 以外は変更不要です）
+    setBusy(true);
+    try {
+      const token = await auth.currentUser?.getIdToken(true);
+      if (!token) throw new Error("no token");
+
+      const r = await fetch("/api/generate-image", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          brandId: d.brand,
+          vision: d.vision.trim(),
+          keywords: splitKeywords(d.keywordsText),
+          tone: "",
+        }),
+      });
+
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || "image error");
+
+      const b64 = typeof j.b64 === "string" ? j.b64 : "";
+      if (!b64) throw new Error("no b64");
+
+      const dataUrl = `data:image/png;base64,${b64}`;
+      setD((prev) => ({ ...prev, imageUrl: dataUrl }));
+      await saveDraft({ imageUrl: dataUrl, phase: "draft" }); // 復旧優先で保存
+    } catch (e) {
+      console.error(e);
+      alert("画像生成に失敗しました");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
-    <div className="h-full min-h-0 flex" style={{ gap: UI.gap }}>
-      {/* ここはあなたの元コードのままでOK */}
-      <div className="text-white/70 p-6">
-        ✅ saveDraft のみ “data:image をFirestoreへ保存しない” 修正を入れました。<br />
-        このファイルはあなたの元のUIをそのまま残して、saveDraft関数だけ置き換えてください。
+    <div className="w-full">
+      {loadBusy ? (
+        <div className="text-white/70 text-sm mb-3">読み込み中...</div>
+      ) : null}
+
+      {/* ✅ スマホ=1列 / PC=2列 */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
+        {/* 左（入力） */}
+        <section className="flex flex-col gap-3">
+          <div className="rounded-2xl border border-white/12 bg-black/25 p-3">
+            <div className="text-white/80 text-xs mb-2">Brand</div>
+            <div className="flex gap-2 flex-wrap">
+              <Btn
+                variant={d.brand === "vento" ? "primary" : "secondary"}
+                onClick={() => setD((p) => ({ ...p, brand: "vento" }))}
+              >
+                VENTO
+              </Btn>
+              <Btn
+                variant={d.brand === "riva" ? "primary" : "secondary"}
+                onClick={() => setD((p) => ({ ...p, brand: "riva" }))}
+              >
+                RIVA
+              </Btn>
+            </div>
+
+            <div className="text-white/80 text-xs mt-4 mb-2">Vision（必須）</div>
+            <textarea
+              value={d.vision}
+              onChange={(e) => setD((p) => ({ ...p, vision: e.target.value }))}
+              className="w-full rounded-xl border p-3 outline-none"
+              style={{ ...formStyle, minHeight: 90 }}
+              placeholder="例：RIVAの世界観を1〜2行で"
+            />
+
+            <div className="text-white/80 text-xs mt-4 mb-2">Keywords（任意）</div>
+            <input
+              value={d.keywordsText}
+              onChange={(e) =>
+                setD((p) => ({ ...p, keywordsText: e.target.value }))
+              }
+              className="w-full rounded-xl border p-3 outline-none"
+              style={formStyle}
+              placeholder="例：クラシック, 丁寧, 木目, 余白"
+            />
+
+            <div className="mt-4 flex flex-wrap gap-2">
+              <Btn
+                variant="primary"
+                disabled={!d.vision.trim() || busy}
+                onClick={generateCaptions}
+              >
+                文章を生成（IG＋X）
+              </Btn>
+              <Btn
+                variant="secondary"
+                disabled={!d.vision.trim() || busy}
+                onClick={generateImage}
+              >
+                画像を生成（正方形）
+              </Btn>
+              <Btn
+                variant="ghost"
+                disabled={!uid || busy}
+                onClick={() => saveDraft()}
+              >
+                保存
+              </Btn>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-white/12 bg-black/25 p-3">
+            <div className="flex items-center justify-between">
+              <div className="text-white/80 text-xs">Instagram本文（メイン）</div>
+              <Btn
+                variant="secondary"
+                className="px-3 py-1"
+                onClick={() => navigator.clipboard.writeText(d.ig)}
+              >
+                コピー
+              </Btn>
+            </div>
+            <textarea
+              value={d.ig}
+              onChange={(e) => setD((p) => ({ ...p, ig: e.target.value }))}
+              className="mt-2 w-full rounded-xl border p-3 outline-none"
+              style={{ ...formStyle, minHeight: 120 }}
+            />
+          </div>
+
+          <div className="rounded-2xl border border-white/12 bg-black/25 p-3">
+            <div className="flex items-center justify-between">
+              <div className="text-white/80 text-xs">X本文</div>
+              <Btn
+                variant="secondary"
+                className="px-3 py-1"
+                onClick={() => navigator.clipboard.writeText(d.x)}
+              >
+                コピー
+              </Btn>
+            </div>
+            <textarea
+              value={d.x}
+              onChange={(e) => setD((p) => ({ ...p, x: e.target.value }))}
+              className="mt-2 w-full rounded-xl border p-3 outline-none"
+              style={{ ...formStyle, minHeight: 90 }}
+            />
+          </div>
+        </section>
+
+        {/* 右（プレビュー） */}
+        <section className="flex flex-col gap-3 md:sticky md:top-[88px]">
+          <div className="rounded-2xl border border-white/12 bg-black/25 p-3">
+            <div className="text-white/80 text-xs mb-2">正方形プレビュー</div>
+
+            <div className="rounded-2xl border border-white/12 bg-black/30 p-3">
+              <div
+                className="mx-auto"
+                style={{
+                  width: "100%",
+                  maxWidth: 420,
+                  aspectRatio: "1 / 1",
+                  borderRadius: 12,
+                  overflow: "hidden",
+                  position: "relative",
+                  background: "rgba(255,255,255,0.04)",
+                  border: "1px solid rgba(255,255,255,0.10)",
+                }}
+              >
+                {d.imageUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={d.imageUrl}
+                    alt="preview"
+                    draggable={false}
+                    style={{
+                      width: "100%",
+                      height: "100%",
+                      objectFit: "contain",
+                      display: "block",
+                    }}
+                  />
+                ) : (
+                  <div className="h-full w-full grid place-items-center text-sm text-white/55">
+                    NO IMAGE
+                  </div>
+                )}
+
+                {d.overlayEnabled && (d.overlayText || "").trim() ? (
+                  <div
+                    style={{
+                      position: "absolute",
+                      left: 0,
+                      right: 0,
+                      top: `${clamp(d.overlayY, 0, 100)}%`,
+                      transform: "translateY(-50%)",
+                      padding: "14px 14px",
+                      background: `rgba(0,0,0,${clamp(d.overlayBgOpacity, 0, 0.85)})`,
+                    }}
+                  >
+                    <div
+                      style={{
+                        textAlign: "center",
+                        fontWeight: 900,
+                        lineHeight: 1.35,
+                        fontSize: `${Math.round(
+                          18 * clamp(d.overlayFontScale, 0.6, 1.6)
+                        )}px`,
+                        color: "rgba(255,255,255,0.95)",
+                        textShadow: "0 2px 10px rgba(0,0,0,0.45)",
+                        whiteSpace: "pre-wrap",
+                      }}
+                    >
+                      {(d.overlayText || "").trim()}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="mt-3 flex flex-wrap gap-2 items-center">
+                <ChipLabel label="文字表示" />
+                <Btn
+                  variant="secondary"
+                  onClick={() =>
+                    setD((p) => ({ ...p, overlayEnabled: !p.overlayEnabled }))
+                  }
+                >
+                  {d.overlayEnabled ? "ON" : "OFF"}
+                </Btn>
+              </div>
+
+              <div className="mt-3 rounded-2xl border border-white/12 bg-black/25 p-3">
+                <div className="text-white/80 text-xs mb-2">載せる文字（本文とは別）</div>
+                <textarea
+                  value={d.overlayText}
+                  onChange={(e) =>
+                    setD((p) => ({ ...p, overlayText: e.target.value }))
+                  }
+                  className="w-full rounded-xl border p-3 outline-none"
+                  style={{ ...formStyle, minHeight: 90 }}
+                />
+              </div>
+
+              <div className="mt-3 grid gap-3">
+                <RangeControl
+                  label="文字サイズ"
+                  value={d.overlayFontScale}
+                  min={0.6}
+                  max={1.6}
+                  step={0.05}
+                  format={(v) => v.toFixed(2)}
+                  onChange={(v) => setD((p) => ({ ...p, overlayFontScale: v }))}
+                />
+                <RangeControl
+                  label="位置（上下）"
+                  value={d.overlayY}
+                  min={0}
+                  max={100}
+                  step={1}
+                  format={(v) => String(Math.round(v))}
+                  onChange={(v) => setD((p) => ({ ...p, overlayY: v }))}
+                />
+                <RangeControl
+                  label="背景帯の濃さ"
+                  value={d.overlayBgOpacity}
+                  min={0}
+                  max={0.85}
+                  step={0.05}
+                  format={(v) => v.toFixed(2)}
+                  onChange={(v) =>
+                    setD((p) => ({ ...p, overlayBgOpacity: v }))
+                  }
+                />
+              </div>
+
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Btn
+                  variant="ghost"
+                  disabled={!uid || busy}
+                  onClick={() => saveDraft()}
+                >
+                  調整を保存
+                </Btn>
+              </div>
+
+              <canvas ref={canvasRef} style={{ display: "none" }} />
+            </div>
+          </div>
+        </section>
       </div>
-      <canvas ref={canvasRef} style={{ display: "none" }} />
     </div>
   );
 }
