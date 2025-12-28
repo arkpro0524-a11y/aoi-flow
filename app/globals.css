@@ -3,6 +3,21 @@
 @tailwind utilities;
 
 /* ---------------------------------------------
+   0) 絶対防御：リンク色（visited紫）を完全に殺す
+   - Tailwindの visited: より確実（全ページ一括）
+--------------------------------------------- */
+a,
+a:visited {
+  color: inherit !important;
+  text-decoration: none !important;
+}
+a:hover,
+a:active,
+a:focus {
+  color: inherit !important;
+}
+
+/* ---------------------------------------------
    1) リセット（基準固定）
 --------------------------------------------- */
 html,
@@ -10,12 +25,12 @@ body {
   height: 100%;
 }
 
-/* ✅ Tailwind(rem)の基準を固定（これが全体巨大化の最短対策） */
+/* ✅ rem基準を固定（巨大化対策） */
 html {
   font-size: 16px;
 }
 
-/* ✅ iOS/Safariの勝手な文字拡大（text inflation）を確実に止める */
+/* ✅ iOS/Safari text inflation を止める */
 body {
   -webkit-text-size-adjust: none;
   text-size-adjust: none;
@@ -133,12 +148,12 @@ body::after {
 }
 
 /* ---------------------------------------------
-   4) UI本体を前面に固定
+   4) UI本体を前面に固定（背景より上）
 --------------------------------------------- */
 #_appRoot {
   position: relative;
   z-index: 1;
 
-  /* ✅ UI本体は transform を禁止（スケール事故の巻き込み防止） */
+  /* ✅ UI本体は transform を禁止（スケール事故防止） */
   transform: none;
 }
