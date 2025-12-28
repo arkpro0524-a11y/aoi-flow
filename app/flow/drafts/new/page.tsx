@@ -66,8 +66,6 @@ const DEFAULT: DraftDoc = {
 
 const UI = {
   gap: 12,
-  leftWidth: "56%",
-  rightWidth: "44%",
   cardPadding: 12,
 
   hVision: 64,
@@ -100,6 +98,7 @@ const UI = {
     ring: "rgba(255,255,255,0.22)",
   },
 
+  // 右側stickyの基準（PCだけで使う）
   rightStickyTopPx: 96,
 
   RANGE: {
@@ -339,7 +338,6 @@ export default function NewDraftPage() {
         const overlayEnabled =
           typeof data.overlayEnabled === "boolean" ? data.overlayEnabled : true;
 
-        // overlayText が無い時だけ ig を初期値にする（以後は overlayText を守る）
         const overlayText =
           typeof data.overlayText === "string" ? data.overlayText : (ig || "");
 
@@ -424,7 +422,6 @@ export default function NewDraftPage() {
       await updateDoc(doc(db, "drafts", draftId), payload);
     }
 
-    // ✅ 保存した内容と画面の内容を必ず一致させる
     setD(next);
   }
 
@@ -465,10 +462,8 @@ export default function NewDraftPage() {
       const x = typeof j.x === "string" ? j.x : "";
       const ig3 = Array.isArray(j.ig3) ? j.ig3.map(String).slice(0, 3) : [];
 
-      // ✅ overlayText は「未入力の時だけ」自動で ig を入れる（勝手に上書きしない）
       const nextOverlay = (d.overlayText || "").trim() ? d.overlayText : ig;
 
-      // 画面更新
       setD((prev) => ({
         ...prev,
         ig,
@@ -477,7 +472,6 @@ export default function NewDraftPage() {
         overlayText: (prev.overlayText || "").trim() ? prev.overlayText : ig,
       }));
 
-      // ✅ 保存も同じ overlay 判定で統一（ズレ防止）
       await saveDraft({
         ig,
         x,
@@ -651,7 +645,6 @@ export default function NewDraftPage() {
     if (next === "posted") router.replace("/flow/drafts");
   }
 
-  // ✅ IG3は「本文を絶対に書き換えない」ための専用処理
   function applyIg3ToOverlayOnly(text: string) {
     const t = (text ?? "").trim();
     if (!t) return;
@@ -661,9 +654,13 @@ export default function NewDraftPage() {
   const previewOverlayText = (d.overlayText || "").trim();
 
   return (
-    <div className="h-full min-h-0 flex" style={{ gap: UI.gap }}>
-      {/* 左 */}
-      <section className="min-h-0 flex flex-col gap-3" style={{ width: UI.leftWidth }}>
+    // ✅ ここが重要：スマホは「縦積み」、PCだけ「左右2カラム」
+    <div
+      className="min-h-screen w-full flex flex-col lg:flex-row"
+      style={{ gap: UI.gap }}
+    >
+      {/* 左：スマホは幅100%、PCは56% */}
+      <section className="min-h-0 flex flex-col gap-3 w-full lg:w-[56%]">
         <div className="shrink-0 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 flex-wrap" />
           {UI.showLoadingText && loadBusy ? (
@@ -673,12 +670,15 @@ export default function NewDraftPage() {
           ) : null}
         </div>
 
-        {/* Brand / Vision / Keywords / 操作 */}
-        <div className="rounded-2xl border border-white/12 bg-black/25" style={{ padding: UI.cardPadding }}>
+        <div
+          className="rounded-2xl border border-white/12 bg-black/25"
+          style={{ padding: UI.cardPadding }}
+        >
           <div className="text-white/80 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
             Brand
           </div>
-          <div className="flex items-center gap-2">
+
+          <div className="flex items-center gap-2 flex-wrap">
             <Btn
               variant={d.brand === "vento" ? "primary" : "secondary"}
               onClick={() => setD((p) => ({ ...p, brand: "vento" }))}
@@ -691,7 +691,7 @@ export default function NewDraftPage() {
             >
               RIVA
             </Btn>
-            <Chip className="ml-2">
+            <Chip className="ml-0 lg:ml-2">
               {brandLabel} / {phaseLabel}
             </Chip>
           </div>
@@ -731,8 +731,10 @@ export default function NewDraftPage() {
           </div>
         </div>
 
-        {/* IG */}
-        <div className="rounded-2xl border border-white/12 bg-black/25" style={{ padding: UI.cardPadding }}>
+        <div
+          className="rounded-2xl border border-white/12 bg-black/25"
+          style={{ padding: UI.cardPadding }}
+        >
           <div className="flex items-center justify-between gap-2">
             <div className="text-white/80" style={{ fontSize: UI.FONT.labelPx }}>
               Instagram本文（メイン）
@@ -754,8 +756,10 @@ export default function NewDraftPage() {
           />
         </div>
 
-        {/* X */}
-        <div className="rounded-2xl border border-white/12 bg-black/25" style={{ padding: UI.cardPadding }}>
+        <div
+          className="rounded-2xl border border-white/12 bg-black/25"
+          style={{ padding: UI.cardPadding }}
+        >
           <div className="flex items-center justify-between">
             <div className="text-white/80" style={{ fontSize: UI.FONT.labelPx }}>
               X本文
@@ -776,8 +780,10 @@ export default function NewDraftPage() {
           />
         </div>
 
-        {/* メモ + 状態 */}
-        <div className="rounded-2xl border border-white/12 bg-black/25" style={{ padding: UI.cardPadding }}>
+        <div
+          className="rounded-2xl border border-white/12 bg-black/25"
+          style={{ padding: UI.cardPadding }}
+        >
           <div className="text-white/80 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
             メモ（任意）
           </div>
@@ -791,14 +797,20 @@ export default function NewDraftPage() {
             <Btn variant="primary" disabled={!uid || busy} onClick={() => setPhase("ready")}>
               投稿待ちにする
             </Btn>
-            <Btn variant="secondary" disabled={!uid || busy} onClick={() => setPhase("posted")}>
+            <Btn
+              variant="secondary"
+              disabled={!uid || busy}
+              onClick={() => setPhase("posted")}
+            >
               投稿済みにする
             </Btn>
           </div>
         </div>
 
-        {/* IG3 */}
-        <div className="rounded-2xl border border-white/12 bg-black/20" style={{ padding: UI.cardPadding }}>
+        <div
+          className="rounded-2xl border border-white/12 bg-black/20"
+          style={{ padding: UI.cardPadding }}
+        >
           <div className="text-white/70 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
             補助：Instagram 3案（※本文は絶対に上書きしない）
           </div>
@@ -819,7 +831,7 @@ export default function NewDraftPage() {
                     color: UI.FORM.text,
                   }}
                 >
-                  <div className="flex items-center justify-between gap-2 mb-2">
+                  <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
                     <div className="text-white/55" style={{ fontSize: UI.FONT.labelPx }}>
                       案 {i + 1}
                     </div>
@@ -859,19 +871,13 @@ export default function NewDraftPage() {
         </div>
       </section>
 
-      {/* 右（sticky） */}
-      <section
-        className="min-h-0 flex flex-col gap-4"
-        style={{
-          width: UI.rightWidth,
-          position: "sticky",
-          top: UI.rightStickyTopPx,
-          alignSelf: "flex-start",
-          height: `calc(100vh - ${UI.rightStickyTopPx}px)`,
-        }}
-      >
-        <div className="min-h-0" style={{ flex: 1, overflow: "auto", paddingBottom: 8 }}>
-          <div className="rounded-2xl border border-white/12 bg-black/25" style={{ padding: UI.cardPadding }}>
+      {/* 右：スマホは「普通に下へ続く」、PCだけ sticky + 44% */}
+      <section className="min-h-0 flex flex-col gap-4 w-full lg:w-[44%] lg:sticky lg:top-[96px] lg:h-[calc(100vh-96px)]">
+        <div className="min-h-0 flex-1 overflow-visible lg:overflow-auto" style={{ paddingBottom: 8 }}>
+          <div
+            className="rounded-2xl border border-white/12 bg-black/25"
+            style={{ padding: UI.cardPadding }}
+          >
             <div className="text-white/80 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
               正方形プレビュー（成果物）
             </div>
