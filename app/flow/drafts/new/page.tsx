@@ -438,8 +438,13 @@ export default function NewDraftPage() {
 
     setBusy(true);
     try {
+      // ✅ 追加：Firebase ID Token（Bearer必須）
+      const token = await auth.currentUser?.getIdToken(true);
+      if (!token) throw new Error("no token");
+
+      // ✅ 修正：APIに合わせて brandId で送る（vento/riva）
       const body = {
-        brand: d.brand,
+        brandId: d.brand,
         vision,
         keywords: splitKeywords(d.keywordsText),
         tone: "",
@@ -447,7 +452,10 @@ export default function NewDraftPage() {
 
       const r = await fetch("/api/generate-captions", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify(body),
       });
 
@@ -494,8 +502,13 @@ export default function NewDraftPage() {
 
     setBusy(true);
     try {
+      // ✅ 追加：Firebase ID Token（Bearer必須）
+      const token = await auth.currentUser?.getIdToken(true);
+      if (!token) throw new Error("no token");
+
+      // ✅ 修正：APIに合わせて brandId で送る（vento/riva）
       const body = {
-        brand: d.brand,
+        brandId: d.brand,
         vision,
         keywords: splitKeywords(d.keywordsText),
         tone: "",
@@ -503,7 +516,10 @@ export default function NewDraftPage() {
 
       const r = await fetch("/api/generate-image", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify(body),
       });
 
