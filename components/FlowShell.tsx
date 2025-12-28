@@ -47,7 +47,9 @@ export default function FlowShell({ user, onLogout, children }: Props) {
           whiteSpace: "nowrap",
           color: active ? "rgba(255,255,255,0.98)" : "rgba(255,255,255,0.78)",
           background: active ? "rgba(255,255,255,0.22)" : "rgba(255,255,255,0.08)",
-          border: active ? "1px solid rgba(255,255,255,0.18)" : "1px solid rgba(255,255,255,0.10)",
+          border: active
+            ? "1px solid rgba(255,255,255,0.18)"
+            : "1px solid rgba(255,255,255,0.10)",
         }}
       >
         <span
@@ -136,20 +138,23 @@ export default function FlowShell({ user, onLogout, children }: Props) {
         </div>
       </header>
 
-      <div className="mx-auto w-full max-w-7xl px-4 md:px-6">
-        <div className="py-6 min-h-0">
-          <main className="min-h-0">
-            <div
-              className={cx(
-                "w-full min-h-0 rounded-3xl border border-white/10 bg-black/35 p-5 md:p-7 backdrop-blur",
-                "flex flex-col",
-                "[&_a]:text-white/90 [&_a:visited]:text-white/90 [&_a:hover]:text-white",
-                "[&_a]:no-underline"
-              )}
-            >
-              <div className="min-h-0 flex-1 overflow-auto">{children}</div>
-            </div>
-          </main>
+      {/* ✅ max-w-7xl を撤去：PC幅を殺さない */}
+      <div className="w-full px-3 sm:px-4 md:px-6">
+        <div className="mx-auto w-full max-w-[1600px]">
+          <div className="py-6 min-h-0">
+            <main className="min-h-0">
+              <div
+                className={cx(
+                  "w-full min-h-0 rounded-3xl border border-white/10 bg-black/35 p-5 md:p-7 backdrop-blur",
+                  "flex flex-col",
+                  "[&_a]:text-white/90 [&_a:visited]:text-white/90 [&_a:hover]:text-white",
+                  "[&_a]:no-underline"
+                )}
+              >
+                <div className="min-h-0 flex-1 overflow-auto">{children}</div>
+              </div>
+            </main>
+          </div>
         </div>
       </div>
     </div>
