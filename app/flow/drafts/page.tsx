@@ -30,23 +30,21 @@ type DraftRow = {
 };
 
 /**
- * ✅ ここだけ：サイズ調整（巨人UIを解消）
+ * ✅ サイズ調整（巨人UIを解消）
  * - ロジック/Firestore/Link は一切触らない
- * - “一覧” として見やすい標準サイズへ
  */
-const HEADER_TITLE_PX = 20; // 28 → 20
-const CARD_H = 160;         // 350 → 160
-const BRAND_W = 140;        // 250 → 140
-const PLATE_H = 110;        // 230 → 110
-const THUMB_BOX = 130;      // 300 → 130
+const HEADER_TITLE_PX = 20;
+const CARD_H = 160;
+const BRAND_W = 140;
+const PLATE_H = 110;
+const THUMB_BOX = 130;
 const THUMB_PAD = 0;
-const TITLE_PX = 20;        // 45 → 20
-const BRAND_PX = 20;        // 40 → 20
+const TITLE_PX = 20;
+const BRAND_PX = 20;
 
-// 余白も標準に
-const PAGE_PAD = 16;        // 20相当
-const CARD_PAD = 14;        // 20 → 14
-const COL_GAP = 14;         // 20 → 14
+const PAGE_PAD = 16;
+const CARD_PAD = 14;
+const COL_GAP = 14;
 
 export default function DraftsPage() {
   const toast = useToast();
@@ -73,6 +71,7 @@ export default function DraftsPage() {
         );
 
         const snap = await getDocs(qy);
+
         const list: DraftRow[] = snap.docs.map((doc) => {
           const data = doc.data() as DocumentData;
           const brand: Brand = data.brand === "riva" ? "riva" : "vento";
@@ -80,8 +79,9 @@ export default function DraftsPage() {
             data.phase === "ready"
               ? "ready"
               : data.phase === "posted"
-              ? "posted"
-              : "draft";
+                ? "posted"
+                : "draft";
+
           return {
             id: doc.id,
             userId: uid,
@@ -97,9 +97,11 @@ export default function DraftsPage() {
             updatedAt: data.updatedAt,
           };
         });
+
         setRows(list);
-      } catch {
-        toast.push("の取得に失敗しました");
+      } catch (e) {
+        console.error(e);
+        toast.push("下書き一覧の取得に失敗しました");
         setRows([]);
       }
     })();

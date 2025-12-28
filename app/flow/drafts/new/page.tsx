@@ -424,6 +424,7 @@ export default function NewDraftPage() {
       await updateDoc(doc(db, "drafts", draftId), payload);
     }
 
+    // ✅ 保存した内容と画面の内容を必ず一致させる
     setD(next);
   }
 
@@ -438,11 +439,9 @@ export default function NewDraftPage() {
 
     setBusy(true);
     try {
-      // ✅ 追加：Firebase ID Token（Bearer必須）
       const token = await auth.currentUser?.getIdToken(true);
       if (!token) throw new Error("no token");
 
-      // ✅ 修正：APIに合わせて brandId で送る（vento/riva）
       const body = {
         brandId: d.brand,
         vision,
@@ -466,22 +465,25 @@ export default function NewDraftPage() {
       const x = typeof j.x === "string" ? j.x : "";
       const ig3 = Array.isArray(j.ig3) ? j.ig3.map(String).slice(0, 3) : [];
 
-      // ✅ 本文は生成結果で更新（これはメインの1つだけ）
       // ✅ overlayText は「未入力の時だけ」自動で ig を入れる（勝手に上書きしない）
+      const nextOverlay = (d.overlayText || "").trim() ? d.overlayText : ig;
+
+      // 画面更新
       setD((prev) => ({
         ...prev,
         ig,
         x,
         ig3,
-        overlayText: prev.overlayText?.trim() ? prev.overlayText : ig,
+        overlayText: (prev.overlayText || "").trim() ? prev.overlayText : ig,
       }));
 
+      // ✅ 保存も同じ overlay 判定で統一（ズレ防止）
       await saveDraft({
         ig,
         x,
         ig3,
         phase: "draft",
-        overlayText: d.overlayText?.trim() ? d.overlayText : ig,
+        overlayText: nextOverlay,
       });
     } catch (e) {
       console.error(e);
@@ -502,11 +504,9 @@ export default function NewDraftPage() {
 
     setBusy(true);
     try {
-      // ✅ 追加：Firebase ID Token（Bearer必須）
       const token = await auth.currentUser?.getIdToken(true);
       if (!token) throw new Error("no token");
 
-      // ✅ 修正：APIに合わせて brandId で送る（vento/riva）
       const body = {
         brandId: d.brand,
         vision,
@@ -825,7 +825,6 @@ export default function NewDraftPage() {
                     </div>
 
                     <div className="flex items-center gap-2">
-                      {/* ✅ 本文は触らず、プレビュー文字だけ */}
                       <Btn
                         variant="secondary"
                         className="px-3 py-1"

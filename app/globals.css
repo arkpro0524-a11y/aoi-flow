@@ -1,10 +1,10 @@
+/* /app/globals.css */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 /* ---------------------------------------------
    0) 絶対防御：リンク色（visited紫）を完全に殺す
-   - Tailwindの visited: より確実（全ページ一括）
 --------------------------------------------- */
 a,
 a:visited {
