@@ -7,17 +7,20 @@ import type { User } from "firebase/auth";
 import React from "react";
 
 type Props = { user: User | null; onLogout: () => Promise<void>; children: React.ReactNode };
+
 function cx(...xs: (string | false | undefined)[]) {
   return xs.filter(Boolean).join(" ");
 }
 
 const UI = {
-  logo: "clamp(54px, 8vw, 90px)",
+  logo: "clamp(48px, 7vw, 90px)",
   title: "clamp(18px, 2.6vw, 34px)",
   sub: "clamp(12px, 1.8vw, 18px)",
+
   tabFont: "clamp(12px, 1.7vw, 16px)",
   tabPadY: "clamp(10px, 1.6vw, 14px)",
   tabPadX: "clamp(14px, 2.2vw, 22px)",
+
   logoutFont: "clamp(11px, 1.3vw, 12px)",
   logoutPadY: "clamp(10px, 1.6vw, 12px)",
   logoutPadX: "clamp(12px, 2.0vw, 16px)",
@@ -50,6 +53,7 @@ export default function FlowShell({ user, onLogout, children }: Props) {
           border: active
             ? "1px solid rgba(255,255,255,0.18)"
             : "1px solid rgba(255,255,255,0.10)",
+          flex: "0 0 auto", // ✅ スマホで縮めて崩さない（横スクロール前提）
         }}
       >
         <span
@@ -79,7 +83,9 @@ export default function FlowShell({ user, onLogout, children }: Props) {
       </div>
 
       <header className="sticky top-0 z-30 border-b border-white/12 bg-black/45 backdrop-blur">
-        <div className="flex items-center justify-between gap-4 px-4 md:px-6 py-3">
+        {/* ✅ 重要：ここを “wrap” & “min-w-0” でスマホのはみ出しを止める */}
+        <div className="flex flex-wrap items-center gap-3 px-4 md:px-6 py-3">
+          {/* 左：ロゴ */}
           <div className="flex items-center gap-3 md:gap-4 shrink-0">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
@@ -98,7 +104,8 @@ export default function FlowShell({ user, onLogout, children }: Props) {
             </div>
           </div>
 
-          <div className="flex-1 min-w-0 flex justify-center">
+          {/* 中央：タブ（スマホは横スクロールで「はみ出ない」） */}
+          <div className="flex-1 min-w-0">
             <div
               style={{
                 display: "flex",
@@ -110,16 +117,23 @@ export default function FlowShell({ user, onLogout, children }: Props) {
                 overflowX: "auto",
                 maxWidth: "100%",
                 WebkitOverflowScrolling: "touch",
+                // ✅ スクロールバーは見せない（iOS/Chrome）
+                scrollbarWidth: "none",
+                msOverflowStyle: "none",
               }}
+              className="[&::-webkit-scrollbar]:hidden"
             >
               <Tab href="/flow/drafts" label="下書き一覧" />
               <Tab href="/flow/drafts/new" label="新規作成" />
               <Tab href="/flow/inbox" label="投稿待ち" />
+              {/* ✅ 追加：投稿済み */}
+              <Tab href="/flow/posted" label="投稿済み" />
               <Tab href="/flow/brands" label="設定" />
             </div>
           </div>
 
-          <div className="flex items-center gap-3 shrink-0">
+          {/* 右：ログアウト（スマホでは右端に押し込まれ、無理なら次の行に落ちる） */}
+          <div className="flex items-center gap-3 shrink-0 ml-auto">
             <button
               onClick={logout}
               className="rounded-full transition hover:brightness-110"
