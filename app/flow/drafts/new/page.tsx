@@ -74,14 +74,11 @@ const UI = {
   hMemo: 72,
   hOverlayText: 84,
 
-  previewMaxWidth: 420,
+  previewMaxWidth: 400,
   previewRadius: 11,
 
   stepBtnSize: 36,
   showLoadingText: true,
-
-  // ✅ 右カラムの「外枠padding」
-  rightOuterPadding: 8,
 
   FONT: {
     labelPx: 12,
@@ -99,9 +96,7 @@ const UI = {
     text: "rgba(255,255,255,0.96)",
   },
 
-  // ✅ ここが「右の上余白」そのもの
-  // 25 → 6 にする（もっと詰めたいなら 0）
-  rightStickyTopPx: 6,
+  rightStickyTopPx: 25,
 
   RANGE: {
     boxPad: 8,
@@ -337,14 +332,22 @@ export default function NewDraftPage() {
         const imageUrl =
           typeof data.imageUrl === "string" && data.imageUrl ? data.imageUrl : undefined;
 
-        const overlayEnabled = typeof data.overlayEnabled === "boolean" ? data.overlayEnabled : true;
-        const overlayText = typeof data.overlayText === "string" ? data.overlayText : ig || "";
+        const overlayEnabled =
+          typeof data.overlayEnabled === "boolean" ? data.overlayEnabled : true;
+
+        const overlayText =
+          typeof data.overlayText === "string" ? data.overlayText : (ig || "");
 
         const overlayFontScale =
-          typeof data.overlayFontScale === "number" ? clamp(data.overlayFontScale, 0.6, 1.6) : 1.0;
-        const overlayY = typeof data.overlayY === "number" ? clamp(data.overlayY, 0, 100) : 75;
+          typeof data.overlayFontScale === "number"
+            ? clamp(data.overlayFontScale, 0.6, 1.6)
+            : 1.0;
+        const overlayY =
+          typeof data.overlayY === "number" ? clamp(data.overlayY, 0, 100) : 75;
         const overlayBgOpacity =
-          typeof data.overlayBgOpacity === "number" ? clamp(data.overlayBgOpacity, 0, 0.85) : 0.45;
+          typeof data.overlayBgOpacity === "number"
+            ? clamp(data.overlayBgOpacity, 0, 0.85)
+            : 0.45;
 
         setDraftId(id);
         setD({
@@ -374,7 +377,8 @@ export default function NewDraftPage() {
   }, [uid, id]);
 
   const brandLabel = d.brand === "vento" ? "VENTO" : "RIVA";
-  const phaseLabel = d.phase === "draft" ? "下書き" : d.phase === "ready" ? "投稿待ち" : "投稿済み";
+  const phaseLabel =
+    d.phase === "draft" ? "下書き" : d.phase === "ready" ? "投稿待ち" : "投稿済み";
   const canGenerate = d.vision.trim().length > 0 && !busy;
 
   async function saveDraft(partial?: Partial<DraftDoc>) {
@@ -623,6 +627,7 @@ export default function NewDraftPage() {
 
   return (
     <>
+      {/* ✅ Tailwindのlg:を使わず、CSSのmedia queryで確実にPC/スマホ分岐 */}
       <style jsx>{`
         .pageWrap {
           min-height: 100vh;
@@ -637,6 +642,7 @@ export default function NewDraftPage() {
           width: 100%;
         }
 
+        /* PC（1024px以上）になったら左右2カラム + 右をsticky */
         @media (min-width: 1024px) {
           .pageWrap {
             flex-direction: row;
@@ -648,19 +654,18 @@ export default function NewDraftPage() {
           .rightCol {
             width: 44%;
             position: sticky;
-            top: ${UI.rightStickyTopPx}px; /* ✅ 上余白ここ */
+            top: ${UI.rightStickyTopPx}px;
             height: calc(100vh - ${UI.rightStickyTopPx}px);
           }
           .rightScroll {
             height: 100%;
             overflow: auto;
-            padding-top: 0px; /* ✅ 念のため「上だけ0」で固定 */
           }
         }
       `}</style>
 
       <div className="pageWrap">
-        {/* 左は省略なし（元のまま） */}
+        {/* 左 */}
         <section className="leftCol min-h-0 flex flex-col gap-3">
           <div className="shrink-0 flex items-center justify-between gap-3">
             <div className="flex items-center gap-2 flex-wrap" />
@@ -671,21 +676,29 @@ export default function NewDraftPage() {
             ) : null}
           </div>
 
-          <div className="rounded-2xl border border-white/12 bg-black/25" style={{ padding: UI.cardPadding }}>
+          {/* Brand / Vision / Keywords / 操作 */}
+          <div
+            className="rounded-2xl border border-white/12 bg-black/25"
+            style={{ padding: UI.cardPadding }}
+          >
             <div className="text-white/80 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
               Brand
             </div>
 
             <div className="flex items-center gap-2 flex-wrap">
-              <Btn variant={d.brand === "vento" ? "primary" : "secondary"} onClick={() => setD((p) => ({ ...p, brand: "vento" }))}>
+              <Btn
+                variant={d.brand === "vento" ? "primary" : "secondary"}
+                onClick={() => setD((p) => ({ ...p, brand: "vento" }))}
+              >
                 VENTO
               </Btn>
-              <Btn variant={d.brand === "riva" ? "primary" : "secondary"} onClick={() => setD((p) => ({ ...p, brand: "riva" }))}>
+              <Btn
+                variant={d.brand === "riva" ? "primary" : "secondary"}
+                onClick={() => setD((p) => ({ ...p, brand: "riva" }))}
+              >
                 RIVA
               </Btn>
-              <Chip>
-                {brandLabel} / {phaseLabel}
-              </Chip>
+              <Chip>{brandLabel} / {phaseLabel}</Chip>
             </div>
 
             <div className="text-white/80 mt-4 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
@@ -723,12 +736,20 @@ export default function NewDraftPage() {
             </div>
           </div>
 
-          <div className="rounded-2xl border border-white/12 bg-black/25" style={{ padding: UI.cardPadding }}>
+          {/* IG */}
+          <div
+            className="rounded-2xl border border-white/12 bg-black/25"
+            style={{ padding: UI.cardPadding }}
+          >
             <div className="flex items-center justify-between gap-2">
               <div className="text-white/80" style={{ fontSize: UI.FONT.labelPx }}>
                 Instagram本文（メイン）
               </div>
-              <Btn variant="secondary" className="px-3 py-1" onClick={() => navigator.clipboard.writeText(d.ig)}>
+              <Btn
+                variant="secondary"
+                className="px-3 py-1"
+                onClick={() => navigator.clipboard.writeText(d.ig)}
+              >
                 コピー
               </Btn>
             </div>
@@ -740,12 +761,20 @@ export default function NewDraftPage() {
             />
           </div>
 
-          <div className="rounded-2xl border border-white/12 bg-black/25" style={{ padding: UI.cardPadding }}>
+          {/* X */}
+          <div
+            className="rounded-2xl border border-white/12 bg-black/25"
+            style={{ padding: UI.cardPadding }}
+          >
             <div className="flex items-center justify-between">
               <div className="text-white/80" style={{ fontSize: UI.FONT.labelPx }}>
                 X本文
               </div>
-              <Btn variant="secondary" className="px-3 py-1" onClick={() => navigator.clipboard.writeText(d.x)}>
+              <Btn
+                variant="secondary"
+                className="px-3 py-1"
+                onClick={() => navigator.clipboard.writeText(d.x)}
+              >
                 コピー
               </Btn>
             </div>
@@ -757,7 +786,11 @@ export default function NewDraftPage() {
             />
           </div>
 
-          <div className="rounded-2xl border border-white/12 bg-black/25" style={{ padding: UI.cardPadding }}>
+          {/* メモ + 状態 */}
+          <div
+            className="rounded-2xl border border-white/12 bg-black/25"
+            style={{ padding: UI.cardPadding }}
+          >
             <div className="text-white/80 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
               メモ（任意）
             </div>
@@ -777,7 +810,11 @@ export default function NewDraftPage() {
             </div>
           </div>
 
-          <div className="rounded-2xl border border-white/12 bg-black/20" style={{ padding: UI.cardPadding }}>
+          {/* IG3 */}
+          <div
+            className="rounded-2xl border border-white/12 bg-black/20"
+            style={{ padding: UI.cardPadding }}
+          >
             <div className="text-white/70 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
               補助：Instagram 3案（※本文は絶対に上書きしない）
             </div>
@@ -803,10 +840,18 @@ export default function NewDraftPage() {
                         案 {i + 1}
                       </div>
                       <div className="flex items-center gap-2">
-                        <Btn variant="secondary" className="px-3 py-1" onClick={() => applyIg3ToOverlayOnly(t)}>
+                        <Btn
+                          variant="secondary"
+                          className="px-3 py-1"
+                          onClick={() => applyIg3ToOverlayOnly(t)}
+                        >
                           文字に適用
                         </Btn>
-                        <Btn variant="ghost" className="px-3 py-1" onClick={() => navigator.clipboard.writeText(t)}>
+                        <Btn
+                          variant="ghost"
+                          className="px-3 py-1"
+                          onClick={() => navigator.clipboard.writeText(t)}
+                        >
                           コピー
                         </Btn>
                       </div>
@@ -828,129 +873,149 @@ export default function NewDraftPage() {
           </div>
         </section>
 
-        {/* 右（中身はそのまま。上余白だけ詰める） */}
+        {/* 右 */}
         <section className="rightCol min-h-0 flex flex-col gap-4">
           <div className="rightScroll min-h-0" style={{ paddingBottom: 8 }}>
-            <div className="rounded-2xl border border-white/12 bg-black/25" style={{ padding: UI.rightOuterPadding }}>
-              <div
-                className="mx-auto"
-                style={{
-                  width: "100%",
-                  maxWidth: UI.previewMaxWidth,
-                  aspectRatio: "1 / 1",
-                  borderRadius: UI.previewRadius,
-                  overflow: "hidden",
-                  position: "relative",
-                  background: "rgba(255,255,255,0.04)",
-                  border: "1px solid rgba(255,255,255,0.10)",
-                }}
-              >
-                {d.imageUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={d.imageUrl}
-                    alt="preview"
-                    draggable={false}
-                    style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }}
-                  />
-                ) : (
-                  <div className="h-full w-full grid place-items-center text-sm text-white/55">NO IMAGE</div>
-                )}
+            <div
+              className="rounded-2xl border border-white/12 bg-black/25"
+              style={{ padding: UI.cardPadding }}
+            >
 
-                {d.overlayEnabled && previewOverlayText ? (
-                  <div
-                    style={{
-                      position: "absolute",
-                      left: 0,
-                      right: 0,
-                      top: `${clamp(d.overlayY, 0, 100)}%`,
-                      transform: "translateY(-50%)",
-                      padding: "14px 14px",
-                      background: `rgba(0,0,0,${clamp(d.overlayBgOpacity, 0, 0.85)})`,
-                    }}
-                  >
+              <div className="rounded-2xl border border-white/12 bg-black/30 p-3">
+                <div
+                  className="mx-auto"
+                  style={{
+                    width: "100%",
+                    maxWidth: UI.previewMaxWidth,
+                    aspectRatio: "1 / 1",
+                    borderRadius: UI.previewRadius,
+                    overflow: "hidden",
+                    position: "relative",
+                    background: "rgba(255,255,255,0.04)",
+                    border: "1px solid rgba(255,255,255,0.10)",
+                  }}
+                >
+                  {d.imageUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={d.imageUrl}
+                      alt="preview"
+                      draggable={false}
+                      style={{
+                        width: "100%",
+                        height: "100%",
+                        objectFit: "contain",
+                        display: "block",
+                      }}
+                    />
+                  ) : (
+                    <div className="h-full w-full grid place-items-center text-sm text-white/55">
+                      NO IMAGE
+                    </div>
+                  )}
+
+                  {d.overlayEnabled && previewOverlayText ? (
                     <div
                       style={{
-                        textAlign: "center",
-                        fontWeight: 900,
-                        lineHeight: 1.35,
-                        fontSize: `${Math.round(
-                          UI.FONT.overlayPreviewBasePx * clamp(d.overlayFontScale, 0.6, 1.6)
-                        )}px`,
-                        color: "rgba(255,255,255,0.95)",
-                        textShadow: "0 2px 10px rgba(0,0,0,0.45)",
-                        whiteSpace: "pre-wrap",
+                        position: "absolute",
+                        left: 0,
+                        right: 0,
+                        top: `${clamp(d.overlayY, 0, 100)}%`,
+                        transform: "translateY(-50%)",
+                        padding: "14px 14px",
+                        background: `rgba(0,0,0,${clamp(d.overlayBgOpacity, 0, 0.85)})`,
                       }}
                     >
-                      {previewOverlayText}
+                      <div
+                        style={{
+                          textAlign: "center",
+                          fontWeight: 900,
+                          lineHeight: 1.35,
+                          fontSize: `${Math.round(
+                            UI.FONT.overlayPreviewBasePx *
+                              clamp(d.overlayFontScale, 0.6, 1.6)
+                          )}px`,
+                          color: "rgba(255,255,255,0.95)",
+                          textShadow: "0 2px 10px rgba(0,0,0,0.45)",
+                          whiteSpace: "pre-wrap",
+                        }}
+                      >
+                        {previewOverlayText}
+                      </div>
                     </div>
-                  </div>
-                ) : null}
-              </div>
-
-              <div className="mt-3 grid gap-3">
-                <div className="flex items-center justify-between gap-2 flex-wrap">
-                  <Chip className="text-white/95">文字表示</Chip>
-                  <Btn variant="secondary" onClick={() => setD((p) => ({ ...p, overlayEnabled: !p.overlayEnabled }))}>
-                    {d.overlayEnabled ? "ON" : "OFF"}
-                  </Btn>
+                  ) : null}
                 </div>
 
-                <div className="rounded-2xl border border-white/12 bg-black/25" style={{ padding: UI.cardPadding }}>
-                  <div className="text-white/80 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
-                    載せる文字（※本文とは別）
+                <div className="mt-4 grid gap-3">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <Chip className="text-white/95">文字表示</Chip>
+                    <Btn
+                      variant="secondary"
+                      onClick={() => setD((p) => ({ ...p, overlayEnabled: !p.overlayEnabled }))}
+                    >
+                      {d.overlayEnabled ? "ON" : "OFF"}
+                    </Btn>
                   </div>
-                  <textarea
-                    value={d.overlayText}
-                    onChange={(e) => setD((p) => ({ ...p, overlayText: e.target.value }))}
-                    className="w-full rounded-xl border p-3 outline-none"
-                    style={{ ...formStyle, minHeight: UI.hOverlayText }}
+
+                  <div
+                    className="rounded-2xl border border-white/12 bg-black/25"
+                    style={{ padding: UI.cardPadding }}
+                  >
+                    <div className="text-white/80 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
+                      載せる文字（※本文とは別）
+                    </div>
+                    <textarea
+                      value={d.overlayText}
+                      onChange={(e) => setD((p) => ({ ...p, overlayText: e.target.value }))}
+                      className="w-full rounded-xl border p-3 outline-none"
+                      style={{ ...formStyle, minHeight: UI.hOverlayText }}
+                    />
+                  </div>
+
+                  <RangeControl
+                    label="文字サイズ"
+                    value={d.overlayFontScale}
+                    min={0.6}
+                    max={1.6}
+                    step={0.05}
+                    format={(v) => v.toFixed(2)}
+                    onChange={(v) => setD((p) => ({ ...p, overlayFontScale: v }))}
                   />
+                  <RangeControl
+                    label="位置（上下）"
+                    value={d.overlayY}
+                    min={0}
+                    max={100}
+                    step={1}
+                    format={(v) => String(Math.round(v))}
+                    onChange={(v) => setD((p) => ({ ...p, overlayY: v }))}
+                  />
+                  <RangeControl
+                    label="背景帯の濃さ"
+                    value={d.overlayBgOpacity}
+                    min={0}
+                    max={0.85}
+                    step={0.05}
+                    format={(v) => v.toFixed(2)}
+                    onChange={(v) => setD((p) => ({ ...p, overlayBgOpacity: v }))}
+                  />
+
+                  <div className="flex flex-wrap gap-2">
+                    <Btn variant="primary" disabled={busy} onClick={saveCompositeAsImageUrl}>
+                      文字入り画像を保存
+                    </Btn>
+                    <Btn variant="ghost" disabled={!uid || busy} onClick={() => saveDraft()}>
+                      調整を保存
+                    </Btn>
+                  </div>
+
+                  <div className="text-white/55" style={{ fontSize: UI.FONT.labelPx }}>
+                    ※ 保存される画像は 1024×1024 のPNGです。
+                  </div>
                 </div>
 
-                <RangeControl
-                  label="文字サイズ"
-                  value={d.overlayFontScale}
-                  min={0.6}
-                  max={1.6}
-                  step={0.05}
-                  format={(v) => v.toFixed(2)}
-                  onChange={(v) => setD((p) => ({ ...p, overlayFontScale: v }))}
-                />
-                <RangeControl
-                  label="位置（上下）"
-                  value={d.overlayY}
-                  min={0}
-                  max={100}
-                  step={1}
-                  format={(v) => String(Math.round(v))}
-                  onChange={(v) => setD((p) => ({ ...p, overlayY: v }))}
-                />
-                <RangeControl
-                  label="背景帯の濃さ"
-                  value={d.overlayBgOpacity}
-                  min={0}
-                  max={0.85}
-                  step={0.05}
-                  format={(v) => v.toFixed(2)}
-                  onChange={(v) => setD((p) => ({ ...p, overlayBgOpacity: v }))}
-                />
-
-                <div className="flex flex-wrap gap-2">
-                  <Btn variant="primary" disabled={busy} onClick={saveCompositeAsImageUrl}>
-                    文字入り画像を保存
-                  </Btn>
-                  <Btn variant="ghost" disabled={!uid || busy} onClick={() => saveDraft()}>
-                    調整を保存
-                  </Btn>
-                </div>
-
-                <div className="text-white/55" style={{ fontSize: UI.FONT.labelPx }}>
-                  ※ 保存される画像は 1024×1024 のPNGです。
-                </div>
+                <canvas ref={canvasRef} style={{ display: "none" }} />
               </div>
-
-              <canvas ref={canvasRef} style={{ display: "none" }} />
             </div>
           </div>
         </section>

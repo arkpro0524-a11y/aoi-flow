@@ -30,6 +30,25 @@ type DraftRow = {
   updatedAt?: any;
 };
 
+/**
+ * ✅ サイズ調整（巨人UIを解消）
+ * - ロジック/Firestore/Link は一切触らない
+ * ✅ 追加：PC/スマホでレイアウトだけ切り替える（CSS media query）
+ */
+const HEADER_TITLE_PX = 20;
+
+const CARD_H = 160;
+const BRAND_W = 140;
+const PLATE_H = 110;
+const THUMB_BOX = 130;
+const THUMB_PAD = 0;
+const TITLE_PX = 20;
+const BRAND_PX = 20;
+
+const PAGE_PAD = 16;
+const CARD_PAD = 14;
+const COL_GAP = 14;
+
 export default function DraftsPage() {
   const toast = useToast();
   const [uid, setUid] = useState<string | null>(null);
@@ -45,7 +64,6 @@ export default function DraftsPage() {
       setRows([]);
       return;
     }
-
     (async () => {
       try {
         const qy = query(
@@ -94,205 +112,181 @@ export default function DraftsPage() {
 
   return (
     <>
-      {/* ✅ lg:等は使わず、CSSのmedia queryでPC/スマホを確実に分岐 */}
+      {/* ✅ PC/スマホのレイアウト分岐はCSS media queryで固定（Tailwind lg: 使わない） */}
       <style jsx>{`
-        .page {
-          height: 100%;
-          display: flex;
-          flex-direction: column;
-        }
-
-        .header {
-          flex: 0 0 auto;
-          padding: 16px;
-          border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-        }
-
-        .title {
-          font-size: 20px;
-          font-weight: 900;
-        }
-
-        .list {
-          padding: 16px;
-          overflow-y: auto;
-          display: grid;
-          gap: 12px;
-        }
-
-        /* スマホ：縦カード（サムネ→本文） */
-        .card {
+        /* スマホ：縦カード（崩れない） */
+        .draftCard {
           display: grid;
           grid-template-columns: 1fr;
           gap: 10px;
-          padding: 14px;
-          border-radius: 16px;
-          border: 1px solid rgba(255, 255, 255, 0.1);
-          background: rgba(0, 0, 0, 0.25);
-          transition: background 0.15s ease;
-          text-decoration: none;
-          color: rgba(255, 255, 255, 0.9);
-        }
-        .card:hover {
-          background: rgba(0, 0, 0, 0.32);
-          color: rgba(255, 255, 255, 1);
+          padding: ${CARD_PAD}px;
         }
 
         .topRow {
           display: flex;
           align-items: center;
           justify-content: space-between;
-          gap: 10px;
+          gap: 12px;
         }
 
-        .brandPlate {
-          height: 44px;
-          min-width: 120px;
-          padding: 0 14px;
-          border-radius: 12px;
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-
-          background: linear-gradient(to bottom, #f2f2f2, #cfcfcf, #9b9b9b);
-          border: 1px solid rgba(0, 0, 0, 0.25);
-          box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7),
-            inset 0 -10px 22px rgba(0, 0, 0, 0.25), 0 8px 18px rgba(0, 0, 0, 0.25);
-        }
-
-        .brandPlateText {
-          font-size: 16px;
-          font-weight: 900;
-          letter-spacing: 0.22em;
-          color: #000;
-        }
-
-        .arrow {
-          font-size: 20px;
-          font-weight: 900;
-          color: rgba(255, 255, 255, 0.35);
-          transition: color 0.15s ease;
-        }
-        .card:hover .arrow {
-          color: rgba(255, 255, 255, 0.85);
-        }
-
-        .thumbWrap {
+        .plateBox {
           width: 100%;
-          aspect-ratio: 1 / 1;
-          border-radius: 14px;
-          background: rgba(255, 255, 255, 0.06);
-          overflow: hidden;
-          display: grid;
-          place-items: center;
-          border: 1px solid rgba(255, 255, 255, 0.1);
+          height: 56px; /* スマホは縦長にしない */
         }
 
-        .thumbImg {
+        .thumbBox {
           width: 100%;
-          height: 100%;
-          object-fit: contain;
-          display: block;
-        }
-
-        .noImage {
-          font-size: 12px;
-          color: rgba(255, 255, 255, 0.4);
+          aspect-ratio: 1 / 1; /* スマホは正方形で見やすく */
+          height: auto;
         }
 
         .caption {
-          font-size: 16px;
-          font-weight: 900;
-          line-height: 1.2;
-          color: rgba(255, 255, 255, 0.95);
-
-          white-space: nowrap;
-          overflow: hidden;
-          text-overflow: ellipsis;
+          font-size: 16px; /* スマホは少し落とす */
+          line-height: 1.25;
         }
 
-        .empty {
-          border-radius: 16px;
-          border: 1px solid rgba(255, 255, 255, 0.1);
-          background: rgba(0, 0, 0, 0.25);
-          padding: 18px;
-          font-size: 13px;
-          color: rgba(255, 255, 255, 0.75);
+        .arrow {
+          text-align: right;
         }
 
-        /* PC（1024px以上）：横レイアウト（ブランド｜サムネ｜本文｜→） */
+        /* PC（1024px以上）：元の4カラムを完全再現 */
         @media (min-width: 1024px) {
-          .card {
-            grid-template-columns: 140px 140px 1fr 24px;
+          .draftCard {
+            height: ${CARD_H}px;
+            display: grid;
+            grid-template-columns: ${BRAND_W}px ${THUMB_BOX}px 1fr 24px;
+            column-gap: ${COL_GAP}px;
             align-items: center;
-            gap: 14px;
-            min-height: 160px;
+            padding: ${CARD_PAD}px;
           }
 
-          .thumbWrap {
-            width: 130px;
-            aspect-ratio: 1 / 1;
-            justify-self: start;
+          .topRow {
+            display: contents; /* PCでは余計な行を作らず、元の配置に戻す */
+          }
+
+          .plateBox {
+            width: auto;
+            height: ${PLATE_H}px;
+          }
+
+          .thumbBox {
+            width: ${THUMB_BOX}px;
+            height: ${THUMB_BOX}px;
+            aspect-ratio: auto;
           }
 
           .caption {
-            font-size: 20px;
+            font-size: ${TITLE_PX}px;
+            line-height: 1.15;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
           }
 
-          .brandPlate {
-            height: 110px;
-            min-width: 0;
-            width: 140px;
-            padding: 0;
-          }
-
-          .brandPlateText {
-            font-size: 20px;
-            letter-spacing: 0.3em;
+          .arrow {
+            text-align: right;
           }
         }
       `}</style>
 
-      <div className="page">
-        <div className="header">
-          <div className="title">下書き一覧</div>
+      <div className="h-full flex flex-col">
+        <div
+          className="shrink-0 border-b border-white/10"
+          style={{ padding: PAGE_PAD }}
+        >
+          <div style={{ fontSize: HEADER_TITLE_PX, fontWeight: 900 }}>
+            下書き一覧
+          </div>
         </div>
 
-        <div className="list">
+        <div className="overflow-y-auto space-y-3" style={{ padding: PAGE_PAD }}>
           {rows.length === 0 ? (
-            <div className="empty">下書きがまだありません。</div>
+            <div className="rounded-2xl border border-white/10 bg-black/25 p-5 text-sm text-white/75">
+              下書きがまだありません。
+            </div>
           ) : (
             rows.map((d) => (
               <Link
                 key={d.id}
                 href={`/flow/drafts/new?id=${encodeURIComponent(d.id)}`}
-                className="card"
+                className="block no-underline text-white/90 visited:text-white/90 hover:text-white"
               >
-                <div className="brandPlate">
-                  <span className="brandPlateText">{d.brand.toUpperCase()}</span>
-                </div>
+                <div className="group rounded-2xl border border-white/10 bg-black/25 hover:bg-black/30 transition draftCard">
+                  {/* スマホ：上段（ブランド＋矢印） / PC：display:contentsで元の配置に戻る */}
+                  <div className="topRow">
+                    <div
+                      className={[
+                        "rounded-xl bg-gradient-to-b from-[#f2f2f2] via-[#cfcfcf] to-[#9b9b9b]",
+                        "border border-black/25",
+                        "shadow-[inset_0_1px_0_rgba(255,255,255,0.7),inset_0_-10px_22px_rgba(0,0,0,0.25),0_8px_18px_rgba(0,0,0,0.25)]",
+                        "flex items-center justify-center",
+                        "plateBox",
+                      ].join(" ")}
+                    >
+                      <span
+                        style={{
+                          fontSize: BRAND_PX,
+                          fontWeight: 900,
+                          letterSpacing: "0.30em",
+                          color: "#000",
+                        }}
+                      >
+                        {d.brand.toUpperCase()}
+                      </span>
+                    </div>
 
-                <div className="thumbWrap">
-                  {d.imageUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={d.imageUrl}
-                      alt="thumb"
-                      draggable={false}
-                      className="thumbImg"
-                    />
-                  ) : (
-                    <div className="noImage">NO IMAGE</div>
-                  )}
-                </div>
+                    {/* スマホだけ矢印をここに置く（PCではdisplay:contentsで最後列へ戻る） */}
+                    <div className="text-xl text-white/35 group-hover:text-white/80 transition arrow">
+                      →
+                    </div>
+                  </div>
 
-                <div style={{ minWidth: 0 }}>
-                  <div className="caption">
-                    {d.caption_final || d.vision || "（未入力）"}
+                  {/* サムネ */}
+                  <div
+                    className="rounded-xl bg-white/6 overflow-hidden flex items-center justify-center ring-1 ring-white/10 thumbBox"
+                    style={{ padding: THUMB_PAD }}
+                  >
+                    {d.imageUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={d.imageUrl}
+                        alt="thumb"
+                        draggable={false}
+                        style={{
+                          width: "100%",
+                          height: "100%",
+                          objectFit: "contain",
+                          display: "block",
+                        }}
+                      />
+                    ) : (
+                      <div className="text-xs text-white/40">NO IMAGE</div>
+                    )}
+                  </div>
+
+                  {/* タイトル */}
+                  <div style={{ minWidth: 0 }}>
+                    <div
+                      className="caption"
+                      style={{
+                        fontWeight: 900,
+                        color: "rgba(255,255,255,0.95)",
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
+                      {d.caption_final || d.vision || "（未入力）"}
+                    </div>
+                  </div>
+
+                  {/* PC用の矢印列（スマホでは上にあるので、ここはPCだけ見える形にする）
+                      ※ display:contents の影響で二重表示しないように、PCでだけ表示 */
+                  }
+                  <div className="hidden lg:block text-xl text-white/35 group-hover:text-white/80 transition text-right">
+                    →
                   </div>
                 </div>
-
-                <div className="arrow">→</div>
               </Link>
             ))
           )}
