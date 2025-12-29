@@ -30,11 +30,6 @@ type DraftRow = {
   updatedAt?: any;
 };
 
-/**
- * ✅ サイズ調整（巨人UIを解消）
- * - ロジック/Firestore/Link は一切触らない
- * ✅ 追加：PC/スマホで「別DOM」を表示切替（崩れない方式）
- */
 const HEADER_TITLE_PX = 20;
 
 const CARD_H = 160;
@@ -48,6 +43,9 @@ const BRAND_PX = 20;
 const PAGE_PAD = 16;
 const CARD_PAD = 14;
 const COL_GAP = 14;
+
+const PLATE_CLASS =
+  "rounded-xl bg-gradient-to-b from-[#f2f2f2] via-[#cfcfcf] to-[#9b9b9b] border border-black/25 shadow-[inset_0_1px_0_rgba(255,255,255,0.7),inset_0_-10px_22px_rgba(0,0,0,0.25),0_8px_18px_rgba(0,0,0,0.25)] flex items-center justify-center";
 
 export default function DraftsPage() {
   const toast = useToast();
@@ -112,7 +110,6 @@ export default function DraftsPage() {
 
   return (
     <>
-      {/* ✅ PC/スマホ切替：別DOMを出し分け（矢印や文字位置が絶対に混ざらない） */}
       <style jsx>{`
         .cardPC {
           display: none;
@@ -130,7 +127,7 @@ export default function DraftsPage() {
           }
         }
 
-        /* スマホカード */
+        /* スマホ */
         .mWrap {
           padding: ${CARD_PAD}px;
           display: grid;
@@ -162,7 +159,7 @@ export default function DraftsPage() {
           text-overflow: ellipsis;
         }
 
-        /* PCカード（元の4カラム固定） */
+        /* PC */
         .pcWrap {
           height: ${CARD_H}px;
           padding: ${CARD_PAD}px;
@@ -205,16 +202,10 @@ export default function DraftsPage() {
                 className="block no-underline text-white/90 visited:text-white/90 hover:text-white"
               >
                 <div className="group rounded-2xl border border-white/10 bg-black/25 hover:bg-black/30 transition">
-                  {/* ---------------- PC版（元の見た目・矢印右端・文字中央） ---------------- */}
+                  {/* PC */}
                   <div className="cardPC">
                     <div className="pcWrap">
-                      {/* ブランドプレート */}
-                      <div
-                        className="rounded-xl bg-gradient-to-b from-[#f2f2f2] via-[#cfcfcf] to-[#9b9b9b]
-                                   border border-black/25 shadow-[inset_0_1px_0_rgba(255,255,255,0.7),inset_0_-10px_22px_rgba(0,0,0,0.25),0_8px_18px_rgba(0,0,0,0.25)]
-                                   flex items-center justify-center"
-                        style={{ height: PLATE_H }}
-                      >
+                      <div className={PLATE_CLASS} style={{ height: PLATE_H }}>
                         <span
                           style={{
                             fontSize: BRAND_PX,
@@ -227,7 +218,6 @@ export default function DraftsPage() {
                         </span>
                       </div>
 
-                      {/* サムネ */}
                       <div
                         className="rounded-xl bg-white/6 overflow-hidden flex items-center justify-center ring-1 ring-white/10"
                         style={{
@@ -254,29 +244,23 @@ export default function DraftsPage() {
                         )}
                       </div>
 
-                      {/* 文字 */}
                       <div style={{ minWidth: 0 }}>
                         <div className="pcCaption">
                           {d.caption_final || d.vision || "（未入力）"}
                         </div>
                       </div>
 
-                      {/* 矢印（右端固定） */}
                       <div className="text-xl text-white/35 group-hover:text-white/80 transition text-right">
                         →
                       </div>
                     </div>
                   </div>
 
-                  {/* ---------------- スマホ版（縦カード） ---------------- */}
+                  {/* Mobile */}
                   <div className="cardMobile">
                     <div className="mWrap">
                       <div className="mTop">
-                        <div
-                          className="mPlate rounded-xl bg-gradient-to-b from-[#f2f2f2] via-[#cfcfcf] to-[#9b9b9b]
-                                     border border-black/25 shadow-[inset_0_1px_0_rgba(255,255,255,0.7),inset_0_-10px_22px_rgba(0,0,0,0.25),0_8px_18px_rgba(0,0,0,0.25)]
-                                     flex items-center justify-center"
-                        >
+                        <div className={`${PLATE_CLASS} mPlate`}>
                           <span
                             style={{
                               fontSize: 16,
@@ -288,7 +272,6 @@ export default function DraftsPage() {
                             {d.brand.toUpperCase()}
                           </span>
                         </div>
-
                         <div className="text-xl text-white/35 group-hover:text-white/80 transition text-right">
                           →
                         </div>
