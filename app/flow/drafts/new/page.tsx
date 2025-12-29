@@ -96,7 +96,7 @@ const UI = {
     text: "rgba(255,255,255,0.96)",
   },
 
-  rightStickyTopPx: 33,
+  rightStickyTopPx: 25,
 
   RANGE: {
     boxPad: 8,
