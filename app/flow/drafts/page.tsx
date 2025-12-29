@@ -34,7 +34,7 @@ type DraftRow = {
  * - ロジック/Firestore/Link は一切触らない
  */
 const HEADER_TITLE_PX = 20;
-const CARD_H = 160;
+const CARD_H_PC = 160; // ✅ PCの時だけ固定高
 const BRAND_W = 140;
 const PLATE_H = 110;
 const THUMB_BOX = 130;
@@ -109,6 +109,52 @@ export default function DraftsPage() {
 
   return (
     <div className="h-full flex flex-col">
+      {/* ✅ Tailwindのlg:を使わず、CSSのmedia queryで確実にPC/スマホ分岐 */}
+      <style jsx>{`
+        .cardGrid {
+          display: grid;
+          gap: ${COL_GAP}px;
+          align-items: center;
+          padding: ${CARD_PAD}px;
+        }
+
+        /* ✅ スマホ（〜1023px）：縦積み（崩れない） */
+        .cardGrid {
+          grid-template-columns: 1fr;
+          grid-template-rows: auto auto auto;
+        }
+
+        .rowTop {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+        }
+
+        .thumbBox {
+          width: 100%;
+          max-width: 420px;
+          margin: 0 auto;
+        }
+
+        /* ✅ PC（1024px以上）：横4カラムに戻す */
+        @media (min-width: 1024px) {
+          .cardGrid {
+            height: ${CARD_H_PC}px;
+            grid-template-columns: ${BRAND_W}px ${THUMB_BOX}px 1fr 24px;
+            grid-template-rows: 1fr;
+          }
+          .rowTop {
+            display: block;
+          }
+          .thumbBox {
+            width: ${THUMB_BOX}px;
+            max-width: ${THUMB_BOX}px;
+            margin: 0;
+          }
+        }
+      `}</style>
+
       <div className="shrink-0 border-b border-white/10" style={{ padding: PAGE_PAD }}>
         <div style={{ fontSize: HEADER_TITLE_PX, fontWeight: 900 }}>下書き一覧</div>
       </div>
@@ -125,79 +171,87 @@ export default function DraftsPage() {
               href={`/flow/drafts/new?id=${encodeURIComponent(d.id)}`}
               className="block no-underline text-white/90 visited:text-white/90 hover:text-white"
             >
-              <div
-                className="group rounded-2xl border border-white/10 bg-black/25 hover:bg-black/30 transition"
-                style={{
-                  height: CARD_H,
-                  display: "grid",
-                  gridTemplateColumns: `${BRAND_W}px ${THUMB_BOX}px 1fr 24px`,
-                  columnGap: COL_GAP,
-                  alignItems: "center",
-                  padding: CARD_PAD,
-                }}
-              >
-                <div
-                  className="rounded-xl bg-gradient-to-b from-[#f2f2f2] via-[#cfcfcf] to-[#9b9b9b]
-                             border border-black/25 shadow-[inset_0_1px_0_rgba(255,255,255,0.7),inset_0_-10px_22px_rgba(0,0,0,0.25),0_8px_18px_rgba(0,0,0,0.25)]
-                             flex items-center justify-center"
-                  style={{ height: PLATE_H }}
-                >
-                  <span
-                    style={{
-                      fontSize: BRAND_PX,
-                      fontWeight: 900,
-                      letterSpacing: "0.30em",
-                      color: "#000",
-                    }}
-                  >
-                    {d.brand.toUpperCase()}
-                  </span>
-                </div>
+              <div className="group rounded-2xl border border-white/10 bg-black/25 hover:bg-black/30 transition">
+                <div className="cardGrid">
+                  {/* ✅ スマホ：上段（ブランド + →） / PC：左列（ブランド） */}
+                  <div className="rowTop">
+                    <div
+                      className="rounded-xl bg-gradient-to-b from-[#f2f2f2] via-[#cfcfcf] to-[#9b9b9b]
+                               border border-black/25 shadow-[inset_0_1px_0_rgba(255,255,255,0.7),inset_0_-10px_22px_rgba(0,0,0,0.25),0_8px_18px_rgba(0,0,0,0.25)]
+                               flex items-center justify-center"
+                      style={{
+                        height: PLATE_H,
+                        minWidth: BRAND_W, // ✅ スマホでもブランドが潰れない
+                      }}
+                    >
+                      <span
+                        style={{
+                          fontSize: BRAND_PX,
+                          fontWeight: 900,
+                          letterSpacing: "0.30em",
+                          color: "#000",
+                        }}
+                      >
+                        {d.brand.toUpperCase()}
+                      </span>
+                    </div>
 
-                <div
-                  className="rounded-xl bg-white/6 overflow-hidden flex items-center justify-center ring-1 ring-white/10"
-                  style={{
-                    width: THUMB_BOX,
-                    height: THUMB_BOX,
-                    padding: THUMB_PAD,
-                  }}
-                >
-                  {d.imageUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={d.imageUrl}
-                      alt="thumb"
-                      draggable={false}
+                    {/* ✅ スマホだけ右上に矢印（PCは右端列に出る） */}
+                    <div className="text-xl text-white/35 group-hover:text-white/80 transition">
+                      →
+                    </div>
+                  </div>
+
+                  {/* ✅ サムネ：スマホは横幅いっぱい（最大420px） */}
+                  <div className="thumbBox">
+                    <div
+                      className="rounded-xl bg-white/6 overflow-hidden flex items-center justify-center ring-1 ring-white/10"
                       style={{
                         width: "100%",
-                        height: "100%",
-                        objectFit: "contain",
-                        display: "block",
+                        height: THUMB_BOX,
+                        padding: THUMB_PAD,
                       }}
-                    />
-                  ) : (
-                    <div className="text-xs text-white/40">NO IMAGE</div>
-                  )}
-                </div>
-
-                <div style={{ minWidth: 0 }}>
-                  <div
-                    style={{
-                      fontSize: TITLE_PX,
-                      fontWeight: 900,
-                      lineHeight: 1.15,
-                      color: "rgba(255,255,255,0.95)",
-                      whiteSpace: "nowrap",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                    }}
-                  >
-                    {d.caption_final || d.vision || "（未入力）"}
+                    >
+                      {d.imageUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={d.imageUrl}
+                          alt="thumb"
+                          draggable={false}
+                          style={{
+                            width: "100%",
+                            height: "100%",
+                            objectFit: "contain",
+                            display: "block",
+                          }}
+                        />
+                      ) : (
+                        <div className="text-xs text-white/40">NO IMAGE</div>
+                      )}
+                    </div>
                   </div>
-                </div>
 
-                <div className="text-xl text-white/35 group-hover:text-white/80 transition text-right">
-                  →
+                  {/* ✅ タイトル：スマホは改行OK / PCは1行省略 */}
+                  <div style={{ minWidth: 0 }}>
+                    <div
+                      style={{
+                        fontSize: TITLE_PX,
+                        fontWeight: 900,
+                        lineHeight: 1.15,
+                        color: "rgba(255,255,255,0.95)",
+                        whiteSpace: "normal", // ✅ スマホは折り返し
+                        overflow: "hidden",
+                      }}
+                      className="md:line-clamp-2"
+                    >
+                      {d.caption_final || d.vision || "（未入力）"}
+                    </div>
+                  </div>
+
+                  {/* ✅ PCだけ右端の矢印列（スマホは上段にある） */}
+                  <div className="hidden lg:block text-xl text-white/35 group-hover:text-white/80 transition text-right">
+                    →
+                  </div>
                 </div>
               </div>
             </Link>
