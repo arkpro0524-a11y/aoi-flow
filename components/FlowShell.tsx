@@ -53,7 +53,7 @@ export default function FlowShell({ user, onLogout, children }: Props) {
           border: active
             ? "1px solid rgba(255,255,255,0.18)"
             : "1px solid rgba(255,255,255,0.10)",
-          flex: "0 0 auto", // ✅ スマホで縮めて崩さない（横スクロール前提）
+          flex: "0 0 auto", // ✅ タブは縮めない（横スクロール前提）
         }}
       >
         <span
@@ -82,72 +82,91 @@ export default function FlowShell({ user, onLogout, children }: Props) {
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_10%,rgba(255,255,255,0.07),transparent_35%),radial-gradient(circle_at_80%_30%,rgba(255,255,255,0.05),transparent_40%)]" />
       </div>
 
-      <header className="sticky top-0 z-30 border-b border-white/12 bg-black/45 backdrop-blur">
-        {/* ✅ 重要：ここを “wrap” & “min-w-0” でスマホのはみ出しを止める */}
-        <div className="flex flex-wrap items-center gap-3 px-4 md:px-6 py-3">
-          {/* 左：ロゴ */}
-          <div className="flex items-center gap-3 md:gap-4 shrink-0">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src="/logo-aoi-flow2.png"
-              alt="AOI FLOW"
-              className="rounded-2xl bg-white/8 p-1 ring-1 ring-white/10"
-              style={{ width: UI.logo as any, height: UI.logo as any }}
-            />
-            <div className="leading-tight">
-              <div style={{ fontSize: UI.title as any, fontWeight: 900, letterSpacing: "0.06em" }}>
-                AOI FLOW
+      {/* ✅ header 自体を “絶対にはみ出さない箱” にする */}
+      <header className="sticky top-0 z-30 border-b border-white/12 bg-black/45 backdrop-blur overflow-x-hidden">
+        {/* ✅ スマホ：2段構成（ロゴ+ログアウト / タブ帯）にしてはみ出し根絶 */}
+        <div className="px-4 md:px-6 py-3">
+          {/* 1段目 */}
+          <div className="flex items-center gap-3">
+            {/* 左：ロゴ */}
+            <div className="flex items-center gap-3 md:gap-4 min-w-0">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="/logo-aoi-flow2.png"
+                alt="AOI FLOW"
+                className="rounded-2xl bg-white/8 p-1 ring-1 ring-white/10 shrink-0"
+                style={{ width: UI.logo as any, height: UI.logo as any }}
+              />
+              <div className="leading-tight min-w-0">
+                <div style={{ fontSize: UI.title as any, fontWeight: 900, letterSpacing: "0.06em" }}>
+                  AOI FLOW
+                </div>
+                <div style={{ fontSize: UI.sub as any, color: "rgba(255,255,255,0.70)" }}>
+                  Caption Studio
+                </div>
               </div>
-              <div style={{ fontSize: UI.sub as any, color: "rgba(255,255,255,0.70)" }}>
-                Caption Studio
-              </div>
+            </div>
+
+            {/* 右：ログアウト */}
+            <div className="ml-auto shrink-0">
+              <button
+                onClick={logout}
+                className="rounded-full transition hover:brightness-110"
+                style={{
+                  fontSize: UI.logoutFont as any,
+                  padding: `${UI.logoutPadY} ${UI.logoutPadX}`,
+                  fontWeight: 900,
+                  color: "rgba(255,255,255,0.92)",
+                  background: "rgba(255,255,255,0.12)",
+                  border: "1px solid rgba(255,255,255,0.10)",
+                }}
+              >
+                ログアウト
+              </button>
             </div>
           </div>
 
-          {/* 中央：タブ（スマホは横スクロールで「はみ出ない」） */}
-          <div className="flex-1 min-w-0">
+          {/* 2段目：タブ（✅ 必ずスライドできる横スクロール帯） */}
+          <div className="mt-3">
             <div
-              style={{
-                display: "flex",
-                gap: 10,
-                padding: 6,
-                borderRadius: 9999,
-                border: "1px solid rgba(255,255,255,0.10)",
-                background: "rgba(0,0,0,0.35)",
-                overflowX: "auto",
-                maxWidth: "100%",
-                WebkitOverflowScrolling: "touch",
-                // ✅ スクロールバーは見せない（iOS/Chrome）
-                scrollbarWidth: "none",
-                msOverflowStyle: "none",
-              }}
               className="[&::-webkit-scrollbar]:hidden"
-            >
-              <Tab href="/flow/drafts" label="下書き一覧" />
-              <Tab href="/flow/drafts/new" label="新規作成" />
-              <Tab href="/flow/inbox" label="投稿待ち" />
-              {/* ✅ 追加：投稿済み */}
-              <Tab href="/flow/posted" label="投稿済み" />
-              <Tab href="/flow/brands" label="設定" />
-            </div>
-          </div>
-
-          {/* 右：ログアウト（スマホでは右端に押し込まれ、無理なら次の行に落ちる） */}
-          <div className="flex items-center gap-3 shrink-0 ml-auto">
-            <button
-              onClick={logout}
-              className="rounded-full transition hover:brightness-110"
               style={{
-                fontSize: UI.logoutFont as any,
-                padding: `${UI.logoutPadY} ${UI.logoutPadX}`,
-                fontWeight: 900,
-                color: "rgba(255,255,255,0.92)",
-                background: "rgba(255,255,255,0.12)",
-                border: "1px solid rgba(255,255,255,0.10)",
+                width: "100%",
+                overflowX: "auto",
+                overflowY: "hidden",
+                WebkitOverflowScrolling: "touch",
+
+                // ✅ iOSで“指で横に送れる”を確実にする
+                touchAction: "pan-x",
+                overscrollBehaviorX: "contain",
+
+                // ✅ 最後のタブが右端で欠けない
+                paddingLeft: 6,
+                paddingRight: 18,
+
+                // ✅ スクロールバー非表示（Firefox/IE系）
+                scrollbarWidth: "none" as any,
+                msOverflowStyle: "none" as any,
               }}
             >
-              ログアウト
-            </button>
+              <div
+                style={{
+                  display: "inline-flex",
+                  gap: 10,
+                  padding: 6,
+                  borderRadius: 9999,
+                  border: "1px solid rgba(255,255,255,0.10)",
+                  background: "rgba(0,0,0,0.35)",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                <Tab href="/flow/drafts" label="下書き一覧" />
+                <Tab href="/flow/drafts/new" label="新規作成" />
+                <Tab href="/flow/inbox" label="投稿待ち" />
+                <Tab href="/flow/posted" label="投稿済み" />
+                <Tab href="/flow/brands" label="設定" />
+              </div>
+            </div>
           </div>
         </div>
       </header>
