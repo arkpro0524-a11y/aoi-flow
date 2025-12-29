@@ -18,6 +18,7 @@ import { useToast } from "@/components/ToastProvider";
 
 type Brand = "vento" | "riva";
 type Phase = "draft" | "ready" | "posted";
+
 type DraftRow = {
   id: string;
   userId: string;
@@ -28,23 +29,6 @@ type DraftRow = {
   imageUrl?: string;
   updatedAt?: any;
 };
-
-/**
- * ✅ サイズ調整（巨人UIを解消）
- * - ロジック/Firestore/Link は一切触らない
- */
-const HEADER_TITLE_PX = 20;
-const CARD_H_PC = 160; // ✅ PCの時だけ固定高
-const BRAND_W = 140;
-const PLATE_H = 110;
-const THUMB_BOX = 130;
-const THUMB_PAD = 0;
-const TITLE_PX = 20;
-const BRAND_PX = 20;
-
-const PAGE_PAD = 16;
-const CARD_PAD = 14;
-const COL_GAP = 14;
 
 export default function DraftsPage() {
   const toast = useToast();
@@ -61,6 +45,7 @@ export default function DraftsPage() {
       setRows([]);
       return;
     }
+
     (async () => {
       try {
         const qy = query(
@@ -72,18 +57,18 @@ export default function DraftsPage() {
 
         const snap = await getDocs(qy);
 
-        const list: DraftRow[] = snap.docs.map((doc) => {
-          const data = doc.data() as DocumentData;
+        const list: DraftRow[] = snap.docs.map((docu) => {
+          const data = docu.data() as DocumentData;
           const brand: Brand = data.brand === "riva" ? "riva" : "vento";
           const phase: Phase =
             data.phase === "ready"
               ? "ready"
               : data.phase === "posted"
-                ? "posted"
-                : "draft";
+              ? "posted"
+              : "draft";
 
           return {
-            id: doc.id,
+            id: docu.id,
             userId: uid,
             brand,
             phase,
@@ -108,156 +93,211 @@ export default function DraftsPage() {
   }, [uid, toast]);
 
   return (
-    <div className="h-full flex flex-col">
-      {/* ✅ Tailwindのlg:を使わず、CSSのmedia queryで確実にPC/スマホ分岐 */}
+    <>
+      {/* ✅ lg:等は使わず、CSSのmedia queryでPC/スマホを確実に分岐 */}
       <style jsx>{`
-        .cardGrid {
+        .page {
+          height: 100%;
+          display: flex;
+          flex-direction: column;
+        }
+
+        .header {
+          flex: 0 0 auto;
+          padding: 16px;
+          border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .title {
+          font-size: 20px;
+          font-weight: 900;
+        }
+
+        .list {
+          padding: 16px;
+          overflow-y: auto;
           display: grid;
-          gap: ${COL_GAP}px;
-          align-items: center;
-          padding: ${CARD_PAD}px;
+          gap: 12px;
         }
 
-        /* ✅ スマホ（〜1023px）：縦積み（崩れない） */
-        .cardGrid {
+        /* スマホ：縦カード（サムネ→本文） */
+        .card {
+          display: grid;
           grid-template-columns: 1fr;
-          grid-template-rows: auto auto auto;
+          gap: 10px;
+          padding: 14px;
+          border-radius: 16px;
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          background: rgba(0, 0, 0, 0.25);
+          transition: background 0.15s ease;
+          text-decoration: none;
+          color: rgba(255, 255, 255, 0.9);
+        }
+        .card:hover {
+          background: rgba(0, 0, 0, 0.32);
+          color: rgba(255, 255, 255, 1);
         }
 
-        .rowTop {
+        .topRow {
           display: flex;
           align-items: center;
           justify-content: space-between;
           gap: 10px;
         }
 
-        .thumbBox {
-          width: 100%;
-          max-width: 420px;
-          margin: 0 auto;
+        .brandPlate {
+          height: 44px;
+          min-width: 120px;
+          padding: 0 14px;
+          border-radius: 12px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+
+          background: linear-gradient(to bottom, #f2f2f2, #cfcfcf, #9b9b9b);
+          border: 1px solid rgba(0, 0, 0, 0.25);
+          box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7),
+            inset 0 -10px 22px rgba(0, 0, 0, 0.25), 0 8px 18px rgba(0, 0, 0, 0.25);
         }
 
-        /* ✅ PC（1024px以上）：横4カラムに戻す */
+        .brandPlateText {
+          font-size: 16px;
+          font-weight: 900;
+          letter-spacing: 0.22em;
+          color: #000;
+        }
+
+        .arrow {
+          font-size: 20px;
+          font-weight: 900;
+          color: rgba(255, 255, 255, 0.35);
+          transition: color 0.15s ease;
+        }
+        .card:hover .arrow {
+          color: rgba(255, 255, 255, 0.85);
+        }
+
+        .thumbWrap {
+          width: 100%;
+          aspect-ratio: 1 / 1;
+          border-radius: 14px;
+          background: rgba(255, 255, 255, 0.06);
+          overflow: hidden;
+          display: grid;
+          place-items: center;
+          border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .thumbImg {
+          width: 100%;
+          height: 100%;
+          object-fit: contain;
+          display: block;
+        }
+
+        .noImage {
+          font-size: 12px;
+          color: rgba(255, 255, 255, 0.4);
+        }
+
+        .caption {
+          font-size: 16px;
+          font-weight: 900;
+          line-height: 1.2;
+          color: rgba(255, 255, 255, 0.95);
+
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+
+        .empty {
+          border-radius: 16px;
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          background: rgba(0, 0, 0, 0.25);
+          padding: 18px;
+          font-size: 13px;
+          color: rgba(255, 255, 255, 0.75);
+        }
+
+        /* PC（1024px以上）：横レイアウト（ブランド｜サムネ｜本文｜→） */
         @media (min-width: 1024px) {
-          .cardGrid {
-            height: ${CARD_H_PC}px;
-            grid-template-columns: ${BRAND_W}px ${THUMB_BOX}px 1fr 24px;
-            grid-template-rows: 1fr;
+          .card {
+            grid-template-columns: 140px 140px 1fr 24px;
+            align-items: center;
+            gap: 14px;
+            min-height: 160px;
           }
-          .rowTop {
-            display: block;
+
+          .thumbWrap {
+            width: 130px;
+            aspect-ratio: 1 / 1;
+            justify-self: start;
           }
-          .thumbBox {
-            width: ${THUMB_BOX}px;
-            max-width: ${THUMB_BOX}px;
-            margin: 0;
+
+          .caption {
+            font-size: 20px;
+          }
+
+          .brandPlate {
+            height: 110px;
+            min-width: 0;
+            width: 140px;
+            padding: 0;
+          }
+
+          .brandPlateText {
+            font-size: 20px;
+            letter-spacing: 0.3em;
           }
         }
       `}</style>
 
-      <div className="shrink-0 border-b border-white/10" style={{ padding: PAGE_PAD }}>
-        <div style={{ fontSize: HEADER_TITLE_PX, fontWeight: 900 }}>下書き一覧</div>
-      </div>
+      <div className="page">
+        <div className="header">
+          <div className="title">下書き一覧</div>
+        </div>
 
-      <div className="overflow-y-auto space-y-3" style={{ padding: PAGE_PAD }}>
-        {rows.length === 0 ? (
-          <div className="rounded-2xl border border-white/10 bg-black/25 p-5 text-sm text-white/75">
-            下書きがまだありません。
-          </div>
-        ) : (
-          rows.map((d) => (
-            <Link
-              key={d.id}
-              href={`/flow/drafts/new?id=${encodeURIComponent(d.id)}`}
-              className="block no-underline text-white/90 visited:text-white/90 hover:text-white"
-            >
-              <div className="group rounded-2xl border border-white/10 bg-black/25 hover:bg-black/30 transition">
-                <div className="cardGrid">
-                  {/* ✅ スマホ：上段（ブランド + →） / PC：左列（ブランド） */}
-                  <div className="rowTop">
-                    <div
-                      className="rounded-xl bg-gradient-to-b from-[#f2f2f2] via-[#cfcfcf] to-[#9b9b9b]
-                               border border-black/25 shadow-[inset_0_1px_0_rgba(255,255,255,0.7),inset_0_-10px_22px_rgba(0,0,0,0.25),0_8px_18px_rgba(0,0,0,0.25)]
-                               flex items-center justify-center"
-                      style={{
-                        height: PLATE_H,
-                        minWidth: BRAND_W, // ✅ スマホでもブランドが潰れない
-                      }}
-                    >
-                      <span
-                        style={{
-                          fontSize: BRAND_PX,
-                          fontWeight: 900,
-                          letterSpacing: "0.30em",
-                          color: "#000",
-                        }}
-                      >
-                        {d.brand.toUpperCase()}
-                      </span>
-                    </div>
+        <div className="list">
+          {rows.length === 0 ? (
+            <div className="empty">下書きがまだありません。</div>
+          ) : (
+            rows.map((d) => (
+              <Link
+                key={d.id}
+                href={`/flow/drafts/new?id=${encodeURIComponent(d.id)}`}
+                className="card"
+              >
+                <div className="brandPlate">
+                  <span className="brandPlateText">{d.brand.toUpperCase()}</span>
+                </div>
 
-                    {/* ✅ スマホだけ右上に矢印（PCは右端列に出る） */}
-                    <div className="text-xl text-white/35 group-hover:text-white/80 transition">
-                      →
-                    </div>
-                  </div>
+                <div className="thumbWrap">
+                  {d.imageUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={d.imageUrl}
+                      alt="thumb"
+                      draggable={false}
+                      className="thumbImg"
+                    />
+                  ) : (
+                    <div className="noImage">NO IMAGE</div>
+                  )}
+                </div>
 
-                  {/* ✅ サムネ：スマホは横幅いっぱい（最大420px） */}
-                  <div className="thumbBox">
-                    <div
-                      className="rounded-xl bg-white/6 overflow-hidden flex items-center justify-center ring-1 ring-white/10"
-                      style={{
-                        width: "100%",
-                        height: THUMB_BOX,
-                        padding: THUMB_PAD,
-                      }}
-                    >
-                      {d.imageUrl ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={d.imageUrl}
-                          alt="thumb"
-                          draggable={false}
-                          style={{
-                            width: "100%",
-                            height: "100%",
-                            objectFit: "contain",
-                            display: "block",
-                          }}
-                        />
-                      ) : (
-                        <div className="text-xs text-white/40">NO IMAGE</div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* ✅ タイトル：スマホは改行OK / PCは1行省略 */}
-                  <div style={{ minWidth: 0 }}>
-                    <div
-                      style={{
-                        fontSize: TITLE_PX,
-                        fontWeight: 900,
-                        lineHeight: 1.15,
-                        color: "rgba(255,255,255,0.95)",
-                        whiteSpace: "normal", // ✅ スマホは折り返し
-                        overflow: "hidden",
-                      }}
-                      className="md:line-clamp-2"
-                    >
-                      {d.caption_final || d.vision || "（未入力）"}
-                    </div>
-                  </div>
-
-                  {/* ✅ PCだけ右端の矢印列（スマホは上段にある） */}
-                  <div className="hidden lg:block text-xl text-white/35 group-hover:text-white/80 transition text-right">
-                    →
+                <div style={{ minWidth: 0 }}>
+                  <div className="caption">
+                    {d.caption_final || d.vision || "（未入力）"}
                   </div>
                 </div>
-              </div>
-            </Link>
-          ))
-        )}
+
+                <div className="arrow">→</div>
+              </Link>
+            ))
+          )}
+        </div>
       </div>
-    </div>
+    </>
   );
 }
