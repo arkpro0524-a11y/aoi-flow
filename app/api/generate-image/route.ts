@@ -31,19 +31,13 @@ function compactKeywords(keys: unknown): string {
   return keys.map(String).slice(0, 12).join(", ");
 }
 
-/**
- * voiceText は「長文」になりがちなので、画像用に軽く整形して短くする。
- * - 改行や余計な空白を潰す
- * - 文字数上限でカット（入れすぎると絵が崩れる）
- */
 function compactVoiceText(v: unknown): string {
   const s = String(v ?? "")
     .replace(/\r?\n/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-
   if (!s) return "";
-  const MAX = 220; // ← 入れすぎ防止（ここが重要）
+  const MAX = 220;
   return s.length <= MAX ? s : s.slice(0, MAX) + "…";
 }
 
@@ -72,10 +66,8 @@ export async function POST(req: Request) {
     const styleText = String(imagePolicy.styleText ?? "");
     const rules = Array.isArray(imagePolicy.rules) ? imagePolicy.rules.map(String) : [];
 
-    // ✅ ここが追加：ブランド思想を画像にも寄せる
     const captionPolicy = brand.captionPolicy ?? {};
-    const voiceTextRaw = captionPolicy.voiceText ?? "";
-    const voiceText = compactVoiceText(voiceTextRaw);
+    const voiceText = compactVoiceText(captionPolicy.voiceText ?? "");
 
     const prompt = [
       "Create a square image.",
@@ -94,7 +86,7 @@ export async function POST(req: Request) {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) throw new Error("OPENAI_API_KEY missing");
 
-    // Images API（b64で返す）
+    // ✅ b64が欲しいので、まずは b64_json を要求（通らない環境もあるので後でフォールバック）
     const r = await fetch("https://api.openai.com/v1/images/generations", {
       method: "POST",
       headers: {
@@ -112,10 +104,21 @@ export async function POST(req: Request) {
     const j = await r.json();
     if (!r.ok) throw new Error(j?.error?.message || "openai image error");
 
-    const b64 = j?.data?.[0]?.b64_json;
-    if (!b64) throw new Error("no image returned");
+    const item = j?.data?.[0];
 
-    return NextResponse.json({ b64: String(b64) });
+    // ✅ b64でもurlでも返せるようにする
+    const b64 = item?.b64_json;
+    if (typeof b64 === "string" && b64) {
+      return NextResponse.json({ b64 });
+    }
+
+    const url = item?.url;
+    if (typeof url === "string" && url) {
+      // クライアント側はこのURLをそのまま img src に使えば表示できる
+      return NextResponse.json({ url });
+    }
+
+    throw new Error("no image returned (no b64_json / no url)");
   } catch (e: any) {
     console.error(e);
     return NextResponse.json({ error: e?.message || "error" }, { status: 500 });
