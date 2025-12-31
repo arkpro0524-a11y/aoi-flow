@@ -36,6 +36,7 @@ function compactVoiceText(v: unknown): string {
     .replace(/\r?\n/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+
   if (!s) return "";
   const MAX = 220;
   return s.length <= MAX ? s : s.slice(0, MAX) + "…";
@@ -86,7 +87,7 @@ export async function POST(req: Request) {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) throw new Error("OPENAI_API_KEY missing");
 
-    // ✅ b64が欲しいので、まずは b64_json を要求（通らない環境もあるので後でフォールバック）
+    // ✅ GPT画像モデルは base64 を返す（response_format は付けない）
     const r = await fetch("https://api.openai.com/v1/images/generations", {
       method: "POST",
       headers: {
@@ -97,28 +98,18 @@ export async function POST(req: Request) {
         model: "gpt-image-1",
         prompt,
         size: "1024x1024",
-        response_format: "b64_json",
+        // response_format: "b64_json", ← これが原因なので削除
       }),
     });
 
     const j = await r.json();
     if (!r.ok) throw new Error(j?.error?.message || "openai image error");
 
-    const item = j?.data?.[0];
+    // GPT画像モデルは b64_json が返る想定
+    const b64 = j?.data?.[0]?.b64_json;
+    if (!b64) throw new Error("no image returned");
 
-    // ✅ b64でもurlでも返せるようにする
-    const b64 = item?.b64_json;
-    if (typeof b64 === "string" && b64) {
-      return NextResponse.json({ b64 });
-    }
-
-    const url = item?.url;
-    if (typeof url === "string" && url) {
-      // クライアント側はこのURLをそのまま img src に使えば表示できる
-      return NextResponse.json({ url });
-    }
-
-    throw new Error("no image returned (no b64_json / no url)");
+    return NextResponse.json({ b64: String(b64) });
   } catch (e: any) {
     console.error(e);
     return NextResponse.json({ error: e?.message || "error" }, { status: 500 });
