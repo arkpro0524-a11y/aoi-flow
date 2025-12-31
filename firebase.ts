@@ -1,19 +1,8 @@
 // /firebase.ts
-"use client";
-
-import { initializeApp, getApps, type FirebaseApp } from "firebase/app";
-import {
-  getAuth,
-  setPersistence,
-  browserLocalPersistence,
-  type Auth,
-} from "firebase/auth";
-import {
-  getFirestore,
-  enableIndexedDbPersistence,
-  type Firestore,
-} from "firebase/firestore";
-import { getStorage, type FirebaseStorage } from "firebase/storage";
+import { initializeApp, getApps, getApp } from "firebase/app";
+import { getAuth } from "firebase/auth";
+import { getFirestore } from "firebase/firestore";
+import { getStorage } from "firebase/storage";
 
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY!,
@@ -24,21 +13,8 @@ const firebaseConfig = {
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID!,
 };
 
-const app: FirebaseApp =
-  getApps().length > 0 ? getApps()[0]! : initializeApp(firebaseConfig);
+const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 
-export const auth: Auth = getAuth(app);
-export const db: Firestore = getFirestore(app);
-export const storage: FirebaseStorage = getStorage(app);
-
-export async function ensureAuthPersistence() {
-  try {
-    await setPersistence(auth, browserLocalPersistence);
-  } catch {}
-}
-
-export async function ensureFirestorePersistence() {
-  try {
-    await enableIndexedDbPersistence(db);
-  } catch {}
-}
+export const auth = getAuth(app);
+export const db = getFirestore(app);
+export const storage = getStorage(app);

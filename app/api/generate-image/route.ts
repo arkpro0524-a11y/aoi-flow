@@ -36,10 +36,18 @@ function compactVoiceText(v: unknown): string {
     .replace(/\r?\n/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-
   if (!s) return "";
   const MAX = 220;
   return s.length <= MAX ? s : s.slice(0, MAX) + "…";
+}
+
+// URL 画像を b64 に変換（OpenAIがURLで返した場合の保険）
+async function urlToBase64(url: string): Promise<string> {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error("failed to fetch image url");
+  const ab = await r.arrayBuffer();
+  const buf = Buffer.from(ab);
+  return buf.toString("base64");
 }
 
 export async function POST(req: Request) {
@@ -87,7 +95,7 @@ export async function POST(req: Request) {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) throw new Error("OPENAI_API_KEY missing");
 
-    // ✅ GPT画像モデルは base64 を返す（response_format は付けない）
+    // ✅ response_format を送らない（Unknown parameter を潰す）
     const r = await fetch("https://api.openai.com/v1/images/generations", {
       method: "POST",
       headers: {
@@ -98,18 +106,26 @@ export async function POST(req: Request) {
         model: "gpt-image-1",
         prompt,
         size: "1024x1024",
-        // response_format: "b64_json", ← これが原因なので削除
       }),
     });
 
     const j = await r.json();
     if (!r.ok) throw new Error(j?.error?.message || "openai image error");
 
-    // GPT画像モデルは b64_json が返る想定
+    // ✅ b64 があるならそれを使う
     const b64 = j?.data?.[0]?.b64_json;
-    if (!b64) throw new Error("no image returned");
+    if (typeof b64 === "string" && b64) {
+      return NextResponse.json({ b64 });
+    }
 
-    return NextResponse.json({ b64: String(b64) });
+    // ✅ URL で返る場合もあるので保険で変換
+    const url = j?.data?.[0]?.url;
+    if (typeof url === "string" && url) {
+      const b64fromUrl = await urlToBase64(url);
+      return NextResponse.json({ b64: b64fromUrl });
+    }
+
+    throw new Error("no image returned");
   } catch (e: any) {
     console.error(e);
     return NextResponse.json({ error: e?.message || "error" }, { status: 500 });

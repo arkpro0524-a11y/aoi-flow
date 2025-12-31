@@ -12,7 +12,8 @@ import {
   serverTimestamp,
   updateDoc,
 } from "firebase/firestore";
-import { auth, db } from "@/firebase";
+import { ref, uploadString, getDownloadURL } from "firebase/storage";
+import { auth, db, storage } from "@/firebase";
 
 type Brand = "vento" | "riva";
 type Phase = "draft" | "ready" | "posted";
@@ -266,6 +267,13 @@ function RangeControl(props: {
   );
 }
 
+async function uploadDataUrlToStorage(uid: string, draftId: string, dataUrl: string) {
+  const path = `users/${uid}/drafts/${draftId}/${Date.now()}.png`;
+  const r = ref(storage, path);
+  await uploadString(r, dataUrl, "data_url");
+  return await getDownloadURL(r);
+}
+
 export default function NewDraftPage() {
   const router = useRouter();
   const sp = useSearchParams();
@@ -301,8 +309,8 @@ export default function NewDraftPage() {
           return;
         }
 
-        const ref = doc(db, "drafts", id);
-        const snap = await getDoc(ref);
+        const refDoc = doc(db, "drafts", id);
+        const snap = await getDoc(refDoc);
 
         if (!snap.exists()) {
           setDraftId(null);
@@ -381,8 +389,8 @@ export default function NewDraftPage() {
     d.phase === "draft" ? "下書き" : d.phase === "ready" ? "投稿待ち" : "投稿済み";
   const canGenerate = d.vision.trim().length > 0 && !busy;
 
-  async function saveDraft(partial?: Partial<DraftDoc>) {
-    if (!uid) return;
+  async function saveDraft(partial?: Partial<DraftDoc>): Promise<string | null> {
+    if (!uid) return null;
 
     const next: DraftDoc = { ...d, ...(partial ?? {}), userId: uid };
 
@@ -412,14 +420,16 @@ export default function NewDraftPage() {
 
     if (!draftId) {
       payload.createdAt = serverTimestamp();
-      const ref = await addDoc(collection(db, "drafts"), payload);
-      setDraftId(ref.id);
-      router.replace(`/flow/drafts/new?id=${encodeURIComponent(ref.id)}`);
+      const refDoc = await addDoc(collection(db, "drafts"), payload);
+      setDraftId(refDoc.id);
+      router.replace(`/flow/drafts/new?id=${encodeURIComponent(refDoc.id)}`);
+      setD(next);
+      return refDoc.id;
     } else {
       await updateDoc(doc(db, "drafts", draftId), payload);
+      setD(next);
+      return draftId;
     }
-
-    setD(next);
   }
 
   async function generateCaptions() {
@@ -481,6 +491,10 @@ export default function NewDraftPage() {
       const token = await auth.currentUser?.getIdToken(true);
       if (!token) throw new Error("no token");
 
+      // ✅ draftId を確実に作る（Storageの保存先に必要）
+      const ensuredDraftId = draftId ?? (await saveDraft());
+      if (!ensuredDraftId) throw new Error("failed to create draft");
+
       const body = {
         brandId: d.brand,
         vision,
@@ -500,9 +514,12 @@ export default function NewDraftPage() {
       const b64 = typeof j.b64 === "string" ? j.b64 : "";
       if (!b64) throw new Error("no b64");
 
+      // ✅ 一時的に dataURL にして Storageへアップ → URLだけ保存
       const dataUrl = `data:image/png;base64,${b64}`;
-      setD((prev) => ({ ...prev, imageUrl: dataUrl }));
-      await saveDraft({ imageUrl: dataUrl, phase: "draft" });
+      const url = await uploadDataUrlToStorage(uid, ensuredDraftId, dataUrl);
+
+      setD((prev) => ({ ...prev, imageUrl: url }));
+      await saveDraft({ imageUrl: url, phase: "draft" });
     } catch (e) {
       console.error(e);
       alert("画像生成に失敗しました");
@@ -596,12 +613,22 @@ export default function NewDraftPage() {
   }
 
   async function saveCompositeAsImageUrl() {
+    if (!uid) return;
+
     setBusy(true);
     try {
+      const ensuredDraftId = draftId ?? (await saveDraft());
+      if (!ensuredDraftId) throw new Error("failed to create draft");
+
       const out = await renderToCanvasAndGetDataUrl();
       if (!out) throw new Error("no canvas");
-      setD((prev) => ({ ...prev, imageUrl: out }));
-      await saveDraft({ imageUrl: out });
+
+      // ✅ 文字入りも Storageへ → URL保存
+      const url = await uploadDataUrlToStorage(uid, ensuredDraftId, out);
+
+      setD((prev) => ({ ...prev, imageUrl: url }));
+      await saveDraft({ imageUrl: url });
+
       alert("文字入りプレビューを保存しました");
     } catch (e) {
       console.error(e);
@@ -627,7 +654,6 @@ export default function NewDraftPage() {
 
   return (
     <>
-      {/* ✅ Tailwindのlg:を使わず、CSSのmedia queryで確実にPC/スマホ分岐 */}
       <style jsx>{`
         .pageWrap {
           min-height: 100vh;
@@ -642,7 +668,6 @@ export default function NewDraftPage() {
           width: 100%;
         }
 
-        /* PC（1024px以上）になったら左右2カラム + 右をsticky */
         @media (min-width: 1024px) {
           .pageWrap {
             flex-direction: row;
@@ -698,7 +723,9 @@ export default function NewDraftPage() {
               >
                 RIVA
               </Btn>
-              <Chip>{brandLabel} / {phaseLabel}</Chip>
+              <Chip>
+                {brandLabel} / {phaseLabel}
+              </Chip>
             </div>
 
             <div className="text-white/80 mt-4 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
@@ -880,7 +907,6 @@ export default function NewDraftPage() {
               className="rounded-2xl border border-white/12 bg-black/25"
               style={{ padding: UI.cardPadding }}
             >
-
               <div className="rounded-2xl border border-white/12 bg-black/30 p-3">
                 <div
                   className="mx-auto"
