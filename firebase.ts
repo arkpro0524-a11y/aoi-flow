@@ -1,7 +1,7 @@
 // /firebase.ts
-import { initializeApp, getApps, getApp } from "firebase/app";
+import { initializeApp, getApp, getApps } from "firebase/app";
 import { getAuth } from "firebase/auth";
-import { getFirestore } from "firebase/firestore";
+import { enableIndexedDbPersistence, getFirestore } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
 
 const firebaseConfig = {
@@ -18,3 +18,16 @@ const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
 export const storage = getStorage(app);
+
+// ✅ login が import している想定の関数（これが無いとビルドで落ちる）
+let _persistenceEnabled = false;
+export async function ensureFirestorePersistence() {
+  if (_persistenceEnabled) return;
+  try {
+    await enableIndexedDbPersistence(db);
+    _persistenceEnabled = true;
+  } catch (e) {
+    // 失敗しても動作はする（複数タブ等で失敗することがある）
+    console.warn("ensureFirestorePersistence failed:", e);
+  }
+}
