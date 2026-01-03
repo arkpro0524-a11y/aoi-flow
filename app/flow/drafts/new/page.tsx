@@ -31,7 +31,18 @@ type DraftDoc = {
   x: string;
 
   ig3: string[];
+
+  /**
+   * imageUrl = 「元画像（AI生成など）」のURL
+   * ※今まで通り維持（既存仕様・既存一覧を壊さない）
+   */
   imageUrl?: string;
+
+  /**
+   * compositeUrl = 「文字入り完成画像（焼き込み済み）」のURL
+   * ※今回追加（既存データがなくても動く）
+   */
+  compositeUrl?: string;
 
   overlayEnabled: boolean;
   overlayText: string;
@@ -57,6 +68,7 @@ const DEFAULT: DraftDoc = {
 
   ig3: [],
   imageUrl: undefined,
+  compositeUrl: undefined,
 
   overlayEnabled: true,
   overlayText: "",
@@ -267,11 +279,39 @@ function RangeControl(props: {
   );
 }
 
+/**
+ * Storageへ dataURL をアップロードしてURLを返す
+ * - 画像の管理はしない（保存してURLだけ持つ）
+ * - この関数は「成果物（完成形）」の保存のために使う
+ */
 async function uploadDataUrlToStorage(uid: string, draftId: string, dataUrl: string) {
   const path = `users/${uid}/drafts/${draftId}/${Date.now()}.png`;
   const r = ref(storage, path);
   await uploadString(r, dataUrl, "data_url");
   return await getDownloadURL(r);
+}
+
+/**
+ * 画像を安全に読み込む（Canvas合成で必要）
+ * - StorageのCORS次第で失敗する可能性がある
+ * - 失敗しても例外を投げずに null を返す
+ */
+async function loadImageSafe(url: string): Promise<HTMLImageElement | null> {
+  try {
+    const img = new Image();
+    // Canvasで書き出す場合、CORS許可がないと export が失敗する可能性がある
+    img.crossOrigin = "anonymous";
+    img.src = url;
+
+    await new Promise<void>((resolve, reject) => {
+      img.onload = () => resolve();
+      img.onerror = () => reject(new Error("image load error"));
+    });
+
+    return img;
+  } catch {
+    return null;
+  }
 }
 
 export default function NewDraftPage() {
@@ -337,14 +377,19 @@ export default function NewDraftPage() {
         const x = typeof data.x === "string" ? data.x : "";
 
         const ig3 = Array.isArray(data.ig3) ? data.ig3.map(String).slice(0, 3) : [];
+
         const imageUrl =
           typeof data.imageUrl === "string" && data.imageUrl ? data.imageUrl : undefined;
+
+        const compositeUrl =
+          typeof data.compositeUrl === "string" && data.compositeUrl
+            ? data.compositeUrl
+            : undefined;
 
         const overlayEnabled =
           typeof data.overlayEnabled === "boolean" ? data.overlayEnabled : true;
 
-        const overlayText =
-          typeof data.overlayText === "string" ? data.overlayText : (ig || "");
+        const overlayText = typeof data.overlayText === "string" ? data.overlayText : ig || "";
 
         const overlayFontScale =
           typeof data.overlayFontScale === "number"
@@ -369,6 +414,7 @@ export default function NewDraftPage() {
           x,
           ig3,
           imageUrl,
+          compositeUrl,
           overlayEnabled,
           overlayText,
           overlayFontScale,
@@ -389,6 +435,12 @@ export default function NewDraftPage() {
     d.phase === "draft" ? "下書き" : d.phase === "ready" ? "投稿待ち" : "投稿済み";
   const canGenerate = d.vision.trim().length > 0 && !busy;
 
+  /**
+   * Firestore保存
+   * - 既存スキーマを壊さない（brand/phase等維持）
+   * - imageUrl は従来通り保持
+   * - compositeUrl を追加（存在しなくても動く）
+   */
   async function saveDraft(partial?: Partial<DraftDoc>): Promise<string | null> {
     if (!uid) return null;
 
@@ -405,8 +457,14 @@ export default function NewDraftPage() {
       ig: next.ig,
       x: next.x,
       ig3: next.ig3,
+
+      // ✅ 既存: 元画像URL
       imageUrl: next.imageUrl ?? null,
 
+      // ✅ 追加: 文字入り完成画像URL
+      compositeUrl: next.compositeUrl ?? null,
+
+      // 互換フィールド（旧実装で参照している可能性があるため維持）
       caption_final: next.ig,
 
       overlayEnabled: next.overlayEnabled,
@@ -446,6 +504,7 @@ export default function NewDraftPage() {
         brandId: d.brand,
         vision,
         keywords: splitKeywords(d.keywordsText),
+        // Toneは空（固定人格に寄せる）
         tone: "",
       };
 
@@ -518,6 +577,7 @@ export default function NewDraftPage() {
       const dataUrl = `data:image/png;base64,${b64}`;
       const url = await uploadDataUrlToStorage(uid, ensuredDraftId, dataUrl);
 
+      // ✅ 元画像URLは imageUrl に保存
       setD((prev) => ({ ...prev, imageUrl: url }));
       await saveDraft({ imageUrl: url, phase: "draft" });
     } catch (e) {
@@ -528,6 +588,11 @@ export default function NewDraftPage() {
     }
   }
 
+  /**
+   * 右側のプレビューを 1024x1024 に焼き込んで dataURL を返す
+   * - compositeUrl がある場合でも、基本は「元画像（imageUrl）」を焼き込み素材にする
+   * - 文字入り完成画像に対してさらに焼き込むと二重になるので注意
+   */
   async function renderToCanvasAndGetDataUrl(): Promise<string | null> {
     const canvas = canvasRef.current;
     if (!canvas) return null;
@@ -542,25 +607,23 @@ export default function NewDraftPage() {
     ctx.fillStyle = "#0b0f18";
     ctx.fillRect(0, 0, SIZE, SIZE);
 
-    const imgUrl = d.imageUrl;
-    if (imgUrl) {
-      const img = new Image();
-      img.crossOrigin = "anonymous";
-      img.src = imgUrl;
+    // ✅ 焼き込みの素材は「元画像」を優先（文字入り画像を素材にすると二重の原因）
+    const baseUrl = d.imageUrl;
 
-      await new Promise<void>((res) => {
-        img.onload = () => res();
-        img.onerror = () => res();
-      });
+    if (baseUrl) {
+      const img = await loadImageSafe(baseUrl);
 
-      const iw = img.naturalWidth || SIZE;
-      const ih = img.naturalHeight || SIZE;
-      const scale = Math.min(SIZE / iw, SIZE / ih);
-      const w = iw * scale;
-      const h = ih * scale;
-      const x = (SIZE - w) / 2;
-      const y = (SIZE - h) / 2;
-      ctx.drawImage(img, x, y, w, h);
+      if (img) {
+        const iw = img.naturalWidth || SIZE;
+        const ih = img.naturalHeight || SIZE;
+        const scale = Math.min(SIZE / iw, SIZE / ih);
+        const w = iw * scale;
+        const h = ih * scale;
+        const x = (SIZE - w) / 2;
+        const y = (SIZE - h) / 2;
+        ctx.drawImage(img, x, y, w, h);
+      }
+      // 画像が読み込めない場合は「背景のみ」になる（CORS設定が必要な可能性）
     }
 
     const overlayText = (d.overlayText || "").trim();
@@ -609,9 +672,20 @@ export default function NewDraftPage() {
       }
     }
 
-    return canvas.toDataURL("image/png");
+    try {
+      return canvas.toDataURL("image/png");
+    } catch (e) {
+      // CORSで canvas が汚染された場合、ここで失敗することがある
+      console.error(e);
+      return null;
+    }
   }
 
+  /**
+   * 文字入り完成画像（焼き込み済み）を保存する
+   * ✅ imageUrl は上書きしない（元画像のまま保持）
+   * ✅ compositeUrl に保存する（これで二重表示が消える）
+   */
   async function saveCompositeAsImageUrl() {
     if (!uid) return;
 
@@ -621,15 +695,20 @@ export default function NewDraftPage() {
       if (!ensuredDraftId) throw new Error("failed to create draft");
 
       const out = await renderToCanvasAndGetDataUrl();
-      if (!out) throw new Error("no canvas");
+      if (!out) {
+        alert(
+          "保存に失敗しました（画像の読み込み制限/CORSの可能性）\n\n対処：一度別の画像で試す or StorageのCORS設定を確認してください。"
+        );
+        return;
+      }
 
-      // ✅ 文字入りも Storageへ → URL保存
+      // ✅ 文字入り完成画像は compositeUrl に保存
       const url = await uploadDataUrlToStorage(uid, ensuredDraftId, out);
 
-      setD((prev) => ({ ...prev, imageUrl: url }));
-      await saveDraft({ imageUrl: url });
+      setD((prev) => ({ ...prev, compositeUrl: url }));
+      await saveDraft({ compositeUrl: url });
 
-      alert("文字入りプレビューを保存しました");
+      alert("文字入り画像（完成形）を保存しました");
     } catch (e) {
       console.error(e);
       alert("保存に失敗しました");
@@ -649,6 +728,13 @@ export default function NewDraftPage() {
     if (!t) return;
     setD((p) => ({ ...p, overlayText: t }));
   }
+
+  // ✅ プレビューの表示URL：
+  // 文字入り完成画像があるならそれを優先、なければ元画像
+  const previewUrl = d.compositeUrl || d.imageUrl;
+
+  // ✅ 文字入り完成画像を表示している時は、さらに overlay を重ねない（＝二重防止）
+  const showingComposite = !!d.compositeUrl;
 
   const previewOverlayText = (d.overlayText || "").trim();
 
@@ -921,10 +1007,10 @@ export default function NewDraftPage() {
                     border: "1px solid rgba(255,255,255,0.10)",
                   }}
                 >
-                  {d.imageUrl ? (
+                  {previewUrl ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
-                      src={d.imageUrl}
+                      src={previewUrl}
                       alt="preview"
                       draggable={false}
                       style={{
@@ -940,7 +1026,8 @@ export default function NewDraftPage() {
                     </div>
                   )}
 
-                  {d.overlayEnabled && previewOverlayText ? (
+                  {/* ✅ 文字入り完成画像(compositeUrl)表示中は overlay を重ねない（＝二重防止） */}
+                  {!showingComposite && d.overlayEnabled && previewOverlayText ? (
                     <div
                       style={{
                         position: "absolute",
@@ -974,10 +1061,18 @@ export default function NewDraftPage() {
 
                 <div className="mt-4 grid gap-3">
                   <div className="flex items-center justify-between gap-2 flex-wrap">
-                    <Chip className="text-white/95">文字表示</Chip>
+                    <Chip className="text-white/95">
+                      文字表示{showingComposite ? "（完成画像表示中）" : ""}
+                    </Chip>
                     <Btn
                       variant="secondary"
                       onClick={() => setD((p) => ({ ...p, overlayEnabled: !p.overlayEnabled }))}
+                      disabled={showingComposite}
+                      title={
+                        showingComposite
+                          ? "完成画像には文字が焼き込まれているためOFF/ONは無効です"
+                          : undefined
+                      }
                     >
                       {d.overlayEnabled ? "ON" : "OFF"}
                     </Btn>
@@ -1036,7 +1131,8 @@ export default function NewDraftPage() {
                   </div>
 
                   <div className="text-white/55" style={{ fontSize: UI.FONT.labelPx }}>
-                    ※ 保存される画像は 1024×1024 のPNGです。
+                    ※ 保存される画像は 1024×1024 のPNGです。<br />
+                    ※ 文字入り保存後は「完成画像」が優先表示されます（二重防止）。
                   </div>
                 </div>
 
