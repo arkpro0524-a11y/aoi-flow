@@ -1,6 +1,19 @@
 // /app/flow/drafts/new/page.tsx
 "use client";
 
+/**
+ * AOI FLOW｜新規作成ページ（作業画面）
+ *
+ * ✅ このファイルの目的
+ * - 「元画像（base）」と「文字入り完成画像（composite）」を分離して管理し、
+ *   文字入り保存で「黒い画像（文字だけ）」が量産される問題を防ぐ。
+ *
+ * ✅ 重要なルール（仕様書準拠）
+ * - 下書き一覧 / 投稿待ち一覧 / ブランド反映は壊さない
+ * - UIの機能追加はしない（内部品質の改善のみ）
+ * - 文章生成は IG + X を1回で出す（既存仕様維持）
+ */
+
 import React, { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
@@ -18,6 +31,12 @@ import { auth, db, storage } from "@/firebase";
 type Brand = "vento" | "riva";
 type Phase = "draft" | "ready" | "posted";
 
+/**
+ * DraftDoc（画面内の状態）
+ * - baseImageUrl: 画像生成（正方形）の元画像URL（絶対に保持する）
+ * - compositeImageUrl: 「文字入り画像を保存」した完成画像URL
+ * - imageUrl: 既存互換用の代表URL（一覧表示など既存ロジック用）
+ */
 type DraftDoc = {
   userId: string;
   brand: Brand;
@@ -32,17 +51,12 @@ type DraftDoc = {
 
   ig3: string[];
 
-  /**
-   * imageUrl = 「元画像（AI生成など）」のURL
-   * ※今まで通り維持（既存仕様・既存一覧を壊さない）
-   */
-  imageUrl?: string;
+  // ✅ 新規（壊さず拡張）
+  baseImageUrl?: string;
+  compositeImageUrl?: string;
 
-  /**
-   * compositeUrl = 「文字入り完成画像（焼き込み済み）」のURL
-   * ※今回追加（既存データがなくても動く）
-   */
-  compositeUrl?: string;
+  // ✅ 既存互換（今までの実装が使っている可能性が高い）
+  imageUrl?: string;
 
   overlayEnabled: boolean;
   overlayText: string;
@@ -67,8 +81,10 @@ const DEFAULT: DraftDoc = {
   x: "",
 
   ig3: [],
+
+  baseImageUrl: undefined,
+  compositeImageUrl: undefined,
   imageUrl: undefined,
-  compositeUrl: undefined,
 
   overlayEnabled: true,
   overlayText: "",
@@ -280,9 +296,8 @@ function RangeControl(props: {
 }
 
 /**
- * Storageへ dataURL をアップロードしてURLを返す
- * - 画像の管理はしない（保存してURLだけ持つ）
- * - この関数は「成果物（完成形）」の保存のために使う
+ * Storageへ dataURL を保存し、ダウンロードURLを返す
+ * - 画像生成（base）も、文字入り保存（composite）も、ここで統一
  */
 async function uploadDataUrlToStorage(uid: string, draftId: string, dataUrl: string) {
   const path = `users/${uid}/drafts/${draftId}/${Date.now()}.png`;
@@ -292,23 +307,23 @@ async function uploadDataUrlToStorage(uid: string, draftId: string, dataUrl: str
 }
 
 /**
- * 画像を安全に読み込む（Canvas合成で必要）
- * - StorageのCORS次第で失敗する可能性がある
- * - 失敗しても例外を投げずに null を返す
+ * ✅ Canvas汚染（CORS）を避けるための読み込み関数
+ * - StorageのURLをそのまま Image().src に入れると、環境によってCanvasが壊れることがある
+ * - いったん fetch → blob → objectURL にして読み込むと安定しやすい
+ *
+ * もしCORSがまだ反映されていない場合は fetch が失敗するので、
+ * その場合は「保存を中断」して黒画像を作らない。
  */
-async function loadImageSafe(url: string): Promise<HTMLImageElement | null> {
+async function loadImageAsObjectUrl(src: string): Promise<{ objectUrl: string; revoke: () => void } | null> {
   try {
-    const img = new Image();
-    // Canvasで書き出す場合、CORS許可がないと export が失敗する可能性がある
-    img.crossOrigin = "anonymous";
-    img.src = url;
-
-    await new Promise<void>((resolve, reject) => {
-      img.onload = () => resolve();
-      img.onerror = () => reject(new Error("image load error"));
-    });
-
-    return img;
+    const res = await fetch(src, { method: "GET" });
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    return {
+      objectUrl,
+      revoke: () => URL.revokeObjectURL(objectUrl),
+    };
   } catch {
     return null;
   }
@@ -328,6 +343,9 @@ export default function NewDraftPage() {
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
+  // -------------------------
+  // 認証チェック（ログイン必須）
+  // -------------------------
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => {
       setUid(u?.uid ?? null);
@@ -337,6 +355,9 @@ export default function NewDraftPage() {
     return () => unsub();
   }, [router]);
 
+  // -------------------------
+  // 既存下書きの読み込み（idがある場合）
+  // -------------------------
   useEffect(() => {
     if (!uid) return;
 
@@ -378,18 +399,21 @@ export default function NewDraftPage() {
 
         const ig3 = Array.isArray(data.ig3) ? data.ig3.map(String).slice(0, 3) : [];
 
+        // ✅ 新フィールド（あれば読む）
+        const baseImageUrl =
+          typeof data.baseImageUrl === "string" && data.baseImageUrl ? data.baseImageUrl : undefined;
+        const compositeImageUrl =
+          typeof data.compositeImageUrl === "string" && data.compositeImageUrl ? data.compositeImageUrl : undefined;
+
+        // ✅ 旧フィールド（互換）
         const imageUrl =
           typeof data.imageUrl === "string" && data.imageUrl ? data.imageUrl : undefined;
-
-        const compositeUrl =
-          typeof data.compositeUrl === "string" && data.compositeUrl
-            ? data.compositeUrl
-            : undefined;
 
         const overlayEnabled =
           typeof data.overlayEnabled === "boolean" ? data.overlayEnabled : true;
 
-        const overlayText = typeof data.overlayText === "string" ? data.overlayText : ig || "";
+        const overlayText =
+          typeof data.overlayText === "string" ? data.overlayText : (ig || "");
 
         const overlayFontScale =
           typeof data.overlayFontScale === "number"
@@ -413,8 +437,9 @@ export default function NewDraftPage() {
           ig,
           x,
           ig3,
+          baseImageUrl,
+          compositeImageUrl,
           imageUrl,
-          compositeUrl,
           overlayEnabled,
           overlayText,
           overlayFontScale,
@@ -436,20 +461,36 @@ export default function NewDraftPage() {
   const canGenerate = d.vision.trim().length > 0 && !busy;
 
   /**
-   * Firestore保存
-   * - 既存スキーマを壊さない（brand/phase等維持）
-   * - imageUrl は従来通り保持
-   * - compositeUrl を追加（存在しなくても動く）
+   * 表示に使う画像URL
+   * - composite があれば完成画像を優先
+   * - なければ base
+   * - 旧互換の imageUrl もフォールバックとして利用
+   */
+  const displayImageUrl =
+    d.compositeImageUrl || d.baseImageUrl || d.imageUrl || undefined;
+
+  /**
+   * ✅ 保存（Firestore）
+   * - null / undefined をそのまま保存しない（Firebase側で見え方が崩れるため）
+   * - 既存互換の imageUrl は残す
+   *   -> 一覧表示が imageUrl を参照している場合が多いので壊さない
    */
   async function saveDraft(partial?: Partial<DraftDoc>): Promise<string | null> {
     if (!uid) return null;
 
     const next: DraftDoc = { ...d, ...(partial ?? {}), userId: uid };
 
+    // ✅ imageUrl は「代表画像」として運用
+    // - composite があるなら composite を代表に
+    // - なければ base を代表に
+    const representativeUrl =
+      next.compositeImageUrl || next.baseImageUrl || next.imageUrl || null;
+
     const payload: any = {
       userId: uid,
       brand: next.brand,
       phase: next.phase,
+
       vision: next.vision,
       keywordsText: next.keywordsText,
       memo: next.memo,
@@ -458,13 +499,14 @@ export default function NewDraftPage() {
       x: next.x,
       ig3: next.ig3,
 
-      // ✅ 既存: 元画像URL
-      imageUrl: next.imageUrl ?? null,
+      // ✅ 新：分離管理（未設定なら null で統一）
+      baseImageUrl: next.baseImageUrl ?? null,
+      compositeImageUrl: next.compositeImageUrl ?? null,
 
-      // ✅ 追加: 文字入り完成画像URL
-      compositeUrl: next.compositeUrl ?? null,
+      // ✅ 旧：互換（一覧表示などのため残す）
+      imageUrl: representativeUrl,
 
-      // 互換フィールド（旧実装で参照している可能性があるため維持）
+      // 旧互換フィールド（残す）
       caption_final: next.ig,
 
       overlayEnabled: next.overlayEnabled,
@@ -490,6 +532,9 @@ export default function NewDraftPage() {
     }
   }
 
+  // -------------------------
+  // 文章生成（IG + X）
+  // -------------------------
   async function generateCaptions() {
     if (!uid) return;
     const vision = d.vision.trim();
@@ -504,7 +549,6 @@ export default function NewDraftPage() {
         brandId: d.brand,
         vision,
         keywords: splitKeywords(d.keywordsText),
-        // Toneは空（固定人格に寄せる）
         tone: "",
       };
 
@@ -540,6 +584,9 @@ export default function NewDraftPage() {
     }
   }
 
+  // -------------------------
+  // 画像生成（正方形）
+  // -------------------------
   async function generateImage() {
     if (!uid) return;
     const vision = d.vision.trim();
@@ -573,13 +620,21 @@ export default function NewDraftPage() {
       const b64 = typeof j.b64 === "string" ? j.b64 : "";
       if (!b64) throw new Error("no b64");
 
-      // ✅ 一時的に dataURL にして Storageへアップ → URLだけ保存
+      // ✅ dataURL にして Storageへアップ → URLだけ保存
       const dataUrl = `data:image/png;base64,${b64}`;
       const url = await uploadDataUrlToStorage(uid, ensuredDraftId, dataUrl);
 
-      // ✅ 元画像URLは imageUrl に保存
-      setD((prev) => ({ ...prev, imageUrl: url }));
-      await saveDraft({ imageUrl: url, phase: "draft" });
+      // ✅ base画像として保持（絶対に消さない）
+      setD((prev) => ({
+        ...prev,
+        baseImageUrl: url,
+        // 代表URL（一覧表示向け）も更新しておく（互換維持）
+        imageUrl: url,
+        // baseが変わったら、古いcompositeは残すかどうか迷うが
+        // ここでは「残す」（ユーザーが意図して保存した完成物を消さない）
+      }));
+
+      await saveDraft({ baseImageUrl: url, imageUrl: url, phase: "draft" });
     } catch (e) {
       console.error(e);
       alert("画像生成に失敗しました");
@@ -589,9 +644,12 @@ export default function NewDraftPage() {
   }
 
   /**
-   * 右側のプレビューを 1024x1024 に焼き込んで dataURL を返す
-   * - compositeUrl がある場合でも、基本は「元画像（imageUrl）」を焼き込み素材にする
-   * - 文字入り完成画像に対してさらに焼き込むと二重になるので注意
+   * ✅ Canvas合成して dataURL を得る（黒画像量産を防ぐ）
+   *
+   * 重要：
+   * - 元画像は baseImageUrl を使う（compositeを再合成しない）
+   * - base がない場合は保存できない（黒背景だけで保存しない）
+   * - 画像読み込みに失敗したら「中断」して null を返す
    */
   async function renderToCanvasAndGetDataUrl(): Promise<string | null> {
     const canvas = canvasRef.current;
@@ -603,29 +661,63 @@ export default function NewDraftPage() {
     canvas.width = SIZE;
     canvas.height = SIZE;
 
+    // 背景（万一画像がない場合でも真っ黒を保存しないため、後で中断する）
     ctx.clearRect(0, 0, SIZE, SIZE);
     ctx.fillStyle = "#0b0f18";
     ctx.fillRect(0, 0, SIZE, SIZE);
 
-    // ✅ 焼き込みの素材は「元画像」を優先（文字入り画像を素材にすると二重の原因）
-    const baseUrl = d.imageUrl;
-
-    if (baseUrl) {
-      const img = await loadImageSafe(baseUrl);
-
-      if (img) {
-        const iw = img.naturalWidth || SIZE;
-        const ih = img.naturalHeight || SIZE;
-        const scale = Math.min(SIZE / iw, SIZE / ih);
-        const w = iw * scale;
-        const h = ih * scale;
-        const x = (SIZE - w) / 2;
-        const y = (SIZE - h) / 2;
-        ctx.drawImage(img, x, y, w, h);
-      }
-      // 画像が読み込めない場合は「背景のみ」になる（CORS設定が必要な可能性）
+    // ✅ 元画像は base を使う（ないなら保存禁止）
+    const src = d.baseImageUrl || d.imageUrl; // 旧互換で imageUrl も使えるようにしておく
+    if (!src) {
+      alert("先に「画像を生成（正方形）」を押してください（元画像がありません）");
+      return null;
     }
 
+    // ✅ fetch→blob→objectURL で読み込む（CORSが通っていないとここで失敗する）
+    const loaded = await loadImageAsObjectUrl(src);
+    if (!loaded) {
+      alert(
+        "画像の読み込みに失敗しました（CORS反映待ち/キャッシュの可能性）。\n" +
+          "少し待ってから、また「文字入り画像を保存」を押してください。"
+      );
+      return null;
+    }
+
+    try {
+      const img = new Image();
+      img.src = loaded.objectUrl;
+
+      const ok = await new Promise<boolean>((res) => {
+        img.onload = () => res(true);
+        img.onerror = () => res(false);
+      });
+
+      if (!ok) {
+        alert(
+          "画像の読み込みに失敗しました（ブラウザ側の制限の可能性）。\n" +
+            "少し待ってから、もう一度試してください。"
+        );
+        return null;
+      }
+
+      const iw = img.naturalWidth || SIZE;
+      const ih = img.naturalHeight || SIZE;
+
+      // contain で中央に収める（既存仕様維持）
+      const scale = Math.min(SIZE / iw, SIZE / ih);
+      const w = iw * scale;
+      const h = ih * scale;
+      const x = (SIZE - w) / 2;
+      const y = (SIZE - h) / 2;
+      ctx.drawImage(img, x, y, w, h);
+    } finally {
+      // ✅ objectURLは使い終わったら解放
+      loaded.revoke();
+    }
+
+    // -------------------------
+    // 文字オーバーレイ
+    // -------------------------
     const overlayText = (d.overlayText || "").trim();
     if (d.overlayEnabled && overlayText) {
       const fontScale = clamp(d.overlayFontScale, 0.6, 1.6);
@@ -636,6 +728,7 @@ export default function NewDraftPage() {
 
       const maxWidth = Math.floor(SIZE * 0.86);
 
+      // 文字を自動改行（1行がmaxWidthを超えないように分割）
       const fixedLines: string[] = [];
       let buf = "";
       for (const ch of overlayText) {
@@ -657,11 +750,13 @@ export default function NewDraftPage() {
       const pad = Math.round(SIZE * 0.035);
       const bgAlpha = clamp(d.overlayBgOpacity, 0, 0.85);
 
+      // 背景帯
       ctx.fillStyle = `rgba(0,0,0,${bgAlpha})`;
       const rectY = Math.max(0, topY - Math.round(pad * 0.6));
       const rectH = Math.min(SIZE - rectY, blockH + Math.round(pad * 1.2));
       ctx.fillRect(0, rectY, SIZE, rectH);
 
+      // 文字
       ctx.fillStyle = "rgba(255,255,255,0.95)";
       for (let i = 0; i < fixedLines.length; i++) {
         const ln = fixedLines[i];
@@ -672,19 +767,17 @@ export default function NewDraftPage() {
       }
     }
 
-    try {
-      return canvas.toDataURL("image/png");
-    } catch (e) {
-      // CORSで canvas が汚染された場合、ここで失敗することがある
-      console.error(e);
-      return null;
-    }
+    // ✅ ここまで来たら「ちゃんと画像が描けた」ので dataURL を返す
+    return canvas.toDataURL("image/png");
   }
 
   /**
-   * 文字入り完成画像（焼き込み済み）を保存する
-   * ✅ imageUrl は上書きしない（元画像のまま保持）
-   * ✅ compositeUrl に保存する（これで二重表示が消える）
+   * ✅ 文字入り画像を保存（黒画像量産を防ぐ版）
+   *
+   * - 合成に失敗したら保存しない（nullで中断）
+   * - compositeImageUrl に保存
+   * - 互換のため imageUrl も composite を代表に更新（一覧表示が壊れない）
+   * - baseImageUrl は絶対に上書きしない（元画像を守る）
    */
   async function saveCompositeAsImageUrl() {
     if (!uid) return;
@@ -695,20 +788,20 @@ export default function NewDraftPage() {
       if (!ensuredDraftId) throw new Error("failed to create draft");
 
       const out = await renderToCanvasAndGetDataUrl();
-      if (!out) {
-        alert(
-          "保存に失敗しました（画像の読み込み制限/CORSの可能性）\n\n対処：一度別の画像で試す or StorageのCORS設定を確認してください。"
-        );
-        return;
-      }
+      if (!out) return; // ✅ 失敗時は保存しない（黒画像を作らない）
 
-      // ✅ 文字入り完成画像は compositeUrl に保存
       const url = await uploadDataUrlToStorage(uid, ensuredDraftId, out);
 
-      setD((prev) => ({ ...prev, compositeUrl: url }));
-      await saveDraft({ compositeUrl: url });
+      setD((prev) => ({
+        ...prev,
+        compositeImageUrl: url,
+        // ✅ 代表画像も更新（一覧表示の互換維持）
+        imageUrl: url,
+      }));
 
-      alert("文字入り画像（完成形）を保存しました");
+      await saveDraft({ compositeImageUrl: url, imageUrl: url });
+
+      alert("文字入りプレビューを保存しました");
     } catch (e) {
       console.error(e);
       alert("保存に失敗しました");
@@ -728,13 +821,6 @@ export default function NewDraftPage() {
     if (!t) return;
     setD((p) => ({ ...p, overlayText: t }));
   }
-
-  // ✅ プレビューの表示URL：
-  // 文字入り完成画像があるならそれを優先、なければ元画像
-  const previewUrl = d.compositeUrl || d.imageUrl;
-
-  // ✅ 文字入り完成画像を表示している時は、さらに overlay を重ねない（＝二重防止）
-  const showingComposite = !!d.compositeUrl;
 
   const previewOverlayText = (d.overlayText || "").trim();
 
@@ -776,7 +862,7 @@ export default function NewDraftPage() {
       `}</style>
 
       <div className="pageWrap">
-        {/* 左 */}
+        {/* 左：入力と生成 */}
         <section className="leftCol min-h-0 flex flex-col gap-3">
           <div className="shrink-0 flex items-center justify-between gap-3">
             <div className="flex items-center gap-2 flex-wrap" />
@@ -822,7 +908,7 @@ export default function NewDraftPage() {
               onChange={(e) => setD((p) => ({ ...p, vision: e.target.value }))}
               className="w-full rounded-xl border p-3 outline-none"
               style={{ ...formStyle, minHeight: UI.hVision }}
-              placeholder="例：RIVAの世界観（誠実・丁寧・クラシック）を1〜2行で"
+              placeholder="例：流行や価格ではなく、時間が残した佇まいを見る。"
             />
 
             <div className="text-white/80 mt-4 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
@@ -833,7 +919,7 @@ export default function NewDraftPage() {
               onChange={(e) => setD((p) => ({ ...p, keywordsText: e.target.value }))}
               className="w-full rounded-xl border p-3 outline-none"
               style={formStyle}
-              placeholder="例：クラシック, 丁寧, 木目, 余白"
+              placeholder="例：ビンテージ, 静けさ, 選別, 余白"
             />
 
             <div className="mt-4 flex flex-wrap gap-2">
@@ -986,7 +1072,7 @@ export default function NewDraftPage() {
           </div>
         </section>
 
-        {/* 右 */}
+        {/* 右：完成プレビュー＋文字調整 */}
         <section className="rightCol min-h-0 flex flex-col gap-4">
           <div className="rightScroll min-h-0" style={{ paddingBottom: 8 }}>
             <div
@@ -1007,10 +1093,10 @@ export default function NewDraftPage() {
                     border: "1px solid rgba(255,255,255,0.10)",
                   }}
                 >
-                  {previewUrl ? (
+                  {displayImageUrl ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
-                      src={previewUrl}
+                      src={displayImageUrl}
                       alt="preview"
                       draggable={false}
                       style={{
@@ -1026,8 +1112,7 @@ export default function NewDraftPage() {
                     </div>
                   )}
 
-                  {/* ✅ 文字入り完成画像(compositeUrl)表示中は overlay を重ねない（＝二重防止） */}
-                  {!showingComposite && d.overlayEnabled && previewOverlayText ? (
+                  {d.overlayEnabled && previewOverlayText ? (
                     <div
                       style={{
                         position: "absolute",
@@ -1061,18 +1146,10 @@ export default function NewDraftPage() {
 
                 <div className="mt-4 grid gap-3">
                   <div className="flex items-center justify-between gap-2 flex-wrap">
-                    <Chip className="text-white/95">
-                      文字表示{showingComposite ? "（完成画像表示中）" : ""}
-                    </Chip>
+                    <Chip className="text-white/95">文字表示</Chip>
                     <Btn
                       variant="secondary"
                       onClick={() => setD((p) => ({ ...p, overlayEnabled: !p.overlayEnabled }))}
-                      disabled={showingComposite}
-                      title={
-                        showingComposite
-                          ? "完成画像には文字が焼き込まれているためOFF/ONは無効です"
-                          : undefined
-                      }
                     >
                       {d.overlayEnabled ? "ON" : "OFF"}
                     </Btn>
@@ -1132,10 +1209,11 @@ export default function NewDraftPage() {
 
                   <div className="text-white/55" style={{ fontSize: UI.FONT.labelPx }}>
                     ※ 保存される画像は 1024×1024 のPNGです。<br />
-                    ※ 文字入り保存後は「完成画像」が優先表示されます（二重防止）。
+                    ※ 元画像（base）は保持され、完成画像（composite）だけ追加されます。
                   </div>
                 </div>
 
+                {/* Canvasは画面には見せない（保存用） */}
                 <canvas ref={canvasRef} style={{ display: "none" }} />
               </div>
             </div>
