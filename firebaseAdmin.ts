@@ -15,11 +15,19 @@ function getServiceAccount() {
   return json;
 }
 
+function getStorageBucketName() {
+  // 例: flow-app-509a7.firebasestorage.app
+  const b = process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET;
+  if (!b) throw new Error("NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET missing");
+  return b;
+}
+
 export function getAdminApp() {
   if (admin.apps.length > 0) return admin.app();
   const sa = getServiceAccount();
   return admin.initializeApp({
     credential: admin.credential.cert(sa),
+    storageBucket: getStorageBucketName(),
   });
 }
 
@@ -31,4 +39,9 @@ export function getAdminAuth() {
 export function getAdminDb() {
   getAdminApp();
   return admin.firestore();
+}
+
+export function getAdminBucket() {
+  getAdminApp();
+  return admin.storage().bucket();
 }

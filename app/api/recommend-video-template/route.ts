@@ -26,11 +26,6 @@ async function loadBrand(uid: string, brandId: string) {
   return snap.data() as any;
 }
 
-function compactKeywords(keys: unknown): string {
-  if (!Array.isArray(keys)) return "";
-  return keys.map(String).slice(0, 12).join(" / ");
-}
-
 export async function POST(req: Request) {
   try {
     const uid = await requireUid(req);
@@ -38,7 +33,7 @@ export async function POST(req: Request) {
 
     const brandId = typeof body.brandId === "string" ? body.brandId : "vento";
     const vision = typeof body.vision === "string" ? body.vision : "";
-    const keywords = compactKeywords(body.keywords);
+    const keywords = Array.isArray(body.keywords) ? body.keywords.map(String).slice(0, 12) : [];
 
     if (!vision.trim()) return NextResponse.json({ error: "vision is required" }, { status: 400 });
 
@@ -50,46 +45,29 @@ export async function POST(req: Request) {
       );
     }
 
-    const captionPolicy = brand.captionPolicy ?? {};
-    const voiceText = String(captionPolicy.voiceText ?? "");
-    const igGoal = String(captionPolicy.igGoal ?? "");
-    const xGoal = String(captionPolicy.xGoal ?? "");
-    const must = Array.isArray(captionPolicy.must) ? captionPolicy.must.map(String) : [];
-    const ban = Array.isArray(captionPolicy.ban) ? captionPolicy.ban.map(String) : [];
-    const toneDefault = String(captionPolicy.toneDefault ?? "");
-
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) throw new Error("OPENAI_API_KEY missing");
-
     const client = new OpenAI({ apiKey });
 
     const sys = [
-      "あなたはSNS投稿の文章作成者。",
-      "広告臭を消し、誠実で読みやすい日本語にする。",
+      "あなたは短尺商品動画のテンプレ選定アシスタント。",
+      "ユーザーは迷いたくないので、結論は1つに絞る。",
       "出力は必ずJSONスキーマに一致させる。",
     ].join("\n");
 
     const userPrompt = [
-      "【ブランド設定】",
-      `name: ${String(brand.name ?? brandId)}`,
-      `voiceText: ${voiceText}`,
-      `igGoal: ${igGoal}`,
-      `xGoal: ${xGoal}`,
-      `must: ${must.join(" / ")}`,
-      `ban: ${ban.join(" / ")}`,
-      `toneDefault: ${toneDefault}`,
+      "テンプレ候補は以下のみ：",
+      '["slowZoomFade","zoomIn","zoomOut","slideLeft","slideRight","fadeIn","fadeOut","static"]',
       "",
-      "【今回入力】",
-      `vision: ${vision}`,
-      `keywords: ${keywords}`,
+      `ブランド: ${String(brand.name ?? brandId)}`,
+      `ビジョン: ${vision}`,
+      keywords.length ? `キーワード: ${keywords.join(" / ")}` : "",
       "",
-      "【制約】",
-      "- instagram は投稿できる本文（長すぎない）",
-      "- x は短く、広告臭なし",
-      "- ig3 は別案3つ（本文を上書きする用途ではない）",
+      "条件：",
+      "- reason は日本語で短く。広告臭なし。",
+      "- confidence は 0.0〜1.0 の小数。",
     ].join("\n");
 
-    // ✅ Responses API：text.format に json_schema を指定（旧 response_format を廃止）
     const resp = await client.responses.create({
       model: "gpt-4o-mini",
       input: [
@@ -99,22 +77,20 @@ export async function POST(req: Request) {
       text: {
         format: {
           type: "json_schema",
-          name: "caption_payload",
+          name: "template_pick",
           strict: true,
           schema: {
             type: "object",
             additionalProperties: false,
             properties: {
-              instagram: { type: "string" },
-              x: { type: "string" },
-              ig3: {
-                type: "array",
-                items: { type: "string" },
-                minItems: 3,
-                maxItems: 3,
+              templateId: {
+                type: "string",
+                enum: ["slowZoomFade", "zoomIn", "zoomOut", "slideLeft", "slideRight", "fadeIn", "fadeOut", "static"],
               },
+              reason: { type: "string" },
+              confidence: { type: "number" },
             },
-            required: ["instagram", "x", "ig3"],
+            required: ["templateId", "reason", "confidence"],
           },
         },
       },
@@ -123,10 +99,14 @@ export async function POST(req: Request) {
     const raw = resp.output_text || "{}";
     const out = JSON.parse(raw);
 
+    const templateId = String(out.templateId ?? "slowZoomFade");
+    const reason = String(out.reason ?? "");
+    const confidenceNum = Number(out.confidence ?? 0);
+
     return NextResponse.json({
-      instagram: String(out.instagram ?? ""),
-      x: String(out.x ?? ""),
-      ig3: Array.isArray(out.ig3) ? out.ig3.map(String).slice(0, 3) : ["", "", ""],
+      templateId,
+      reason,
+      confidence: Number.isFinite(confidenceNum) ? Math.max(0, Math.min(1, confidenceNum)) : 0,
     });
   } catch (e: any) {
     console.error(e);

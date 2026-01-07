@@ -2,41 +2,44 @@
 "use client";
 
 /**
- * AOI FLOW｜新規作成ページ（作業画面）
+ * AOI FLOW｜下書き 新規/編集
  *
- * ✅ このファイルの目的
- * - 「元画像（base）」と「文字入り完成画像（composite）」を分離して管理し、
- *   文字入り保存で「黒い画像（文字だけ）」が量産される問題を防ぐ。
+ * ✅ 既存機能：キャプション生成 / 画像生成 / 画像アップロード / 文字入り合成 / 下書き保存 / 一覧互換
+ * ✅ 復活：IG / X / IG3（3案）ブロック（本文は絶対上書きしない）
+ * ✅ 追加：動画生成（秒数 5/10、品質2段階、テンプレ、サイズ選択、コスト表示）
+ * ✅ 追加：画像ソース切替（UPLOAD / AI / COMPOSITE）
+ * ✅ 追加：/api/config から価格取得（リアルタイム）
  *
- * ✅ 重要なルール（仕様書準拠）
- * - 下書き一覧 / 投稿待ち一覧 / ブランド反映は壊さない
- * - UIの機能追加はしない（内部品質の改善のみ）
- * - 文章生成は IG + X を1回で出す（既存仕様維持）
+ * ✅ 重要：
+ * - 動画生成は /api/generate-video に分離（冪等 + Storage保存 + URL返却）
+ * - “二重実行/裏実行” をフロントでも潰す（inFlight + Idempotency-Key）
  */
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
-import {
-  addDoc,
-  collection,
-  doc,
-  getDoc,
-  serverTimestamp,
-  updateDoc,
-} from "firebase/firestore";
+import { addDoc, collection, doc, getDoc, serverTimestamp, updateDoc } from "firebase/firestore";
 import { ref, uploadString, getDownloadURL } from "firebase/storage";
 import { auth, db, storage } from "@/firebase";
 
 type Brand = "vento" | "riva";
 type Phase = "draft" | "ready" | "posted";
 
-/**
- * DraftDoc（画面内の状態）
- * - baseImageUrl: 画像生成（正方形）の元画像URL（絶対に保持する）
- * - compositeImageUrl: 「文字入り画像を保存」した完成画像URL
- * - imageUrl: 既存互換用の代表URL（一覧表示など既存ロジック用）
- */
+type UiTemplate =
+  | "zoomIn"
+  | "zoomOut"
+  | "slideLeft"
+  | "slideRight"
+  | "fadeIn"
+  | "fadeOut"
+  | "slowZoomFade"
+  | "static";
+
+type UiSeconds = 5 | 10;
+type UiVideoQuality = "standard" | "high";
+type ImageSource = "upload" | "ai" | "composite";
+type UiVideoSize = "1024x1792" | "720x1280" | "1792x1024" | "1280x720";
+
 type DraftDoc = {
   userId: string;
   brand: Brand;
@@ -48,21 +51,26 @@ type DraftDoc = {
 
   ig: string;
   x: string;
-
   ig3: string[];
 
-  // ✅ 新規（壊さず拡張）
-  baseImageUrl?: string;
-  compositeImageUrl?: string;
+  baseImageUrl?: string; // upload（常にJPEGに正規化）
+  aiImageUrl?: string; // AI生成（PNG）
+  compositeImageUrl?: string; // 文字入り（PNG）
+  imageUrl?: string; // 代表（一覧互換）
 
-  // ✅ 既存互換（今までの実装が使っている可能性が高い）
-  imageUrl?: string;
+  imageSource: ImageSource;
 
   overlayEnabled: boolean;
   overlayText: string;
   overlayFontScale: number;
   overlayY: number;
   overlayBgOpacity: number;
+
+  videoUrl?: string;
+  videoSeconds?: UiSeconds;
+  videoQuality?: UiVideoQuality;
+  videoTemplate?: UiTemplate;
+  videoSize?: UiVideoSize;
 
   updatedAt?: any;
   createdAt?: any;
@@ -79,18 +87,26 @@ const DEFAULT: DraftDoc = {
 
   ig: "",
   x: "",
-
   ig3: [],
 
   baseImageUrl: undefined,
+  aiImageUrl: undefined,
   compositeImageUrl: undefined,
   imageUrl: undefined,
+
+  imageSource: "upload",
 
   overlayEnabled: true,
   overlayText: "",
   overlayFontScale: 1.0,
   overlayY: 75,
   overlayBgOpacity: 0.45,
+
+  videoUrl: undefined,
+  videoSeconds: 5,
+  videoQuality: "standard",
+  videoTemplate: "slowZoomFade",
+  videoSize: "1024x1792",
 };
 
 const UI = {
@@ -135,16 +151,26 @@ const UI = {
   },
 };
 
+function yen(n: number) {
+  return `${Math.round(n).toLocaleString("ja-JP")}円`;
+}
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
 }
-
 function splitKeywords(text: string) {
   return text
     .split(/[\n,、]+/g)
     .map((s) => s.trim())
     .filter(Boolean)
     .slice(0, 12);
+}
+
+/** 乱数キー（冪等キーに使う：二重クリック等で同一にしたいので「操作開始時に固定」） */
+function makeIdemKey(prefix: string) {
+  // crypto.randomUUID() が無い環境もあるのでフォールバックも用意
+  const anyCrypto = (globalThis as any)?.crypto;
+  const uuid = typeof anyCrypto?.randomUUID === "function" ? anyCrypto.randomUUID() : `${Date.now()}_${Math.random()}`;
+  return `${prefix}_${uuid}`.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 120);
 }
 
 const formStyle: React.CSSProperties = {
@@ -201,6 +227,41 @@ function Btn(props: {
   );
 }
 
+function SelectBtn(props: {
+  selected: boolean;
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  title?: string;
+}) {
+  const selected = props.selected;
+  const textColor = selected ? "rgba(0,0,0,0.95)" : "rgba(255,255,255,0.95)";
+
+  return (
+    <button
+      type="button"
+      title={props.title}
+      onClick={props.onClick}
+      disabled={props.disabled}
+      className={[
+        "inline-flex items-center justify-center rounded-full px-4 py-2 font-black transition select-none whitespace-nowrap",
+        "border",
+        selected
+          ? "bg-white !text-black border-white shadow-[0_0_0_3px_rgba(255,255,255,0.18),0_18px_40px_rgba(0,0,0,0.65)]"
+          : "bg-transparent !text-white border-white/25 hover:bg-white/10 shadow-[0_10px_22px_rgba(0,0,0,0.35)]",
+        props.disabled ? "opacity-40 cursor-not-allowed" : "active:scale-[0.99]",
+      ].join(" ")}
+      style={{
+        fontSize: UI.FONT.buttonPx,
+        color: textColor,
+        WebkitTextFillColor: textColor as any,
+      }}
+    >
+      {props.label}
+    </button>
+  );
+}
+
 function Chip(props: { children: React.ReactNode; className?: string }) {
   return (
     <div
@@ -226,24 +287,16 @@ function RangeControl(props: {
   onChange: (v: number) => void;
 }) {
   const v = props.value;
-
   const set = (next: number) => {
     const fixed = Number(next.toFixed(4));
     props.onChange(clamp(fixed, props.min, props.max));
   };
-
   const bump = (delta: number) => set(v + delta);
   const size = UI.stepBtnSize;
 
   return (
-    <div
-      className="rounded-2xl border border-white/14 bg-black/25"
-      style={{ padding: UI.RANGE.boxPad }}
-    >
-      <div
-        className="flex items-center justify-between gap-2"
-        style={{ marginBottom: UI.RANGE.headerMb }}
-      >
+    <div className="rounded-2xl border border-white/14 bg-black/25" style={{ padding: UI.RANGE.boxPad }}>
+      <div className="flex items-center justify-between gap-2" style={{ marginBottom: UI.RANGE.headerMb }}>
         <div className="text-white/85 font-bold" style={{ fontSize: UI.FONT.labelPx }}>
           {props.label}
         </div>
@@ -253,7 +306,7 @@ function RangeControl(props: {
             type="button"
             onClick={() => bump(-props.step)}
             className="rounded-full border border-white/25 bg-white/12 hover:bg-white/18 transition"
-            style={{ width: size, height: size, fontWeight: 900 }}
+            style={{ width: size, height: size, fontWeight: 900, color: "rgba(255,255,255,0.95)" }}
             title="小さく"
           >
             −
@@ -274,7 +327,7 @@ function RangeControl(props: {
             type="button"
             onClick={() => bump(props.step)}
             className="rounded-full border border-white/25 bg-white/12 hover:bg-white/18 transition"
-            style={{ width: size, height: size, fontWeight: 900 }}
+            style={{ width: size, height: size, fontWeight: 900, color: "rgba(255,255,255,0.95)" }}
             title="大きく"
           >
             +
@@ -295,38 +348,82 @@ function RangeControl(props: {
   );
 }
 
-/**
- * Storageへ dataURL を保存し、ダウンロードURLを返す
- * - 画像生成（base）も、文字入り保存（composite）も、ここで統一
- */
+/** dataURL を Storage に保存（画像用：PNG） */
 async function uploadDataUrlToStorage(uid: string, draftId: string, dataUrl: string) {
-  const path = `users/${uid}/drafts/${draftId}/${Date.now()}.png`;
+  const ext = "png";
+  const path = `users/${uid}/drafts/${draftId}/${Date.now()}.${ext}`;
   const r = ref(storage, path);
   await uploadString(r, dataUrl, "data_url");
   return await getDownloadURL(r);
 }
 
-/**
- * ✅ Canvas汚染（CORS）を避けるための読み込み関数
- * - StorageのURLをそのまま Image().src に入れると、環境によってCanvasが壊れることがある
- * - いったん fetch → blob → objectURL にして読み込むと安定しやすい
- *
- * もしCORSがまだ反映されていない場合は fetch が失敗するので、
- * その場合は「保存を中断」して黒画像を作らない。
- */
-async function loadImageAsObjectUrl(src: string): Promise<{ objectUrl: string; revoke: () => void } | null> {
+/** ✅ File を “必ず JPEG” に変換して Storage 保存（HEIF/HEIC対策） */
+async function uploadImageFileAsJpegToStorage(uid: string, draftId: string, file: File) {
+  const bitmap = await createImageBitmap(file).catch(() => null);
+  if (!bitmap) throw new Error("画像の読み込みに失敗しました（HEIF未対応の可能性）");
+
+  const canvas = document.createElement("canvas");
+  canvas.width = bitmap.width;
+  canvas.height = bitmap.height;
+
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("canvas error");
+  ctx.drawImage(bitmap, 0, 0);
+
+  const dataUrl = canvas.toDataURL("image/jpeg", 0.92);
+
+  const path = `users/${uid}/drafts/${draftId}/${Date.now()}.jpg`;
+  const r = ref(storage, path);
+  await uploadString(r, dataUrl, "data_url");
+  return await getDownloadURL(r);
+}
+
+/** URL を blob として読み、object URL にして img/canvas で使えるようにする（CORS保険） */
+async function loadImageAsObjectUrl(src: string) {
   try {
     const res = await fetch(src, { method: "GET" });
     if (!res.ok) return null;
     const blob = await res.blob();
     const objectUrl = URL.createObjectURL(blob);
-    return {
-      objectUrl,
-      revoke: () => URL.revokeObjectURL(objectUrl),
-    };
+    return { blob, objectUrl, revoke: () => URL.revokeObjectURL(objectUrl) };
   } catch {
     return null;
   }
+}
+
+/* =========================
+   ✅ コスト表示：/api/config から取得（単一ソース）
+   ========================= */
+type PricingTable = {
+  standard: { 5: number; 10: number };
+  high: { 5: number; 10: number };
+};
+type ConfigResponseLike = any;
+
+const FALLBACK_PRICING: PricingTable = {
+  standard: { 5: 180, 10: 320 },
+  high: { 5: 420, 10: 780 },
+};
+
+function normalizePricing(raw: ConfigResponseLike): PricingTable {
+  // 想定：{ ok:true, pricing:{ video:{ standard:{5:..,10:..}, high:{5:..,10:..} } } }
+  const src = raw?.pricing?.video ?? raw?.videoPricing ?? raw?.pricing ?? raw ?? {};
+
+  const s5 = Number(src?.standard?.[5] ?? src?.standard?.["5"] ?? src?.standard5);
+  const s10 = Number(src?.standard?.[10] ?? src?.standard?.["10"] ?? src?.standard10);
+  const h5 = Number(src?.high?.[5] ?? src?.high?.["5"] ?? src?.high5);
+  const h10 = Number(src?.high?.[10] ?? src?.high?.["10"] ?? src?.high10);
+
+  return {
+    standard: {
+      5: Number.isFinite(s5) && s5 > 0 ? s5 : FALLBACK_PRICING.standard[5],
+      10: Number.isFinite(s10) && s10 > 0 ? s10 : FALLBACK_PRICING.standard[10],
+    },
+    high: {
+      5: Number.isFinite(h5) && h5 > 0 ? h5 : FALLBACK_PRICING.high[5],
+      10: Number.isFinite(h10) && h10 > 0 ? h10 : FALLBACK_PRICING.high[10],
+    },
+  };
 }
 
 export default function NewDraftPage() {
@@ -343,9 +440,35 @@ export default function NewDraftPage() {
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  // -------------------------
-  // 認証チェック（ログイン必須）
-  // -------------------------
+  // 動画（生成直後のプレビュー：URLが来たらそれを使う）
+  const [videoPreviewUrl, setVideoPreviewUrl] = useState<string | null>(null);
+
+  // ✅ 二重送信・裏実行をフロントでも潰す（操作単位ロック）
+  const inFlightRef = useRef<Record<string, boolean>>({});
+
+  // ✅ 価格（/api/config 由来）
+  const [pricing, setPricing] = useState<PricingTable>(FALLBACK_PRICING);
+  const [pricingBusy, setPricingBusy] = useState(false);
+  const [pricingError, setPricingError] = useState<string | null>(null);
+  const [pricingUpdatedAt, setPricingUpdatedAt] = useState<number | null>(null);
+
+  async function fetchPricing() {
+    setPricingBusy(true);
+    setPricingError(null);
+    try {
+      const r = await fetch("/api/config", { method: "GET", headers: { "cache-control": "no-store" } });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j?.error || "config error");
+      setPricing(normalizePricing(j));
+      setPricingUpdatedAt(Date.now());
+    } catch {
+      setPricingError("価格取得に失敗（暫定表示）");
+      setPricingUpdatedAt(Date.now());
+    } finally {
+      setPricingBusy(false);
+    }
+  }
+
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => {
       setUid(u?.uid ?? null);
@@ -355,9 +478,21 @@ export default function NewDraftPage() {
     return () => unsub();
   }, [router]);
 
-  // -------------------------
-  // 既存下書きの読み込み（idがある場合）
-  // -------------------------
+  useEffect(() => {
+    fetchPricing();
+    const t = setInterval(() => fetchPricing(), 60_000);
+    const onVis = () => {
+      if (document.visibilityState === "visible") fetchPricing();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ✅ 読み込み（既存データ互換）
   useEffect(() => {
     if (!uid) return;
 
@@ -372,7 +507,6 @@ export default function NewDraftPage() {
 
         const refDoc = doc(db, "drafts", id);
         const snap = await getDoc(refDoc);
-
         if (!snap.exists()) {
           setDraftId(null);
           setD((prev) => ({ ...prev, userId: uid }));
@@ -382,8 +516,7 @@ export default function NewDraftPage() {
         const data = snap.data() as any;
 
         const brand: Brand = data.brand === "riva" ? "riva" : "vento";
-        const phase: Phase =
-          data.phase === "ready" ? "ready" : data.phase === "posted" ? "posted" : "draft";
+        const phase: Phase = data.phase === "ready" ? "ready" : data.phase === "posted" ? "posted" : "draft";
 
         const vision = typeof data.vision === "string" ? data.vision : "";
         const keywordsText = typeof data.keywordsText === "string" ? data.keywordsText : "";
@@ -396,35 +529,56 @@ export default function NewDraftPage() {
               ? data.caption_final
               : "";
         const x = typeof data.x === "string" ? data.x : "";
-
         const ig3 = Array.isArray(data.ig3) ? data.ig3.map(String).slice(0, 3) : [];
 
-        // ✅ 新フィールド（あれば読む）
-        const baseImageUrl =
-          typeof data.baseImageUrl === "string" && data.baseImageUrl ? data.baseImageUrl : undefined;
+        const baseImageUrl = typeof data.baseImageUrl === "string" && data.baseImageUrl ? data.baseImageUrl : undefined;
+        const aiImageUrl = typeof data.aiImageUrl === "string" && data.aiImageUrl ? data.aiImageUrl : undefined;
         const compositeImageUrl =
           typeof data.compositeImageUrl === "string" && data.compositeImageUrl ? data.compositeImageUrl : undefined;
 
-        // ✅ 旧フィールド（互換）
-        const imageUrl =
-          typeof data.imageUrl === "string" && data.imageUrl ? data.imageUrl : undefined;
-
-        const overlayEnabled =
-          typeof data.overlayEnabled === "boolean" ? data.overlayEnabled : true;
-
-        const overlayText =
-          typeof data.overlayText === "string" ? data.overlayText : (ig || "");
-
+        const overlayEnabled = typeof data.overlayEnabled === "boolean" ? data.overlayEnabled : true;
+        const overlayText = typeof data.overlayText === "string" ? data.overlayText : ig || "";
         const overlayFontScale =
-          typeof data.overlayFontScale === "number"
-            ? clamp(data.overlayFontScale, 0.6, 1.6)
-            : 1.0;
-        const overlayY =
-          typeof data.overlayY === "number" ? clamp(data.overlayY, 0, 100) : 75;
+          typeof data.overlayFontScale === "number" ? clamp(data.overlayFontScale, 0.6, 1.6) : 1.0;
+        const overlayY = typeof data.overlayY === "number" ? clamp(data.overlayY, 0, 100) : 75;
         const overlayBgOpacity =
-          typeof data.overlayBgOpacity === "number"
-            ? clamp(data.overlayBgOpacity, 0, 0.85)
-            : 0.45;
+          typeof data.overlayBgOpacity === "number" ? clamp(data.overlayBgOpacity, 0, 0.85) : 0.45;
+
+        const videoUrl = typeof data.videoUrl === "string" && data.videoUrl ? data.videoUrl : undefined;
+        const videoSeconds: UiSeconds = data.videoSeconds === 10 || data.videoSeconds === "10" ? 10 : 5;
+        const videoQuality: UiVideoQuality = data.videoQuality === "high" ? "high" : "standard";
+
+        const videoTemplate: UiTemplate = (() => {
+          const t = String(data.videoTemplate ?? "");
+          const ok: UiTemplate[] = [
+            "zoomIn",
+            "zoomOut",
+            "slideLeft",
+            "slideRight",
+            "fadeIn",
+            "fadeOut",
+            "slowZoomFade",
+            "static",
+          ];
+          return ok.includes(t as UiTemplate) ? (t as UiTemplate) : "slowZoomFade";
+        })();
+
+        const videoSize: UiVideoSize = (() => {
+          const s = String(data.videoSize ?? "");
+          const ok: UiVideoSize[] = ["1024x1792", "720x1280", "1792x1024", "1280x720"];
+          return ok.includes(s as UiVideoSize) ? (s as UiVideoSize) : "1024x1792";
+        })();
+
+        const imageSource: ImageSource =
+          data.imageSource === "ai" || data.imageSource === "composite" || data.imageSource === "upload"
+            ? data.imageSource
+            : compositeImageUrl
+              ? "composite"
+              : baseImageUrl
+                ? "upload"
+                : aiImageUrl
+                  ? "ai"
+                  : "upload";
 
         setDraftId(id);
         setD({
@@ -438,13 +592,20 @@ export default function NewDraftPage() {
           x,
           ig3,
           baseImageUrl,
+          aiImageUrl,
           compositeImageUrl,
-          imageUrl,
+          imageUrl: typeof data.imageUrl === "string" ? data.imageUrl : undefined,
+          imageSource,
           overlayEnabled,
           overlayText,
           overlayFontScale,
           overlayY,
           overlayBgOpacity,
+          videoUrl,
+          videoSeconds,
+          videoQuality,
+          videoTemplate,
+          videoSize,
           updatedAt: data.updatedAt,
           createdAt: data.createdAt,
         });
@@ -456,64 +617,58 @@ export default function NewDraftPage() {
   }, [uid, id]);
 
   const brandLabel = d.brand === "vento" ? "VENTO" : "RIVA";
-  const phaseLabel =
-    d.phase === "draft" ? "下書き" : d.phase === "ready" ? "投稿待ち" : "投稿済み";
+  const phaseLabel = d.phase === "draft" ? "下書き" : d.phase === "ready" ? "投稿待ち" : "投稿済み";
   const canGenerate = d.vision.trim().length > 0 && !busy;
 
-  /**
-   * 表示に使う画像URL
-   * - composite があれば完成画像を優先
-   * - なければ base
-   * - 旧互換の imageUrl もフォールバックとして利用
-   */
-  const displayImageUrl =
-    d.compositeImageUrl || d.baseImageUrl || d.imageUrl || undefined;
+  const baseForEditUrl = useMemo(() => {
+    if (d.imageSource === "ai") return d.aiImageUrl || "";
+    return d.baseImageUrl || "";
+  }, [d.imageSource, d.baseImageUrl, d.aiImageUrl]);
 
-  /**
-   * ✅ 保存（Firestore）
-   * - null / undefined をそのまま保存しない（Firebase側で見え方が崩れるため）
-   * - 既存互換の imageUrl は残す
-   *   -> 一覧表示が imageUrl を参照している場合が多いので壊さない
-   */
+  const displayImageUrl = useMemo(() => {
+    if (d.imageSource === "composite") return d.compositeImageUrl || baseForEditUrl || "";
+    if (d.imageSource === "ai") return d.aiImageUrl || d.baseImageUrl || "";
+    return d.baseImageUrl || d.aiImageUrl || "";
+  }, [d.imageSource, d.baseImageUrl, d.aiImageUrl, d.compositeImageUrl, baseForEditUrl]);
+
+  const displayVideoUrl = videoPreviewUrl || d.videoUrl || undefined;
+
   async function saveDraft(partial?: Partial<DraftDoc>): Promise<string | null> {
     if (!uid) return null;
 
     const next: DraftDoc = { ...d, ...(partial ?? {}), userId: uid };
-
-    // ✅ imageUrl は「代表画像」として運用
-    // - composite があるなら composite を代表に
-    // - なければ base を代表に
-    const representativeUrl =
-      next.compositeImageUrl || next.baseImageUrl || next.imageUrl || null;
+    const representativeUrl = next.compositeImageUrl || next.baseImageUrl || next.aiImageUrl || null;
 
     const payload: any = {
       userId: uid,
       brand: next.brand,
       phase: next.phase,
-
       vision: next.vision,
       keywordsText: next.keywordsText,
       memo: next.memo,
-
       ig: next.ig,
       x: next.x,
       ig3: next.ig3,
 
-      // ✅ 新：分離管理（未設定なら null で統一）
       baseImageUrl: next.baseImageUrl ?? null,
+      aiImageUrl: next.aiImageUrl ?? null,
       compositeImageUrl: next.compositeImageUrl ?? null,
-
-      // ✅ 旧：互換（一覧表示などのため残す）
       imageUrl: representativeUrl,
-
-      // 旧互換フィールド（残す）
       caption_final: next.ig,
+
+      imageSource: next.imageSource ?? "upload",
 
       overlayEnabled: next.overlayEnabled,
       overlayText: next.overlayText,
       overlayFontScale: next.overlayFontScale,
       overlayY: next.overlayY,
       overlayBgOpacity: next.overlayBgOpacity,
+
+      videoUrl: next.videoUrl ?? null,
+      videoSeconds: next.videoSeconds ?? 5,
+      videoQuality: next.videoQuality ?? "standard",
+      videoTemplate: next.videoTemplate ?? "slowZoomFade",
+      videoSize: next.videoSize ?? "1024x1792",
 
       updatedAt: serverTimestamp(),
     };
@@ -532,33 +687,35 @@ export default function NewDraftPage() {
     }
   }
 
-  // -------------------------
-  // 文章生成（IG + X）
-  // -------------------------
   async function generateCaptions() {
     if (!uid) return;
     const vision = d.vision.trim();
     if (!vision) return alert("Vision（必須）を入力してください");
+
+    // ✅ 二重送信防止（操作単位）
+    if (inFlightRef.current["captions"]) return;
+    inFlightRef.current["captions"] = true;
 
     setBusy(true);
     try {
       const token = await auth.currentUser?.getIdToken(true);
       if (!token) throw new Error("no token");
 
-      const body = {
-        brandId: d.brand,
-        vision,
-        keywords: splitKeywords(d.keywordsText),
-        tone: "",
-      };
+      const idemKey = makeIdemKey("captions");
+
+      const body = { brandId: d.brand, vision, keywords: splitKeywords(d.keywordsText), tone: "" };
 
       const r = await fetch("/api/generate-captions", {
         method: "POST",
-        headers: { "content-type": "application/json", Authorization: `Bearer ${token}` },
+        headers: {
+          "content-type": "application/json",
+          Authorization: `Bearer ${token}`,
+          "Idempotency-Key": idemKey,
+        },
         body: JSON.stringify(body),
       });
 
-      const j = await r.json();
+      const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j?.error || "caption error");
 
       const ig = typeof j.instagram === "string" ? j.instagram : "";
@@ -576,81 +733,69 @@ export default function NewDraftPage() {
       }));
 
       await saveDraft({ ig, x, ig3, phase: "draft", overlayText: nextOverlay });
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
-      alert("文章生成に失敗しました");
+      alert(`文章生成に失敗しました\n\n原因: ${e?.message || "不明"}`);
     } finally {
       setBusy(false);
+      inFlightRef.current["captions"] = false;
     }
   }
 
-  // -------------------------
-  // 画像生成（正方形）
-  // -------------------------
-  async function generateImage() {
+  async function generateAiImage() {
     if (!uid) return;
     const vision = d.vision.trim();
     if (!vision) return alert("Vision（必須）を入力してください");
+
+    if (inFlightRef.current["image"]) return;
+    inFlightRef.current["image"] = true;
 
     setBusy(true);
     try {
       const token = await auth.currentUser?.getIdToken(true);
       if (!token) throw new Error("no token");
 
-      // ✅ draftId を確実に作る（Storageの保存先に必要）
       const ensuredDraftId = draftId ?? (await saveDraft());
       if (!ensuredDraftId) throw new Error("failed to create draft");
 
-      const body = {
-        brandId: d.brand,
-        vision,
-        keywords: splitKeywords(d.keywordsText),
-        tone: "",
-      };
+      const idemKey = makeIdemKey("image");
+
+      const body = { brandId: d.brand, vision, keywords: splitKeywords(d.keywordsText), tone: "" };
 
       const r = await fetch("/api/generate-image", {
         method: "POST",
-        headers: { "content-type": "application/json", Authorization: `Bearer ${token}` },
+        headers: {
+          "content-type": "application/json",
+          Authorization: `Bearer ${token}`,
+          "Idempotency-Key": idemKey,
+        },
         body: JSON.stringify(body),
       });
 
-      const j = await r.json();
+      const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j?.error || "image error");
 
       const b64 = typeof j.b64 === "string" ? j.b64 : "";
       if (!b64) throw new Error("no b64");
 
-      // ✅ dataURL にして Storageへアップ → URLだけ保存
       const dataUrl = `data:image/png;base64,${b64}`;
       const url = await uploadDataUrlToStorage(uid, ensuredDraftId, dataUrl);
 
-      // ✅ base画像として保持（絶対に消さない）
       setD((prev) => ({
         ...prev,
-        baseImageUrl: url,
-        // 代表URL（一覧表示向け）も更新しておく（互換維持）
-        imageUrl: url,
-        // baseが変わったら、古いcompositeは残すかどうか迷うが
-        // ここでは「残す」（ユーザーが意図して保存した完成物を消さない）
+        aiImageUrl: url,
+        imageSource: prev.imageSource === "upload" && prev.baseImageUrl ? "upload" : "ai",
       }));
-
-      await saveDraft({ baseImageUrl: url, imageUrl: url, phase: "draft" });
-    } catch (e) {
+      await saveDraft({ aiImageUrl: url, phase: "draft" });
+    } catch (e: any) {
       console.error(e);
-      alert("画像生成に失敗しました");
+      alert(`画像生成に失敗しました\n\n原因: ${e?.message || "不明"}`);
     } finally {
       setBusy(false);
+      inFlightRef.current["image"] = false;
     }
   }
 
-  /**
-   * ✅ Canvas合成して dataURL を得る（黒画像量産を防ぐ）
-   *
-   * 重要：
-   * - 元画像は baseImageUrl を使う（compositeを再合成しない）
-   * - base がない場合は保存できない（黒背景だけで保存しない）
-   * - 画像読み込みに失敗したら「中断」して null を返す
-   */
   async function renderToCanvasAndGetDataUrl(): Promise<string | null> {
     const canvas = canvasRef.current;
     if (!canvas) return null;
@@ -661,25 +806,19 @@ export default function NewDraftPage() {
     canvas.width = SIZE;
     canvas.height = SIZE;
 
-    // 背景（万一画像がない場合でも真っ黒を保存しないため、後で中断する）
     ctx.clearRect(0, 0, SIZE, SIZE);
     ctx.fillStyle = "#0b0f18";
     ctx.fillRect(0, 0, SIZE, SIZE);
 
-    // ✅ 元画像は base を使う（ないなら保存禁止）
-    const src = d.baseImageUrl || d.imageUrl; // 旧互換で imageUrl も使えるようにしておく
+    const src = baseForEditUrl;
     if (!src) {
-      alert("先に「画像を生成（正方形）」を押してください（元画像がありません）");
+      alert("先に「画像をアップロード」または「AI画像生成」を行ってください（元画像がありません）");
       return null;
     }
 
-    // ✅ fetch→blob→objectURL で読み込む（CORSが通っていないとここで失敗する）
     const loaded = await loadImageAsObjectUrl(src);
     if (!loaded) {
-      alert(
-        "画像の読み込みに失敗しました（CORS反映待ち/キャッシュの可能性）。\n" +
-          "少し待ってから、また「文字入り画像を保存」を押してください。"
-      );
+      alert("画像の読み込みに失敗しました（CORS/キャッシュの可能性）。少し待って再試行してください。");
       return null;
     }
 
@@ -693,17 +832,12 @@ export default function NewDraftPage() {
       });
 
       if (!ok) {
-        alert(
-          "画像の読み込みに失敗しました（ブラウザ側の制限の可能性）。\n" +
-            "少し待ってから、もう一度試してください。"
-        );
+        alert("画像の読み込みに失敗しました（ブラウザ制限の可能性）。少し待って再試行してください。");
         return null;
       }
 
       const iw = img.naturalWidth || SIZE;
       const ih = img.naturalHeight || SIZE;
-
-      // contain で中央に収める（既存仕様維持）
       const scale = Math.min(SIZE / iw, SIZE / ih);
       const w = iw * scale;
       const h = ih * scale;
@@ -711,13 +845,9 @@ export default function NewDraftPage() {
       const y = (SIZE - h) / 2;
       ctx.drawImage(img, x, y, w, h);
     } finally {
-      // ✅ objectURLは使い終わったら解放
       loaded.revoke();
     }
 
-    // -------------------------
-    // 文字オーバーレイ
-    // -------------------------
     const overlayText = (d.overlayText || "").trim();
     if (d.overlayEnabled && overlayText) {
       const fontScale = clamp(d.overlayFontScale, 0.6, 1.6);
@@ -728,7 +858,6 @@ export default function NewDraftPage() {
 
       const maxWidth = Math.floor(SIZE * 0.86);
 
-      // 文字を自動改行（1行がmaxWidthを超えないように分割）
       const fixedLines: string[] = [];
       let buf = "";
       for (const ch of overlayText) {
@@ -750,13 +879,11 @@ export default function NewDraftPage() {
       const pad = Math.round(SIZE * 0.035);
       const bgAlpha = clamp(d.overlayBgOpacity, 0, 0.85);
 
-      // 背景帯
       ctx.fillStyle = `rgba(0,0,0,${bgAlpha})`;
       const rectY = Math.max(0, topY - Math.round(pad * 0.6));
       const rectH = Math.min(SIZE - rectY, blockH + Math.round(pad * 1.2));
       ctx.fillRect(0, rectY, SIZE, rectH);
 
-      // 文字
       ctx.fillStyle = "rgba(255,255,255,0.95)";
       for (let i = 0; i < fixedLines.length; i++) {
         const ln = fixedLines[i];
@@ -767,20 +894,14 @@ export default function NewDraftPage() {
       }
     }
 
-    // ✅ ここまで来たら「ちゃんと画像が描けた」ので dataURL を返す
     return canvas.toDataURL("image/png");
   }
 
-  /**
-   * ✅ 文字入り画像を保存（黒画像量産を防ぐ版）
-   *
-   * - 合成に失敗したら保存しない（nullで中断）
-   * - compositeImageUrl に保存
-   * - 互換のため imageUrl も composite を代表に更新（一覧表示が壊れない）
-   * - baseImageUrl は絶対に上書きしない（元画像を守る）
-   */
   async function saveCompositeAsImageUrl() {
     if (!uid) return;
+
+    if (inFlightRef.current["composite"]) return;
+    inFlightRef.current["composite"] = true;
 
     setBusy(true);
     try {
@@ -788,25 +909,20 @@ export default function NewDraftPage() {
       if (!ensuredDraftId) throw new Error("failed to create draft");
 
       const out = await renderToCanvasAndGetDataUrl();
-      if (!out) return; // ✅ 失敗時は保存しない（黒画像を作らない）
+      if (!out) return;
 
       const url = await uploadDataUrlToStorage(uid, ensuredDraftId, out);
 
-      setD((prev) => ({
-        ...prev,
-        compositeImageUrl: url,
-        // ✅ 代表画像も更新（一覧表示の互換維持）
-        imageUrl: url,
-      }));
-
-      await saveDraft({ compositeImageUrl: url, imageUrl: url });
+      setD((prev) => ({ ...prev, compositeImageUrl: url, imageSource: "composite" }));
+      await saveDraft({ compositeImageUrl: url, imageSource: "composite" });
 
       alert("文字入りプレビューを保存しました");
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
-      alert("保存に失敗しました");
+      alert(`保存に失敗しました\n\n原因: ${e?.message || "不明"}`);
     } finally {
       setBusy(false);
+      inFlightRef.current["composite"] = false;
     }
   }
 
@@ -822,6 +938,164 @@ export default function NewDraftPage() {
     setD((p) => ({ ...p, overlayText: t }));
   }
 
+  // ==========================
+  // ✅ 動画生成（/api/generate-video）
+  // ==========================
+  const secondsKey: UiSeconds = (d.videoSeconds ?? 5) === 10 ? 10 : 5;
+  const costStandard = pricing.standard[secondsKey];
+  const costHigh = pricing.high[secondsKey];
+  const shownCost = (d.videoQuality ?? "standard") === "high" ? costHigh : costStandard;
+
+  const pricingMetaText = useMemo(() => {
+    const t = pricingUpdatedAt ? new Date(pricingUpdatedAt) : null;
+    const hhmm = t ? `${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}` : "—";
+    return `更新 ${hhmm}${pricingBusy ? "（取得中）" : ""}${pricingError ? "（暫定）" : ""}`;
+  }, [pricingUpdatedAt, pricingBusy, pricingError]);
+
+  const templateItems: { id: UiTemplate; label: string }[] = [
+    { id: "zoomIn", label: "ズームイン" },
+    { id: "zoomOut", label: "ズームアウト" },
+    { id: "slideLeft", label: "スライド左" },
+    { id: "slideRight", label: "スライド右" },
+    { id: "fadeIn", label: "フェードイン" },
+    { id: "fadeOut", label: "フェードアウト" },
+    { id: "slowZoomFade", label: "ゆっくりズーム＋フェード" },
+    { id: "static", label: "静止（動きなし）" },
+  ];
+
+  const sizePresets: { id: UiVideoSize; label: string; sub: string }[] = [
+    { id: "1024x1792", label: "Instagram / TikTok 縦（高画質）", sub: "おすすめ（品質を選ぶ意味が残る）" },
+    { id: "720x1280", label: "Instagram / TikTok 縦（軽量）", sub: "試作・回数多い時" },
+    { id: "1792x1024", label: "YouTube / Web 横（高画質）", sub: "サイト・LP・YouTube向け" },
+    { id: "1280x720", label: "YouTube / Web 横（軽量）", sub: "試作・軽量" },
+  ];
+
+  async function generateVideo() {
+    if (!uid) return;
+    const vision = d.vision.trim();
+    if (!vision) return alert("Vision（必須）を入力してください");
+
+    // ✅ 二重送信防止（最強）
+    if (inFlightRef.current["video"]) return;
+    inFlightRef.current["video"] = true;
+
+    setBusy(true);
+    try {
+      const token = await auth.currentUser?.getIdToken(true);
+      if (!token) throw new Error("no token");
+
+      const ensuredDraftId = draftId ?? (await saveDraft());
+      if (!ensuredDraftId) throw new Error("failed to create draft");
+
+      // ✅ 参照画像：COMPOSITEがあればそれ、なければベース（UPLOAD/AI）
+      const reference = d.compositeImageUrl || baseForEditUrl || "";
+      if (!reference) {
+        alert(
+          "先に「画像をアップロード」または「AI画像生成」または「文字入り画像を保存」を行ってください（参照画像がありません）"
+        );
+        return;
+      }
+
+      const seconds = d.videoSeconds ?? 5;
+      const templateId = d.videoTemplate ?? "slowZoomFade";
+      const quality = (d.videoQuality ?? "standard") === "high" ? "high" : "standard";
+      const size = d.videoSize ?? "1024x1792";
+
+      // ✅ 同じボタン連打は “同一注文” として扱いたい → クリック時に固定キーを作る
+      const idemKey = makeIdemKey("video");
+
+      const body = {
+        brandId: d.brand,
+        vision,
+        keywords: splitKeywords(d.keywordsText),
+        tone: "",
+
+        templateId,
+        seconds,
+        quality,
+        size,
+        referenceImageUrl: reference,
+      };
+
+      const r = await fetch("/api/generate-video", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          Authorization: `Bearer ${token}`,
+          "Idempotency-Key": idemKey,
+        },
+        body: JSON.stringify(body),
+      });
+
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j?.error || "video error");
+
+      const url = typeof j?.url === "string" ? j.url : "";
+      if (!url) throw new Error("no video url");
+
+      setVideoPreviewUrl(url);
+
+      setD((prev) => ({
+        ...prev,
+        videoUrl: url,
+        videoSeconds: seconds,
+        videoQuality: quality,
+        videoTemplate: templateId,
+        videoSize: size,
+      }));
+
+      await saveDraft({
+        videoUrl: url,
+        videoSeconds: seconds,
+        videoQuality: quality,
+        videoTemplate: templateId,
+        videoSize: size,
+      });
+
+      alert("動画を生成して保存しました");
+    } catch (e: any) {
+      console.error(e);
+      alert(`動画生成に失敗しました\n\n原因: ${e?.message || "不明"}`);
+    } finally {
+      setBusy(false);
+      inFlightRef.current["video"] = false;
+    }
+  }
+
+  // ==========================
+  // ✅ アップロード処理
+  // ==========================
+  async function onUploadImageFile(file: File) {
+    if (!uid) return;
+
+    if (inFlightRef.current["upload"]) return;
+    inFlightRef.current["upload"] = true;
+
+    setBusy(true);
+    try {
+      const ensuredDraftId = draftId ?? (await saveDraft());
+      if (!ensuredDraftId) throw new Error("failed to create draft");
+
+      const url = await uploadImageFileAsJpegToStorage(uid, ensuredDraftId, file);
+
+      setD((p) => ({
+        ...p,
+        baseImageUrl: url,
+        imageSource: "upload",
+      }));
+
+      await saveDraft({ baseImageUrl: url, imageSource: "upload", phase: "draft" });
+
+      alert("アップロードしました（JPEGに変換して保存）");
+    } catch (e: any) {
+      console.error(e);
+      alert(`アップロードに失敗しました\n\n原因: ${e?.message || "不明"}`);
+    } finally {
+      setBusy(false);
+      inFlightRef.current["upload"] = false;
+    }
+  }
+
   const previewOverlayText = (d.overlayText || "").trim();
 
   return (
@@ -834,12 +1108,10 @@ export default function NewDraftPage() {
           flex-direction: column;
           gap: ${UI.gap}px;
         }
-
         .leftCol,
         .rightCol {
           width: 100%;
         }
-
         @media (min-width: 1024px) {
           .pageWrap {
             flex-direction: row;
@@ -873,11 +1145,8 @@ export default function NewDraftPage() {
             ) : null}
           </div>
 
-          {/* Brand / Vision / Keywords / 操作 */}
-          <div
-            className="rounded-2xl border border-white/12 bg-black/25"
-            style={{ padding: UI.cardPadding }}
-          >
+          {/* Brand / 画像ソース / Vision / Keywords / 操作 */}
+          <div className="rounded-2xl border border-white/12 bg-black/25" style={{ padding: UI.cardPadding }}>
             <div className="text-white/80 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
               Brand
             </div>
@@ -898,6 +1167,67 @@ export default function NewDraftPage() {
               <Chip>
                 {brandLabel} / {phaseLabel}
               </Chip>
+            </div>
+
+            {/* 画像ソース */}
+            <div className="text-white/80 mt-4 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
+              画像（アップロード / AI生成 / 文字入り）
+            </div>
+
+            <div className="flex items-center gap-2 flex-wrap">
+              <SelectBtn
+                selected={d.imageSource === "upload"}
+                label={`表示: UPLOAD（base）${d.baseImageUrl ? " ✓" : ""}`}
+                onClick={() => setD((p) => ({ ...p, imageSource: "upload" }))}
+                disabled={busy}
+              />
+              <SelectBtn
+                selected={d.imageSource === "ai"}
+                label={`表示: AI${d.aiImageUrl ? " ✓" : ""}`}
+                onClick={() => setD((p) => ({ ...p, imageSource: "ai" }))}
+                disabled={busy}
+              />
+              <SelectBtn
+                selected={d.imageSource === "composite"}
+                label={`表示: COMPOSITE${d.compositeImageUrl ? " ✓" : ""}`}
+                onClick={() => setD((p) => ({ ...p, imageSource: "composite" }))}
+                disabled={busy || !d.compositeImageUrl}
+                title={!d.compositeImageUrl ? "まだ文字入り画像がありません" : ""}
+              />
+            </div>
+
+            <div className="mt-3 flex flex-wrap gap-2 items-center">
+              <label className="inline-flex items-center gap-2">
+                <input
+                  type="file"
+                  accept="image/*"
+                  disabled={!uid || busy}
+                  onChange={async (e) => {
+                    const f = e.target.files?.[0];
+                    e.currentTarget.value = "";
+                    if (!f) return;
+                    await onUploadImageFile(f);
+                  }}
+                />
+              </label>
+
+              <Btn
+                variant="secondary"
+                disabled={!canGenerate}
+                onClick={generateAiImage}
+                title="AI画像は base を上書きしません（aiImageUrlへ保存）"
+              >
+                AI画像を生成（正方形）
+              </Btn>
+
+              <Btn variant="ghost" disabled={!uid || busy} onClick={() => saveDraft()}>
+                保存
+              </Btn>
+            </div>
+
+            <div className="text-white/55 mt-2" style={{ fontSize: UI.FONT.labelPx, lineHeight: 1.5 }}>
+              ※ アップロード画像は内部でJPEGに変換して保存します。<br />
+              ※ AI画像は aiImageUrl に保存され、アップロード画像（base）は上書きされません。
             </div>
 
             <div className="text-white/80 mt-4 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
@@ -926,29 +1256,16 @@ export default function NewDraftPage() {
               <Btn variant="primary" disabled={!canGenerate} onClick={generateCaptions}>
                 文章を生成（IG＋X）
               </Btn>
-              <Btn variant="secondary" disabled={!canGenerate} onClick={generateImage}>
-                画像を生成（正方形）
-              </Btn>
-              <Btn variant="ghost" disabled={!uid || busy} onClick={() => saveDraft()}>
-                保存
-              </Btn>
             </div>
           </div>
 
           {/* IG */}
-          <div
-            className="rounded-2xl border border-white/12 bg-black/25"
-            style={{ padding: UI.cardPadding }}
-          >
+          <div className="rounded-2xl border border-white/12 bg-black/25" style={{ padding: UI.cardPadding }}>
             <div className="flex items-center justify-between gap-2">
               <div className="text-white/80" style={{ fontSize: UI.FONT.labelPx }}>
                 Instagram本文（メイン）
               </div>
-              <Btn
-                variant="secondary"
-                className="px-3 py-1"
-                onClick={() => navigator.clipboard.writeText(d.ig)}
-              >
+              <Btn variant="secondary" className="px-3 py-1" onClick={() => navigator.clipboard.writeText(d.ig)}>
                 コピー
               </Btn>
             </div>
@@ -961,19 +1278,12 @@ export default function NewDraftPage() {
           </div>
 
           {/* X */}
-          <div
-            className="rounded-2xl border border-white/12 bg-black/25"
-            style={{ padding: UI.cardPadding }}
-          >
+          <div className="rounded-2xl border border-white/12 bg-black/25" style={{ padding: UI.cardPadding }}>
             <div className="flex items-center justify-between">
               <div className="text-white/80" style={{ fontSize: UI.FONT.labelPx }}>
                 X本文
               </div>
-              <Btn
-                variant="secondary"
-                className="px-3 py-1"
-                onClick={() => navigator.clipboard.writeText(d.x)}
-              >
+              <Btn variant="secondary" className="px-3 py-1" onClick={() => navigator.clipboard.writeText(d.x)}>
                 コピー
               </Btn>
             </div>
@@ -986,10 +1296,7 @@ export default function NewDraftPage() {
           </div>
 
           {/* メモ + 状態 */}
-          <div
-            className="rounded-2xl border border-white/12 bg-black/25"
-            style={{ padding: UI.cardPadding }}
-          >
+          <div className="rounded-2xl border border-white/12 bg-black/25" style={{ padding: UI.cardPadding }}>
             <div className="text-white/80 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
               メモ（任意）
             </div>
@@ -1009,11 +1316,8 @@ export default function NewDraftPage() {
             </div>
           </div>
 
-          {/* IG3 */}
-          <div
-            className="rounded-2xl border border-white/12 bg-black/20"
-            style={{ padding: UI.cardPadding }}
-          >
+          {/* IG3（復活） */}
+          <div className="rounded-2xl border border-white/12 bg-black/20" style={{ padding: UI.cardPadding }}>
             <div className="text-white/70 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
               補助：Instagram 3案（※本文は絶対に上書きしない）
             </div>
@@ -1039,18 +1343,10 @@ export default function NewDraftPage() {
                         案 {i + 1}
                       </div>
                       <div className="flex items-center gap-2">
-                        <Btn
-                          variant="secondary"
-                          className="px-3 py-1"
-                          onClick={() => applyIg3ToOverlayOnly(t)}
-                        >
+                        <Btn variant="secondary" className="px-3 py-1" onClick={() => applyIg3ToOverlayOnly(t)}>
                           文字に適用
                         </Btn>
-                        <Btn
-                          variant="ghost"
-                          className="px-3 py-1"
-                          onClick={() => navigator.clipboard.writeText(t)}
-                        >
+                        <Btn variant="ghost" className="px-3 py-1" onClick={() => navigator.clipboard.writeText(t)}>
                           コピー
                         </Btn>
                       </div>
@@ -1070,16 +1366,155 @@ export default function NewDraftPage() {
               </div>
             )}
           </div>
+
+          {/* 動画生成 */}
+          <div className="rounded-2xl border border-white/12 bg-black/25" style={{ padding: UI.cardPadding }}>
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="text-white/90 font-black" style={{ fontSize: UI.FONT.inputPx }}>
+                動画生成
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <Chip className="text-white/95">参照画像：{(d.compositeImageUrl || baseForEditUrl) ? "あり" : "なし"}</Chip>
+                <Chip className="text-white/95">{pricingMetaText}</Chip>
+              </div>
+            </div>
+
+            {/* サイズ */}
+            <div className="mt-3">
+              <div className="text-white/80 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
+                サイズ（用途別）
+              </div>
+              <div className="grid gap-2">
+                {sizePresets.map((p) => (
+                  <div key={p.id} className="flex flex-wrap items-center gap-2">
+                    <SelectBtn
+                      selected={(d.videoSize ?? "1024x1792") === p.id}
+                      label={p.label}
+                      onClick={() => setD((x) => ({ ...x, videoSize: p.id }))}
+                      disabled={!uid || busy}
+                    />
+                    <div className="text-white/55" style={{ fontSize: UI.FONT.labelPx }}>
+                      {p.id} / {p.sub}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* 秒数 */}
+            <div className="mt-4">
+              <div className="text-white/80 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
+                秒数（5 / 10）
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <SelectBtn
+                  selected={(d.videoSeconds ?? 5) === 5}
+                  label="5"
+                  onClick={() => setD((p) => ({ ...p, videoSeconds: 5 }))}
+                  disabled={!uid || busy}
+                />
+                <SelectBtn
+                  selected={(d.videoSeconds ?? 5) === 10}
+                  label="10"
+                  onClick={() => setD((p) => ({ ...p, videoSeconds: 10 }))}
+                  disabled={!uid || busy}
+                />
+              </div>
+            </div>
+
+            {/* 品質 */}
+            <div className="mt-4">
+              <div className="text-white/80 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
+                品質
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <SelectBtn
+                  selected={(d.videoQuality ?? "standard") === "standard"}
+                  label="確実（標準）"
+                  onClick={() => setD((p) => ({ ...p, videoQuality: "standard" }))}
+                  disabled={!uid || busy}
+                />
+                <SelectBtn
+                  selected={(d.videoQuality ?? "standard") === "high"}
+                  label="確実＋高精細"
+                  onClick={() => setD((p) => ({ ...p, videoQuality: "high" }))}
+                  disabled={!uid || busy}
+                />
+              </div>
+            </div>
+
+            {/* テンプレ */}
+            <div className="mt-4">
+              <div className="text-white/80 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
+                テンプレ
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {templateItems.map((t) => (
+                  <SelectBtn
+                    key={t.id}
+                    selected={(d.videoTemplate ?? "slowZoomFade") === t.id}
+                    label={t.label}
+                    onClick={() => setD((p) => ({ ...p, videoTemplate: t.id }))}
+                    disabled={!uid || busy}
+                  />
+                ))}
+              </div>
+            </div>
+
+            {/* 実コスト */}
+            <div className="mt-4">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div className="text-white/80" style={{ fontSize: UI.FONT.labelPx }}>
+                  実コスト目安（円）
+                </div>
+                <Btn variant="ghost" className="px-3 py-1" disabled={pricingBusy} onClick={fetchPricing} title="/api/config を再取得">
+                  更新
+                </Btn>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 mt-2">
+                <Chip className="text-white/95">標準：{yen(costStandard)} / 本</Chip>
+                <Chip className="text-white/95">高精細：{yen(costHigh)} / 本</Chip>
+                <Chip className="text-white/95">選択中：{yen(shownCost)} / 本</Chip>
+              </div>
+
+              {pricingError ? (
+                <div className="text-white/55 mt-2" style={{ fontSize: UI.FONT.labelPx, lineHeight: 1.5 }}>
+                  ※ {pricingError}（表示は継続。/api/config が直れば自動で追従）
+                </div>
+              ) : (
+                <div className="text-white/55 mt-2" style={{ fontSize: UI.FONT.labelPx, lineHeight: 1.5 }}>
+                  ※ 表示は /api/config の設定値に追従します（60秒おき＋タブ復帰時に自動更新）。
+                </div>
+              )}
+            </div>
+
+            <div className="mt-4 flex flex-wrap gap-2">
+              <Btn variant="primary" disabled={!uid || busy || !d.vision.trim()} onClick={generateVideo}>
+                動画を生成して保存
+              </Btn>
+              <Btn variant="ghost" disabled={!uid || busy} onClick={() => saveDraft()}>
+                設定を保存
+              </Btn>
+            </div>
+
+            <div className="text-white/55 mt-2" style={{ fontSize: UI.FONT.labelPx }}>
+              ※ 参照画像が無い場合は生成を止めます。
+            </div>
+          </div>
         </section>
 
-        {/* 右：完成プレビュー＋文字調整 */}
+        {/* 右：プレビュー（画像＋文字調整＋動画） */}
         <section className="rightCol min-h-0 flex flex-col gap-4">
           <div className="rightScroll min-h-0" style={{ paddingBottom: 8 }}>
-            <div
-              className="rounded-2xl border border-white/12 bg-black/25"
-              style={{ padding: UI.cardPadding }}
-            >
+            {/* 画像プレビュー */}
+            <div className="rounded-2xl border border-white/12 bg-black/25" style={{ padding: UI.cardPadding }}>
               <div className="rounded-2xl border border-white/12 bg-black/30 p-3">
+                <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
+                  <Chip className="text-white/95">表示ソース：{d.imageSource.toUpperCase()}</Chip>
+                </div>
+
                 <div
                   className="mx-auto"
                   style={{
@@ -1099,17 +1534,10 @@ export default function NewDraftPage() {
                       src={displayImageUrl}
                       alt="preview"
                       draggable={false}
-                      style={{
-                        width: "100%",
-                        height: "100%",
-                        objectFit: "contain",
-                        display: "block",
-                      }}
+                      style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }}
                     />
                   ) : (
-                    <div className="h-full w-full grid place-items-center text-sm text-white/55">
-                      NO IMAGE
-                    </div>
+                    <div className="h-full w-full grid place-items-center text-sm text-white/55">NO IMAGE</div>
                   )}
 
                   {d.overlayEnabled && previewOverlayText ? (
@@ -1130,8 +1558,7 @@ export default function NewDraftPage() {
                           fontWeight: 900,
                           lineHeight: 1.35,
                           fontSize: `${Math.round(
-                            UI.FONT.overlayPreviewBasePx *
-                              clamp(d.overlayFontScale, 0.6, 1.6)
+                            UI.FONT.overlayPreviewBasePx * clamp(d.overlayFontScale, 0.6, 1.6)
                           )}px`,
                           color: "rgba(255,255,255,0.95)",
                           textShadow: "0 2px 10px rgba(0,0,0,0.45)",
@@ -1144,21 +1571,16 @@ export default function NewDraftPage() {
                   ) : null}
                 </div>
 
+                {/* 文字調整 */}
                 <div className="mt-4 grid gap-3">
                   <div className="flex items-center justify-between gap-2 flex-wrap">
                     <Chip className="text-white/95">文字表示</Chip>
-                    <Btn
-                      variant="secondary"
-                      onClick={() => setD((p) => ({ ...p, overlayEnabled: !p.overlayEnabled }))}
-                    >
+                    <Btn variant="secondary" onClick={() => setD((p) => ({ ...p, overlayEnabled: !p.overlayEnabled }))}>
                       {d.overlayEnabled ? "ON" : "OFF"}
                     </Btn>
                   </div>
 
-                  <div
-                    className="rounded-2xl border border-white/12 bg-black/25"
-                    style={{ padding: UI.cardPadding }}
-                  >
+                  <div className="rounded-2xl border border-white/12 bg-black/25" style={{ padding: UI.cardPadding }}>
                     <div className="text-white/80 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
                       載せる文字（※本文とは別）
                     </div>
@@ -1213,8 +1635,59 @@ export default function NewDraftPage() {
                   </div>
                 </div>
 
-                {/* Canvasは画面には見せない（保存用） */}
                 <canvas ref={canvasRef} style={{ display: "none" }} />
+              </div>
+            </div>
+
+            {/* 動画プレビュー */}
+            <div className="mt-3 rounded-2xl border border-white/12 bg-black/25" style={{ padding: UI.cardPadding }}>
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div className="text-white/90 font-black" style={{ fontSize: UI.FONT.inputPx }}>
+                  動画プレビュー
+                </div>
+                <Chip className="text-white/95">
+                  {(d.videoTemplate ?? "slowZoomFade")} / {(d.videoSeconds ?? 5)}s / {(d.videoSize ?? "1024x1792")}
+                </Chip>
+              </div>
+
+              <div className="mt-3">
+                {displayVideoUrl ? (
+                  <video
+                    src={displayVideoUrl}
+                    controls
+                    playsInline
+                    style={{
+                      width: "100%",
+                      borderRadius: 14,
+                      border: "1px solid rgba(255,255,255,0.12)",
+                      background: "rgba(0,0,0,0.25)",
+                    }}
+                  />
+                ) : (
+                  <div className="h-[220px] w-full grid place-items-center text-sm text-white/55 rounded-2xl border border-white/12 bg-black/20">
+                    NO VIDEO
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Btn
+                  variant="ghost"
+                  disabled={!uid || busy}
+                  onClick={() => {
+                    setVideoPreviewUrl(null);
+                    alert("ローカルプレビューを解除しました（保存済みURLがあればそれが表示されます）");
+                  }}
+                >
+                  プレビュー解除
+                </Btn>
+                <Btn variant="ghost" disabled={!uid || busy} onClick={() => saveDraft()}>
+                  状態を保存
+                </Btn>
+              </div>
+
+              <div className="text-white/55 mt-2" style={{ fontSize: UI.FONT.labelPx, lineHeight: 1.5 }}>
+                ※ 生成した動画は videoUrl と設定がFirestoreに保存されます。
               </div>
             </div>
           </div>

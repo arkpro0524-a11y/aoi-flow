@@ -1,133 +1,82 @@
-// /app/api/generate-image/route.ts
 import { NextResponse } from "next/server";
-import { getAdminAuth, getAdminDb } from "@/firebaseAdmin";
+import OpenAI from "openai";
+import { getDb } from "@/lib/server/firebaseAdmin";
+import { getIdempotencyKey } from "@/lib/server/idempotency";
+import { PRICING } from "@/lib/server/pricing";
 
 export const runtime = "nodejs";
 
-function bearerToken(req: Request) {
-  const h = req.headers.get("authorization") || "";
-  const m = h.match(/^Bearer\s+(.+)$/i);
-  return m?.[1] ?? null;
-}
-
-async function requireUid(req: Request): Promise<string> {
-  const token = bearerToken(req);
-  if (!token) throw new Error("missing token");
-  const decoded = await getAdminAuth().verifyIdToken(token);
-  if (!decoded?.uid) throw new Error("invalid token");
-  return decoded.uid;
-}
-
-async function loadBrand(uid: string, brandId: string) {
-  const db = getAdminDb();
-  const ref = db.doc(`users/${uid}/brands/${brandId}`);
-  const snap = await ref.get();
-  if (!snap.exists) return null;
-  return snap.data() as any;
-}
-
-function compactKeywords(keys: unknown): string {
-  if (!Array.isArray(keys)) return "";
-  return keys.map(String).slice(0, 12).join(", ");
-}
-
-function compactVoiceText(v: unknown): string {
-  const s = String(v ?? "")
-    .replace(/\r?\n/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  if (!s) return "";
-  const MAX = 220;
-  return s.length <= MAX ? s : s.slice(0, MAX) + "…";
-}
-
-// URL 画像を b64 に変換（OpenAIがURLで返した場合の保険）
-async function urlToBase64(url: string): Promise<string> {
-  const r = await fetch(url);
-  if (!r.ok) throw new Error("failed to fetch image url");
-  const ab = await r.arrayBuffer();
-  const buf = Buffer.from(ab);
-  return buf.toString("base64");
-}
+type ReqBody = {
+  prompt: string;
+  requestId?: string;
+  idempotencyKey?: string;
+  imageSize?: "1024x1024" | "1024x1536" | "1536x1024";
+  model?: string;
+};
 
 export async function POST(req: Request) {
-  try {
-    const uid = await requireUid(req);
-    const body = await req.json();
+  const body = (await req.json().catch(() => ({}))) as ReqBody;
 
-    const brandId = typeof body.brandId === "string" ? body.brandId : "vento";
-    const vision = typeof body.vision === "string" ? body.vision : "";
-    const keywords = compactKeywords(body.keywords);
+  const prompt = String(body.prompt ?? "")
+    .slice(0, PRICING.MAX_PROMPT_CHARS)
+    .trim();
 
-    if (!vision.trim()) {
-      return NextResponse.json({ error: "vision is required" }, { status: 400 });
-    }
+  if (!prompt) {
+    return NextResponse.json({ ok: false, error: "prompt is required" }, { status: 400 });
+  }
 
-    const brand = await loadBrand(uid, brandId);
-    if (!brand) {
-      return NextResponse.json(
-        { error: "brand not found. /flow/brands で作成・保存してください" },
-        { status: 400 }
-      );
-    }
+  const idemKey = getIdempotencyKey(req, { ...body, type: "image" });
+  const db = getDb();
+  const docRef = db.collection("generations").doc(idemKey);
 
-    const imagePolicy = brand.imagePolicy ?? {};
-    const styleText = String(imagePolicy.styleText ?? "");
-    const rules = Array.isArray(imagePolicy.rules) ? imagePolicy.rules.map(String) : [];
+  const reserved = await db.runTransaction(async (tx) => {
+    const snap = await tx.get(docRef);
+    if (snap.exists) return { already: true, data: snap.data() as any };
 
-    const captionPolicy = brand.captionPolicy ?? {};
-    const voiceText = compactVoiceText(captionPolicy.voiceText ?? "");
-
-    const prompt = [
-      "Create a square image.",
-      `Brand: ${String(brand.name ?? brandId)}`,
-      `Vision: ${vision}`,
-      keywords ? `Keywords: ${keywords}` : "",
-      voiceText ? `Brand Voice (short): ${voiceText}` : "",
-      styleText ? `Style: ${styleText}` : "",
-      rules.length ? `Rules: ${rules.join(" / ")}` : "",
-      "No text in the image.",
-      "No logos and no watermark.",
-    ]
-      .filter(Boolean)
-      .join("\n");
-
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) throw new Error("OPENAI_API_KEY missing");
-
-    // ✅ response_format を送らない（Unknown parameter を潰す）
-    const r = await fetch("https://api.openai.com/v1/images/generations", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: "gpt-image-1",
-        prompt,
-        size: "1024x1024",
-      }),
+    tx.set(docRef, {
+      type: "image",
+      status: "running",
+      prompt,
+      createdAt: Date.now(),
+      costYen: PRICING.calcImageCostYen(),
     });
+    return { already: false, data: null };
+  });
 
-    const j = await r.json();
-    if (!r.ok) throw new Error(j?.error?.message || "openai image error");
+  if (reserved.already) {
+    return NextResponse.json({ ok: true, reused: true, generation: reserved.data });
+  }
 
-    // ✅ b64 があるならそれを使う
-    const b64 = j?.data?.[0]?.b64_json;
-    if (typeof b64 === "string" && b64) {
-      return NextResponse.json({ b64 });
-    }
+  try {
+    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-    // ✅ URL で返る場合もあるので保険で変換
-    const url = j?.data?.[0]?.url;
-    if (typeof url === "string" && url) {
-      const b64fromUrl = await urlToBase64(url);
-      return NextResponse.json({ b64: b64fromUrl });
-    }
+    const size = body.imageSize ?? "1024x1024";
+    const model = body.model ?? "gpt-image-1";
 
-    throw new Error("no image returned");
+    const res = await client.images.generate({ model, prompt, size });
+    const b64 = res.data?.[0]?.b64_json;
+    if (!b64) throw new Error("Image generation failed (no b64_json)");
+
+    const generation = {
+      id: idemKey,
+      type: "image",
+      status: "succeeded",
+      prompt,
+      imageDataUrl: `data:image/png;base64,${b64}`,
+      costYen: PRICING.calcImageCostYen(),
+      finishedAt: Date.now(),
+    };
+
+    await docRef.set(generation, { merge: true });
+    return NextResponse.json({ ok: true, reused: false, generation });
   } catch (e: any) {
-    console.error(e);
-    return NextResponse.json({ error: e?.message || "error" }, { status: 500 });
+    await docRef.set(
+      { status: "failed", error: String(e?.message ?? e), finishedAt: Date.now() },
+      { merge: true }
+    );
+    return NextResponse.json(
+      { ok: false, error: String(e?.message ?? e), id: idemKey },
+      { status: 500 }
+    );
   }
 }

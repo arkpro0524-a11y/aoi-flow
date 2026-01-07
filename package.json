@@ -14,7 +14,8 @@
     "next": "16.0.10",
     "openai": "^6.15.0",
     "react": "19.2.1",
-    "react-dom": "19.2.1"
+    "react-dom": "19.2.1",
+    "sharp": "^0.34.5"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.18",
