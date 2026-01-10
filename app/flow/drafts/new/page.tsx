@@ -9,10 +9,16 @@
  * ✅ 追加：動画生成（秒数 5/10、品質2段階、テンプレ、サイズ選択、コスト表示）
  * ✅ 追加：画像ソース切替（UPLOAD / AI / COMPOSITE）
  * ✅ 追加：/api/config から価格取得（リアルタイム）
+ * ✅ 追加：顧客向け「写真提出 指導書」をUIに常時表示（アップロード直下）※折りたたみ必須
  *
- * ✅ 重要：
- * - 動画生成は /api/generate-video に分離（冪等 + Storage保存 + URL返却）
- * - “二重実行/裏実行” をフロントでも潰す（inFlight + Idempotency-Key）
+ * ✅ 最重要（課金事故対策）
+ * - フロントは Idempotency-Key を送らない
+ *   → サーバ側が「入力から安定キー(stableHash)」を生成し、同条件の押し直しでも課金を増やさない
+ * - フロントは inFlight + busy で二重クリックを防止
+ *
+ * ✅ 今回の全張り替えでの修正
+ * - /api/generate-video が 202(running) を返した時に「失敗扱いで落とさない」
+ *   → “すでに生成中です” を表示して終了（課金事故防止）
  */
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -165,14 +171,6 @@ function splitKeywords(text: string) {
     .slice(0, 12);
 }
 
-/** 乱数キー（冪等キーに使う：二重クリック等で同一にしたいので「操作開始時に固定」） */
-function makeIdemKey(prefix: string) {
-  // crypto.randomUUID() が無い環境もあるのでフォールバックも用意
-  const anyCrypto = (globalThis as any)?.crypto;
-  const uuid = typeof anyCrypto?.randomUUID === "function" ? anyCrypto.randomUUID() : `${Date.now()}_${Math.random()}`;
-  return `${prefix}_${uuid}`.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 120);
-}
-
 const formStyle: React.CSSProperties = {
   background: UI.FORM.bg,
   borderColor: UI.FORM.border,
@@ -227,13 +225,7 @@ function Btn(props: {
   );
 }
 
-function SelectBtn(props: {
-  selected: boolean;
-  label: string;
-  onClick: () => void;
-  disabled?: boolean;
-  title?: string;
-}) {
+function SelectBtn(props: { selected: boolean; label: string; onClick: () => void; disabled?: boolean; title?: string }) {
   const selected = props.selected;
   const textColor = selected ? "rgba(0,0,0,0.95)" : "rgba(255,255,255,0.95)";
 
@@ -335,16 +327,71 @@ function RangeControl(props: {
         </div>
       </div>
 
-      <input
-        type="range"
-        min={props.min}
-        max={props.max}
-        step={props.step}
-        value={v}
-        onChange={(e) => set(Number(e.target.value))}
-        className="w-full"
-      />
+      <input type="range" min={props.min} max={props.max} step={props.step} value={v} onChange={(e) => set(Number(e.target.value))} className="w-full" />
     </div>
+  );
+}
+
+/**
+ * ✅ 顧客向け「写真提出 指導書」（UI表示用）
+ * - アップロード直下に常時表示（＝存在は常に見える）
+ * - ただし「内容は折りたたみ必須」：details/summary で実装
+ */
+function PhotoSubmissionGuide() {
+  return (
+    <details className="rounded-2xl border border-white/12 bg-black/25 mt-3" style={{ padding: UI.cardPadding }}>
+      <summary
+        className="cursor-pointer select-none"
+        style={{
+          listStyle: "none",
+          outline: "none",
+        }}
+      >
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="text-white/90 font-black" style={{ fontSize: UI.FONT.inputPx }}>
+            写真提出のお願い（重要）
+          </div>
+          <Chip className="text-white/95">仕上がり安定の3条件</Chip>
+        </div>
+
+        <div className="text-white/70 mt-2" style={{ fontSize: UI.FONT.labelPx, lineHeight: 1.6 }}>
+          ※ ここを開いて、撮影条件だけ守ってください（これで失敗が激減します）
+        </div>
+      </summary>
+
+      <div className="mt-3 text-white/80" style={{ fontSize: UI.FONT.labelPx, lineHeight: 1.7 }}>
+        提出する写真は、次の3つだけ守ってください。これで仕上がりが安定します。
+      </div>
+
+      <ul className="list-disc list-inside mt-2 space-y-1" style={{ color: "rgba(255,255,255,0.88)", fontSize: 13 }}>
+        <li>背景は「白い壁 / 白い紙 / 単色の布」（柄・文字はNG）</li>
+        <li>商品を画面の真ん中に大きく（小さいと形が崩れやすい）</li>
+        <li>影を薄く（強い影は商品と誤認されやすい）</li>
+      </ul>
+
+      <div className="mt-3 text-white/70 font-bold" style={{ fontSize: UI.FONT.labelPx }}>
+        NG例（失敗しやすい）
+      </div>
+      <ul className="list-disc list-inside mt-1 space-y-1" style={{ color: "rgba(255,255,255,0.70)", fontSize: 13 }}>
+        <li>背景がごちゃごちゃ（部屋・棚・文字・柄）</li>
+        <li>商品が小さい</li>
+        <li>手で持ってる</li>
+        <li>逆光 / 暗い / ブレている</li>
+      </ul>
+
+      <div className="mt-3 text-white/70 font-bold" style={{ fontSize: UI.FONT.labelPx }}>
+        推奨
+      </div>
+      <ul className="list-disc list-inside mt-1 space-y-1" style={{ color: "rgba(255,255,255,0.70)", fontSize: 13 }}>
+        <li>正面1枚 + 斜め1枚（合計2枚）</li>
+        <li>明るい場所（昼間の窓際）</li>
+        <li>iPhone/Androidの標準カメラでOK（加工しない）</li>
+      </ul>
+
+      <div className="mt-3 text-white/55" style={{ fontSize: UI.FONT.labelPx, lineHeight: 1.6 }}>
+        ※ この画像を元に、背景のみをAIが変更して動画を生成します（商品自体は同一性を維持）。
+      </div>
+    </details>
   );
 }
 
@@ -406,7 +453,6 @@ const FALLBACK_PRICING: PricingTable = {
 };
 
 function normalizePricing(raw: ConfigResponseLike): PricingTable {
-  // 想定：{ ok:true, pricing:{ video:{ standard:{5:..,10:..}, high:{5:..,10:..} } } }
   const src = raw?.pricing?.video ?? raw?.videoPricing ?? raw?.pricing ?? raw ?? {};
 
   const s5 = Number(src?.standard?.[5] ?? src?.standard?.["5"] ?? src?.standard5);
@@ -620,9 +666,13 @@ export default function NewDraftPage() {
   const phaseLabel = d.phase === "draft" ? "下書き" : d.phase === "ready" ? "投稿待ち" : "投稿済み";
   const canGenerate = d.vision.trim().length > 0 && !busy;
 
+  /**
+   * ✅ 「どの表示ソースを選んでいても、実在するベース画像（upload/ai）を必ず返す」
+   */
   const baseForEditUrl = useMemo(() => {
-    if (d.imageSource === "ai") return d.aiImageUrl || "";
-    return d.baseImageUrl || "";
+    if (d.imageSource === "ai") return d.aiImageUrl || d.baseImageUrl || "";
+    if (d.imageSource === "upload") return d.baseImageUrl || d.aiImageUrl || "";
+    return d.baseImageUrl || d.aiImageUrl || "";
   }, [d.imageSource, d.baseImageUrl, d.aiImageUrl]);
 
   const displayImageUrl = useMemo(() => {
@@ -692,7 +742,6 @@ export default function NewDraftPage() {
     const vision = d.vision.trim();
     if (!vision) return alert("Vision（必須）を入力してください");
 
-    // ✅ 二重送信防止（操作単位）
     if (inFlightRef.current["captions"]) return;
     inFlightRef.current["captions"] = true;
 
@@ -701,17 +750,11 @@ export default function NewDraftPage() {
       const token = await auth.currentUser?.getIdToken(true);
       if (!token) throw new Error("no token");
 
-      const idemKey = makeIdemKey("captions");
-
       const body = { brandId: d.brand, vision, keywords: splitKeywords(d.keywordsText), tone: "" };
 
       const r = await fetch("/api/generate-captions", {
         method: "POST",
-        headers: {
-          "content-type": "application/json",
-          Authorization: `Bearer ${token}`,
-          "Idempotency-Key": idemKey,
-        },
+        headers: { "content-type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify(body),
       });
 
@@ -758,17 +801,11 @@ export default function NewDraftPage() {
       const ensuredDraftId = draftId ?? (await saveDraft());
       if (!ensuredDraftId) throw new Error("failed to create draft");
 
-      const idemKey = makeIdemKey("image");
-
       const body = { brandId: d.brand, vision, keywords: splitKeywords(d.keywordsText), tone: "" };
 
       const r = await fetch("/api/generate-image", {
         method: "POST",
-        headers: {
-          "content-type": "application/json",
-          Authorization: `Bearer ${token}`,
-          "Idempotency-Key": idemKey,
-        },
+        headers: { "content-type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify(body),
       });
 
@@ -955,8 +992,8 @@ export default function NewDraftPage() {
   const templateItems: { id: UiTemplate; label: string }[] = [
     { id: "zoomIn", label: "ズームイン" },
     { id: "zoomOut", label: "ズームアウト" },
-    { id: "slideLeft", label: "スライド左" },
-    { id: "slideRight", label: "スライド右" },
+    { id: "slideLeft", label: "スライド（左）" },
+    { id: "slideRight", label: "スライド（右）" },
     { id: "fadeIn", label: "フェードイン" },
     { id: "fadeOut", label: "フェードアウト" },
     { id: "slowZoomFade", label: "ゆっくりズーム＋フェード" },
@@ -987,12 +1024,10 @@ export default function NewDraftPage() {
       const ensuredDraftId = draftId ?? (await saveDraft());
       if (!ensuredDraftId) throw new Error("failed to create draft");
 
-      // ✅ 参照画像：COMPOSITEがあればそれ、なければベース（UPLOAD/AI）
-      const reference = d.compositeImageUrl || baseForEditUrl || "";
+      // 「composite → base → ai」順で参照画像を拾う（imageSource依存にしない）
+      const reference = d.compositeImageUrl || d.baseImageUrl || d.aiImageUrl || "";
       if (!reference) {
-        alert(
-          "先に「画像をアップロード」または「AI画像生成」または「文字入り画像を保存」を行ってください（参照画像がありません）"
-        );
+        alert("先に「画像をアップロード」または「AI画像生成」または「文字入り画像を保存」を行ってください（参照画像がありません）");
         return;
       }
 
@@ -1001,15 +1036,11 @@ export default function NewDraftPage() {
       const quality = (d.videoQuality ?? "standard") === "high" ? "high" : "standard";
       const size = d.videoSize ?? "1024x1792";
 
-      // ✅ 同じボタン連打は “同一注文” として扱いたい → クリック時に固定キーを作る
-      const idemKey = makeIdemKey("video");
-
       const body = {
         brandId: d.brand,
         vision,
         keywords: splitKeywords(d.keywordsText),
         tone: "",
-
         templateId,
         seconds,
         quality,
@@ -1019,15 +1050,18 @@ export default function NewDraftPage() {
 
       const r = await fetch("/api/generate-video", {
         method: "POST",
-        headers: {
-          "content-type": "application/json",
-          Authorization: `Bearer ${token}`,
-          "Idempotency-Key": idemKey,
-        },
+        headers: { "content-type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify(body),
       });
 
       const j = await r.json().catch(() => ({}));
+
+      // ✅ ここが今回の重要修正：202 = 生成中（課金事故防止で再実行しない）
+      if (r.status === 202 || j?.running) {
+        alert("すでに生成中です（同条件の再実行はしません）。少し待ってから、もう一度ページを開いて確認してください。");
+        return;
+      }
+
       if (!r.ok) throw new Error(j?.error || "video error");
 
       const url = typeof j?.url === "string" ? j.url : "";
@@ -1078,11 +1112,7 @@ export default function NewDraftPage() {
 
       const url = await uploadImageFileAsJpegToStorage(uid, ensuredDraftId, file);
 
-      setD((p) => ({
-        ...p,
-        baseImageUrl: url,
-        imageSource: "upload",
-      }));
+      setD((p) => ({ ...p, baseImageUrl: url, imageSource: "upload" }));
 
       await saveDraft({ baseImageUrl: url, imageSource: "upload", phase: "draft" });
 
@@ -1131,6 +1161,9 @@ export default function NewDraftPage() {
             overflow: auto;
           }
         }
+        details > summary::-webkit-details-marker {
+          display: none;
+        }
       `}</style>
 
       <div className="pageWrap">
@@ -1152,16 +1185,10 @@ export default function NewDraftPage() {
             </div>
 
             <div className="flex items-center gap-2 flex-wrap">
-              <Btn
-                variant={d.brand === "vento" ? "primary" : "secondary"}
-                onClick={() => setD((p) => ({ ...p, brand: "vento" }))}
-              >
+              <Btn variant={d.brand === "vento" ? "primary" : "secondary"} onClick={() => setD((p) => ({ ...p, brand: "vento" }))}>
                 VENTO
               </Btn>
-              <Btn
-                variant={d.brand === "riva" ? "primary" : "secondary"}
-                onClick={() => setD((p) => ({ ...p, brand: "riva" }))}
-              >
+              <Btn variant={d.brand === "riva" ? "primary" : "secondary"} onClick={() => setD((p) => ({ ...p, brand: "riva" }))}>
                 RIVA
               </Btn>
               <Chip>
@@ -1211,12 +1238,7 @@ export default function NewDraftPage() {
                 />
               </label>
 
-              <Btn
-                variant="secondary"
-                disabled={!canGenerate}
-                onClick={generateAiImage}
-                title="AI画像は base を上書きしません（aiImageUrlへ保存）"
-              >
+              <Btn variant="secondary" disabled={!canGenerate} onClick={generateAiImage} title="AI画像は base を上書きしません（aiImageUrlへ保存）">
                 AI画像を生成（正方形）
               </Btn>
 
@@ -1229,6 +1251,8 @@ export default function NewDraftPage() {
               ※ アップロード画像は内部でJPEGに変換して保存します。<br />
               ※ AI画像は aiImageUrl に保存され、アップロード画像（base）は上書きされません。
             </div>
+
+            <PhotoSubmissionGuide />
 
             <div className="text-white/80 mt-4 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
               Vision（必須）
@@ -1352,52 +1376,24 @@ export default function NewDraftPage() {
                       </div>
                     </div>
 
-                    <div
-                      style={{
-                        fontSize: UI.FONT.inputPx,
-                        lineHeight: UI.FONT.inputLineHeight as any,
-                        whiteSpace: "pre-wrap",
-                      }}
-                    >
-                      {t}
-                    </div>
+                    <div style={{ fontSize: UI.FONT.inputPx, lineHeight: UI.FONT.inputLineHeight as any, whiteSpace: "pre-wrap" }}>{t}</div>
                   </div>
                 ))}
               </div>
             )}
           </div>
 
-          {/* 動画生成 */}
+          {/* 動画生成セクション */}
           <div className="rounded-2xl border border-white/12 bg-black/25" style={{ padding: UI.cardPadding }}>
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <div className="text-white/90 font-black" style={{ fontSize: UI.FONT.inputPx }}>
                 動画生成
               </div>
               <div className="flex items-center gap-2 flex-wrap">
-                <Chip className="text-white/95">参照画像：{(d.compositeImageUrl || baseForEditUrl) ? "あり" : "なし"}</Chip>
+                <Chip className="text-white/95">
+                  参照画像：{d.compositeImageUrl || d.baseImageUrl || d.aiImageUrl ? "あり" : "なし"}
+                </Chip>
                 <Chip className="text-white/95">{pricingMetaText}</Chip>
-              </div>
-            </div>
-
-            {/* サイズ */}
-            <div className="mt-3">
-              <div className="text-white/80 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
-                サイズ（用途別）
-              </div>
-              <div className="grid gap-2">
-                {sizePresets.map((p) => (
-                  <div key={p.id} className="flex flex-wrap items-center gap-2">
-                    <SelectBtn
-                      selected={(d.videoSize ?? "1024x1792") === p.id}
-                      label={p.label}
-                      onClick={() => setD((x) => ({ ...x, videoSize: p.id }))}
-                      disabled={!uid || busy}
-                    />
-                    <div className="text-white/55" style={{ fontSize: UI.FONT.labelPx }}>
-                      {p.id} / {p.sub}
-                    </div>
-                  </div>
-                ))}
               </div>
             </div>
 
@@ -1407,57 +1403,89 @@ export default function NewDraftPage() {
                 秒数（5 / 10）
               </div>
               <div className="flex flex-wrap gap-2">
-                <SelectBtn
-                  selected={(d.videoSeconds ?? 5) === 5}
-                  label="5"
-                  onClick={() => setD((p) => ({ ...p, videoSeconds: 5 }))}
-                  disabled={!uid || busy}
-                />
-                <SelectBtn
-                  selected={(d.videoSeconds ?? 5) === 10}
-                  label="10"
-                  onClick={() => setD((p) => ({ ...p, videoSeconds: 10 }))}
-                  disabled={!uid || busy}
-                />
+                <SelectBtn selected={(d.videoSeconds ?? 5) === 5} label="5" onClick={() => setD((p) => ({ ...p, videoSeconds: 5 }))} disabled={!uid || busy} />
+                <SelectBtn selected={(d.videoSeconds ?? 5) === 10} label="10" onClick={() => setD((p) => ({ ...p, videoSeconds: 10 }))} disabled={!uid || busy} />
               </div>
             </div>
 
             {/* 品質 */}
             <div className="mt-4">
               <div className="text-white/80 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
-                品質
+                品質（画質で選ぶ）
               </div>
 
               <div className="flex flex-wrap gap-2">
                 <SelectBtn
                   selected={(d.videoQuality ?? "standard") === "standard"}
-                  label="確実（標準）"
+                  label="確実（標準）【おすすめ】"
                   onClick={() => setD((p) => ({ ...p, videoQuality: "standard" }))}
                   disabled={!uid || busy}
+                  title="雰囲気・世界観重視。通常表示向け。"
                 />
                 <SelectBtn
                   selected={(d.videoQuality ?? "standard") === "high"}
                   label="確実＋高精細"
                   onClick={() => setD((p) => ({ ...p, videoQuality: "high" }))}
                   disabled={!uid || busy}
+                  title="商品用途・拡大表示向け。"
                 />
+              </div>
+
+              <div className="text-white/55 mt-2" style={{ fontSize: UI.FONT.labelPx, lineHeight: 1.55 }}>
+                委託・納品どちらも対応しています。商品用途の場合は高精細をおすすめします。
               </div>
             </div>
 
             {/* テンプレ */}
             <div className="mt-4">
               <div className="text-white/80 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
-                テンプレ
+                テンプレ（全部表示）
               </div>
               <div className="flex flex-wrap gap-2">
                 {templateItems.map((t) => (
-                  <SelectBtn
-                    key={t.id}
-                    selected={(d.videoTemplate ?? "slowZoomFade") === t.id}
-                    label={t.label}
-                    onClick={() => setD((p) => ({ ...p, videoTemplate: t.id }))}
-                    disabled={!uid || busy}
-                  />
+                  <SelectBtn key={t.id} selected={(d.videoTemplate ?? "slowZoomFade") === t.id} label={t.label} onClick={() => setD((p) => ({ ...p, videoTemplate: t.id }))} disabled={!uid || busy} />
+                ))}
+              </div>
+
+              <div className="mt-3 rounded-2xl border border-white/12 bg-black/20" style={{ padding: UI.cardPadding }}>
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <div className="text-white/80 font-black" style={{ fontSize: UI.FONT.labelPx }}>
+                    🤖 AIおすすめ（表示のみ・自動選択はしない）
+                  </div>
+                  <Chip className="text-white/95">判断補助コメント</Chip>
+                </div>
+
+                <div className="text-white/90 mt-2" style={{ fontSize: UI.FONT.inputPx, fontWeight: 900 }}>
+                  おすすめ：ゆっくりズーム＋フェード
+                </div>
+                <div className="text-white/70 mt-2" style={{ fontSize: UI.FONT.labelPx, lineHeight: 1.65 }}>
+                  理由：
+                </div>
+                <ul className="list-disc list-inside mt-1 space-y-1" style={{ color: "rgba(255,255,255,0.75)", fontSize: 13 }}>
+                  <li>商品の視認性を保ちやすい</li>
+                  <li>破綻が起きにくい</li>
+                  <li>SNS・商品用途どちらでも使える</li>
+                </ul>
+
+                <div className="text-white/55 mt-2" style={{ fontSize: UI.FONT.labelPx, lineHeight: 1.55 }}>
+                  ※ ボタン選択はユーザー（AIはコメントのみ）
+                </div>
+              </div>
+            </div>
+
+            {/* サイズ */}
+            <div className="mt-4">
+              <div className="text-white/80 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
+                サイズ（用途別）
+              </div>
+              <div className="grid gap-2">
+                {sizePresets.map((p) => (
+                  <div key={p.id} className="flex flex-wrap items-center gap-2">
+                    <SelectBtn selected={(d.videoSize ?? "1024x1792") === p.id} label={p.label} onClick={() => setD((x) => ({ ...x, videoSize: p.id }))} disabled={!uid || busy} />
+                    <div className="text-white/55" style={{ fontSize: UI.FONT.labelPx }}>
+                      {p.id} / {p.sub}
+                    </div>
+                  </div>
                 ))}
               </div>
             </div>
@@ -1505,7 +1533,7 @@ export default function NewDraftPage() {
           </div>
         </section>
 
-        {/* 右：プレビュー（画像＋文字調整＋動画） */}
+        {/* 右：プレビュー */}
         <section className="rightCol min-h-0 flex flex-col gap-4">
           <div className="rightScroll min-h-0" style={{ paddingBottom: 8 }}>
             {/* 画像プレビュー */}
@@ -1530,12 +1558,7 @@ export default function NewDraftPage() {
                 >
                   {displayImageUrl ? (
                     // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={displayImageUrl}
-                      alt="preview"
-                      draggable={false}
-                      style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }}
-                    />
+                    <img src={displayImageUrl} alt="preview" draggable={false} style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }} />
                   ) : (
                     <div className="h-full w-full grid place-items-center text-sm text-white/55">NO IMAGE</div>
                   )}
@@ -1557,9 +1580,7 @@ export default function NewDraftPage() {
                           textAlign: "center",
                           fontWeight: 900,
                           lineHeight: 1.35,
-                          fontSize: `${Math.round(
-                            UI.FONT.overlayPreviewBasePx * clamp(d.overlayFontScale, 0.6, 1.6)
-                          )}px`,
+                          fontSize: `${Math.round(UI.FONT.overlayPreviewBasePx * clamp(d.overlayFontScale, 0.6, 1.6))}px`,
                           color: "rgba(255,255,255,0.95)",
                           textShadow: "0 2px 10px rgba(0,0,0,0.45)",
                           whiteSpace: "pre-wrap",
@@ -1584,41 +1605,12 @@ export default function NewDraftPage() {
                     <div className="text-white/80 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
                       載せる文字（※本文とは別）
                     </div>
-                    <textarea
-                      value={d.overlayText}
-                      onChange={(e) => setD((p) => ({ ...p, overlayText: e.target.value }))}
-                      className="w-full rounded-xl border p-3 outline-none"
-                      style={{ ...formStyle, minHeight: UI.hOverlayText }}
-                    />
+                    <textarea value={d.overlayText} onChange={(e) => setD((p) => ({ ...p, overlayText: e.target.value }))} className="w-full rounded-xl border p-3 outline-none" style={{ ...formStyle, minHeight: UI.hOverlayText }} />
                   </div>
 
-                  <RangeControl
-                    label="文字サイズ"
-                    value={d.overlayFontScale}
-                    min={0.6}
-                    max={1.6}
-                    step={0.05}
-                    format={(v) => v.toFixed(2)}
-                    onChange={(v) => setD((p) => ({ ...p, overlayFontScale: v }))}
-                  />
-                  <RangeControl
-                    label="位置（上下）"
-                    value={d.overlayY}
-                    min={0}
-                    max={100}
-                    step={1}
-                    format={(v) => String(Math.round(v))}
-                    onChange={(v) => setD((p) => ({ ...p, overlayY: v }))}
-                  />
-                  <RangeControl
-                    label="背景帯の濃さ"
-                    value={d.overlayBgOpacity}
-                    min={0}
-                    max={0.85}
-                    step={0.05}
-                    format={(v) => v.toFixed(2)}
-                    onChange={(v) => setD((p) => ({ ...p, overlayBgOpacity: v }))}
-                  />
+                  <RangeControl label="文字サイズ" value={d.overlayFontScale} min={0.6} max={1.6} step={0.05} format={(v) => v.toFixed(2)} onChange={(v) => setD((p) => ({ ...p, overlayFontScale: v }))} />
+                  <RangeControl label="位置（上下）" value={d.overlayY} min={0} max={100} step={1} format={(v) => String(Math.round(v))} onChange={(v) => setD((p) => ({ ...p, overlayY: v }))} />
+                  <RangeControl label="背景帯の濃さ" value={d.overlayBgOpacity} min={0} max={0.85} step={0.05} format={(v) => v.toFixed(2)} onChange={(v) => setD((p) => ({ ...p, overlayBgOpacity: v }))} />
 
                   <div className="flex flex-wrap gap-2">
                     <Btn variant="primary" disabled={busy} onClick={saveCompositeAsImageUrl}>
@@ -1643,7 +1635,7 @@ export default function NewDraftPage() {
             <div className="mt-3 rounded-2xl border border-white/12 bg-black/25" style={{ padding: UI.cardPadding }}>
               <div className="flex items-center justify-between gap-2 flex-wrap">
                 <div className="text-white/90 font-black" style={{ fontSize: UI.FONT.inputPx }}>
-                  動画プレビュー
+                  動画プレビュー（保存済み）
                 </div>
                 <Chip className="text-white/95">
                   {(d.videoTemplate ?? "slowZoomFade")} / {(d.videoSeconds ?? 5)}s / {(d.videoSize ?? "1024x1792")}
@@ -1664,9 +1656,7 @@ export default function NewDraftPage() {
                     }}
                   />
                 ) : (
-                  <div className="h-[220px] w-full grid place-items-center text-sm text-white/55 rounded-2xl border border-white/12 bg-black/20">
-                    NO VIDEO
-                  </div>
+                  <div className="h-[220px] w-full grid place-items-center text-sm text-white/55 rounded-2xl border border-white/12 bg-black/20">NO VIDEO</div>
                 )}
               </div>
 
