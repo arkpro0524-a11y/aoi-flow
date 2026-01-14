@@ -101,14 +101,21 @@ async function generateMp4BufferOrThrow(input: {
   size: string;
 }) {
   const generatorUrl = process.env.VIDEO_GENERATOR_URL;
-  if (!generatorUrl) {
-    throw new Error("VIDEO_GENERATOR_URL is missing.");
-  }
+  if (!generatorUrl) throw new Error("VIDEO_GENERATOR_URL is missing.");
+
+  // ★ここが「本当に何を投げたか」の最終ログ
+  console.log("[generate-video] payload =>", {
+    templateId: input.templateId,
+    seconds: input.seconds,
+    quality: input.quality,
+    size: input.size,
+  });
 
   const res = await fetch(generatorUrl, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
+      // ※外部側仕様に合わせている命名（ここは現状維持）
       referenceImageUrl: input.bgImageUrl,
       originalReferenceImageUrl: input.referenceImageUrl,
       prompt: input.prompt,
@@ -151,12 +158,30 @@ function trimTo10(urls: string[]) {
   return urls.slice(urls.length - 10);
 }
 
-/** ✅ getMetadata() から取る token を「必ず string」に正規化（TSエラー対策） */
+/** ✅ getMetadata() から取る token を「必ず string」に正規化 */
 function normalizeToken(v: unknown): string | "" {
   if (typeof v === "string") return v;
   if (typeof v === "number") return String(v);
   if (typeof v === "boolean") return v ? "true" : "";
   return "";
+}
+
+/** ✅ サーバが許可するテンプレ一覧（外部側の未対応テンプレ事故を止める） */
+const ALLOWED_TEMPLATES = [
+  "slowZoomFade",
+  "zoomIn",
+  "zoomOut",
+  "slideLeft",
+  "slideRight",
+  "fadeIn",
+  "fadeOut",
+  "static",
+] as const;
+
+type TemplateId = (typeof ALLOWED_TEMPLATES)[number];
+
+function isAllowedTemplateId(v: string): v is TemplateId {
+  return (ALLOWED_TEMPLATES as readonly string[]).includes(v);
 }
 
 export async function POST(req: Request) {
@@ -169,7 +194,7 @@ export async function POST(req: Request) {
     const referenceImageUrl = String(body?.referenceImageUrl || "");
     const prompt = String(body?.prompt || "");
 
-    const templateId = String(body?.templateId || "");
+    const templateIdRaw = String(body?.templateId || "");
     const seconds = Number(body?.seconds || 0);
     const quality = String(body?.quality || "");
     const size = String(body?.size || "");
@@ -180,12 +205,21 @@ export async function POST(req: Request) {
         { status: 400 }
       );
     }
-    if (!templateId || !seconds || !quality || !size) {
+    if (!templateIdRaw || !seconds || !quality || !size) {
       return NextResponse.json(
         { error: "Missing required: templateId, seconds, quality, size" },
         { status: 400 }
       );
     }
+
+    // ✅ templateId をサーバで厳格チェック（黙ってdefaultに落ちる事故を潰す）
+    if (!isAllowedTemplateId(templateIdRaw)) {
+      return NextResponse.json(
+        { error: `Invalid templateId: ${templateIdRaw}`, allowed: ALLOWED_TEMPLATES },
+        { status: 400 }
+      );
+    }
+    const templateId: TemplateId = templateIdRaw;
 
     // ✅ 他人draft混入を最終遮断
     const { ref: draftRef, data: draftData } = await ensureDraftOwnedOrThrow(uid, draftId);
@@ -218,13 +252,22 @@ export async function POST(req: Request) {
 
       if (g?.status === "completed" && typeof g?.videoUrl === "string" && g.videoUrl) {
         return NextResponse.json(
-          { status: "completed", videoUrl: g.videoUrl, draftId, idemKey },
+          {
+            status: "completed",
+            videoUrl: g.videoUrl,
+            draftId,
+            idemKey,
+            usedTemplateId: g?.templateId ?? templateId,
+          },
           { status: 200 }
         );
       }
 
       if (g?.status === "running") {
-        return NextResponse.json({ status: "running", draftId, idemKey }, { status: 202 });
+        return NextResponse.json(
+          { status: "running", draftId, idemKey, usedTemplateId: g?.templateId ?? templateId },
+          { status: 202 }
+        );
       }
       // failed は再試行OK
     }
@@ -280,12 +323,12 @@ export async function POST(req: Request) {
       resumable: false,
       metadata: {
         cacheControl: "public, max-age=31536000",
-        // custom metadata は string が安全
         metadata: {
           firebaseStorageDownloadTokens: String(finalToken),
           uid: String(uid),
           draftId: String(draftId),
           idemKey: String(idemKey),
+          templateId: String(templateId),
         },
       },
     });
@@ -300,6 +343,8 @@ export async function POST(req: Request) {
       {
         videoUrl,
         videoUrls: nextUrls,
+        // ★最後に使ったテンプレを記録（UIのズレ確認に効く）
+        lastVideoTemplateId: templateId,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       },
       { merge: true }
@@ -312,11 +357,15 @@ export async function POST(req: Request) {
         videoUrl,
         storagePath: objectPath,
         token: finalToken,
+        templateId,
       },
       { merge: true }
     );
 
-    return NextResponse.json({ status: "completed", videoUrl, draftId, idemKey }, { status: 200 });
+    return NextResponse.json(
+      { status: "completed", videoUrl, draftId, idemKey, usedTemplateId: templateId },
+      { status: 200 }
+    );
   } catch (e: any) {
     const msg = typeof e?.message === "string" ? e.message : "Unknown error";
     return NextResponse.json({ error: msg }, { status: 500 });
