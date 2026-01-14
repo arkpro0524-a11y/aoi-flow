@@ -25,10 +25,8 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
 import { addDoc, collection, doc, getDoc, serverTimestamp, updateDoc } from "firebase/firestore";
-import { ref, uploadString, getDownloadURL } from "firebase/storage";
+import { ref, uploadString, getDownloadURL, listAll, getMetadata } from "firebase/storage";
 import { auth, db, storage } from "@/firebase";
-import { listAll, getMetadata } from "firebase/storage";
-
 
 type Brand = "vento" | "riva";
 type Phase = "draft" | "ready" | "posted";
@@ -190,7 +188,7 @@ const formStyle: React.CSSProperties = {
 
 function Btn(props: {
   children: React.ReactNode;
-  onClick?: () => unknown | Promise<unknown>; // ← ここだけ変更
+  onClick?: () => unknown | Promise<unknown>;
   disabled?: boolean;
   variant?: "primary" | "secondary" | "ghost" | "danger";
   className?: string;
@@ -219,8 +217,6 @@ function Btn(props: {
       type="button"
       title={props.title}
       onClick={() => {
-        // ✅ Promise を返しても React の onClick に渡さない（型エラー防止）
-        // ✅ 返り値は常に void にする
         void Promise.resolve(props.onClick?.()).catch((e) => console.error(e));
       }}
       disabled={disabled}
@@ -352,11 +348,6 @@ function RangeControl(props: {
   );
 }
 
-/**
- * ✅ 顧客向け「写真提出 指導書」（UI表示用）
- * - アップロード直下に常時表示（＝存在は常に見える）
- * - ただし「内容は折りたたみ必須」：details/summary で実装
- */
 function PhotoSubmissionGuide() {
   return (
     <details className="rounded-2xl border border-white/12 bg-black/25 mt-3" style={{ padding: UI.cardPadding }}>
@@ -415,7 +406,6 @@ function PhotoSubmissionGuide() {
   );
 }
 
-/** dataURL を Storage に保存（画像用：PNG） */
 async function uploadDataUrlToStorage(uid: string, draftId: string, dataUrl: string) {
   const ext = "png";
   const path = `users/${uid}/drafts/${draftId}/${Date.now()}.${ext}`;
@@ -424,7 +414,6 @@ async function uploadDataUrlToStorage(uid: string, draftId: string, dataUrl: str
   return await getDownloadURL(r);
 }
 
-/** ✅ File を “必ず JPEG” に変換して Storage 保存（HEIF/HEIC対策） */
 async function uploadImageFileAsJpegToStorage(uid: string, draftId: string, file: File) {
   const bitmap = await createImageBitmap(file).catch(() => null);
   if (!bitmap) throw new Error("画像の読み込みに失敗しました（HEIF未対応の可能性）");
@@ -445,7 +434,6 @@ async function uploadImageFileAsJpegToStorage(uid: string, draftId: string, file
   return await getDownloadURL(r);
 }
 
-/** URL を blob として読み、object URL にして img/canvas で使えるようにする（CORS保険） */
 async function loadImageAsObjectUrl(src: string) {
   try {
     const res = await fetch(src, { method: "GET" });
@@ -458,9 +446,6 @@ async function loadImageAsObjectUrl(src: string) {
   }
 }
 
-/* =========================
-   ✅ コスト表示：/api/config から取得（単一ソース）
-   ========================= */
 type PricingTable = {
   standard: { 5: number; 10: number };
   high: { 5: number; 10: number };
@@ -506,22 +491,15 @@ export default function NewDraftPage() {
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  // 動画（生成直後のプレビュー：URLが来たらそれを使う）
   const [videoPreviewUrl, setVideoPreviewUrl] = useState<string | null>(null);
-
-  // ✅ 生成した動画のローカル履歴（表示用・Firestoreには保存しない）
   const [videoHistory, setVideoHistory] = useState<string[]>([]);
-  // ✅ どの動画をプレビューするか（未指定なら最新）
   const [selectedVideoUrl, setSelectedVideoUrl] = useState<string | null>(null);
 
-  // ✅ 背景変更済み画像（動画用）
   const [bgImageUrl, setBgImageUrl] = useState<string | null>(null);
   const [bgBusy, setBgBusy] = useState(false);
 
-  // ✅ 二重送信・裏実行をフロントでも潰す（操作単位ロック）
   const inFlightRef = useRef<Record<string, boolean>>({});
 
-  // ✅ 価格（/api/config 由来）
   const [pricing, setPricing] = useState<PricingTable>(FALLBACK_PRICING);
   const [pricingBusy, setPricingBusy] = useState(false);
   const [pricingError, setPricingError] = useState<string | null>(null);
@@ -567,7 +545,6 @@ export default function NewDraftPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ✅ 読み込み（既存データ互換）
   useEffect(() => {
     if (!uid) return;
 
@@ -598,11 +575,7 @@ export default function NewDraftPage() {
         const memo = typeof data.memo === "string" ? data.memo : "";
 
         const ig =
-          typeof data.ig === "string"
-            ? data.ig
-            : typeof data.caption_final === "string"
-              ? data.caption_final
-              : "";
+          typeof data.ig === "string" ? data.ig : typeof data.caption_final === "string" ? data.caption_final : "";
         const x = typeof data.x === "string" ? data.x : "";
         const ig3 = Array.isArray(data.ig3) ? data.ig3.map(String).slice(0, 3) : [];
 
@@ -699,7 +672,6 @@ export default function NewDraftPage() {
           createdAt: data.createdAt,
         });
 
-        // ✅ 表示体験：保存済み履歴を右側に即出す（ローカルは別）
         if (bgImageUrls.length && !bgImageUrl) setBgImageUrl(bgImageUrls[0]);
         if (videoUrls.length && !videoPreviewUrl) setVideoPreviewUrl(videoUrls[0]);
       } finally {
@@ -713,9 +685,6 @@ export default function NewDraftPage() {
   const phaseLabel = d.phase === "draft" ? "下書き" : d.phase === "ready" ? "投稿待ち" : "投稿済み";
   const canGenerate = d.vision.trim().length > 0 && !busy;
 
-  /**
-   * ✅ 「どの表示ソースを選んでいても、実在するベース画像（upload/ai）を必ず返す」
-   */
   const baseForEditUrl = useMemo(() => {
     if (d.imageSource === "ai") return d.aiImageUrl || d.baseImageUrl || "";
     if (d.imageSource === "upload") return d.baseImageUrl || d.aiImageUrl || "";
@@ -729,7 +698,6 @@ export default function NewDraftPage() {
   }, [d.imageSource, d.baseImageUrl, d.aiImageUrl, d.compositeImageUrl, baseForEditUrl]);
 
   const displayVideoUrl = useMemo(() => {
-    // 優先順位：ユーザーが選択した動画 > 直近生成プレビュー > Firestoreに保存済み > 履歴最新
     const u =
       selectedVideoUrl ||
       videoPreviewUrl ||
@@ -739,82 +707,76 @@ export default function NewDraftPage() {
 
     if (!u) return undefined;
 
-    // ✅ キャッシュ回避（同じURLでも再読み込みさせる）
     const sep = u.includes("?") ? "&" : "?";
     return `${u}${sep}v=${Date.now()}`;
   }, [selectedVideoUrl, videoPreviewUrl, d.videoUrl, videoHistory, d.videoUrls]);
 
-async function saveDraft(partial?: Partial<DraftDoc>): Promise<string | null> {
-  if (!uid) return null;
+  async function saveDraft(partial?: Partial<DraftDoc>): Promise<string | null> {
+    if (!uid) return null;
 
-  // ✅ ここが超重要：
-  // partial に videoUrls / bgImageUrls が「含まれている時だけ」Firestoreへ反映する
-  // （含まれていない保存で、履歴を空配列で上書きして消す事故を防ぐ）
-  const includeVideoUrls = !!partial && Object.prototype.hasOwnProperty.call(partial, "videoUrls");
-  const includeBgImageUrls = !!partial && Object.prototype.hasOwnProperty.call(partial, "bgImageUrls");
+    const includeVideoUrls = !!partial && Object.prototype.hasOwnProperty.call(partial, "videoUrls");
+    const includeBgImageUrls = !!partial && Object.prototype.hasOwnProperty.call(partial, "bgImageUrls");
 
-  const next: DraftDoc = { ...d, ...(partial ?? {}), userId: uid };
-  const representativeUrl = next.compositeImageUrl || next.baseImageUrl || next.aiImageUrl || null;
+    const next: DraftDoc = { ...d, ...(partial ?? {}), userId: uid };
+    const representativeUrl = next.compositeImageUrl || next.baseImageUrl || next.aiImageUrl || null;
 
-  const payload: any = {
-    userId: uid,
-    brand: next.brand,
-    phase: next.phase,
-    vision: next.vision,
-    keywordsText: next.keywordsText,
-    memo: next.memo,
-    ig: next.ig,
-    x: next.x,
-    ig3: next.ig3,
+    const payload: any = {
+      userId: uid,
+      brand: next.brand,
+      phase: next.phase,
+      vision: next.vision,
+      keywordsText: next.keywordsText,
+      memo: next.memo,
+      ig: next.ig,
+      x: next.x,
+      ig3: next.ig3,
 
-    baseImageUrl: next.baseImageUrl ?? null,
-    aiImageUrl: next.aiImageUrl ?? null,
-    compositeImageUrl: next.compositeImageUrl ?? null,
-    imageUrl: representativeUrl,
-    caption_final: next.ig,
+      baseImageUrl: next.baseImageUrl ?? null,
+      aiImageUrl: next.aiImageUrl ?? null,
+      compositeImageUrl: next.compositeImageUrl ?? null,
+      imageUrl: representativeUrl,
+      caption_final: next.ig,
 
-    imageSource: next.imageSource ?? "upload",
+      imageSource: next.imageSource ?? "upload",
 
-    overlayEnabled: next.overlayEnabled,
-    overlayText: next.overlayText,
-    overlayFontScale: next.overlayFontScale,
-    overlayY: next.overlayY,
-    overlayBgOpacity: next.overlayBgOpacity,
+      overlayEnabled: next.overlayEnabled,
+      overlayText: next.overlayText,
+      overlayFontScale: next.overlayFontScale,
+      overlayY: next.overlayY,
+      overlayBgOpacity: next.overlayBgOpacity,
 
-    videoUrl: next.videoUrl ?? null,
-    videoSeconds: next.videoSeconds ?? 5,
-    videoQuality: next.videoQuality ?? "standard",
-    videoTemplate: next.videoTemplate ?? "slowZoomFade",
-    videoSize: next.videoSize ?? "1024x1792",
+      videoUrl: next.videoUrl ?? null,
+      videoSeconds: next.videoSeconds ?? 5,
+      videoQuality: next.videoQuality ?? "standard",
+      videoTemplate: next.videoTemplate ?? "slowZoomFade",
+      videoSize: next.videoSize ?? "1024x1792",
 
-    updatedAt: serverTimestamp(),
-  };
+      updatedAt: serverTimestamp(),
+    };
 
-  // ✅ updateDoc の時に「履歴配列を毎回入れない」＝勝手に上書きしない
-  if (includeBgImageUrls) {
-    payload.bgImageUrls = Array.isArray(next.bgImageUrls) ? next.bgImageUrls.slice(0, 10) : [];
+    if (includeBgImageUrls) {
+      payload.bgImageUrls = Array.isArray(next.bgImageUrls) ? next.bgImageUrls.slice(0, 10) : [];
+    }
+    if (includeVideoUrls) {
+      payload.videoUrls = Array.isArray(next.videoUrls) ? next.videoUrls.slice(0, 10) : [];
+    }
+
+    if (!draftId) {
+      payload.createdAt = serverTimestamp();
+      payload.bgImageUrls = Array.isArray(next.bgImageUrls) ? next.bgImageUrls.slice(0, 10) : [];
+      payload.videoUrls = Array.isArray(next.videoUrls) ? next.videoUrls.slice(0, 10) : [];
+
+      const refDoc = await addDoc(collection(db, "drafts"), payload);
+      setDraftId(refDoc.id);
+      router.replace(`/flow/drafts/new?id=${encodeURIComponent(refDoc.id)}`);
+      setD(next);
+      return refDoc.id;
+    } else {
+      await updateDoc(doc(db, "drafts", draftId), payload);
+      setD(next);
+      return draftId;
+    }
   }
-  if (includeVideoUrls) {
-    payload.videoUrls = Array.isArray(next.videoUrls) ? next.videoUrls.slice(0, 10) : [];
-  }
-
-  if (!draftId) {
-    // ✅ 新規作成時だけは初期値として入れてOK（空でも）
-    payload.createdAt = serverTimestamp();
-    payload.bgImageUrls = Array.isArray(next.bgImageUrls) ? next.bgImageUrls.slice(0, 10) : [];
-    payload.videoUrls = Array.isArray(next.videoUrls) ? next.videoUrls.slice(0, 10) : [];
-
-    const refDoc = await addDoc(collection(db, "drafts"), payload);
-    setDraftId(refDoc.id);
-    router.replace(`/flow/drafts/new?id=${encodeURIComponent(refDoc.id)}`);
-    setD(next);
-    return refDoc.id;
-  } else {
-    await updateDoc(doc(db, "drafts", draftId), payload);
-    setD(next);
-    return draftId;
-  }
-}
 
   async function generateCaptions() {
     if (!uid) return;
@@ -1054,9 +1016,6 @@ async function saveDraft(partial?: Partial<DraftDoc>): Promise<string | null> {
     setD((p) => ({ ...p, overlayText: t }));
   }
 
-  // ==========================
-  // ✅ 動画生成（/api/generate-video）
-  // ==========================
   const secondsKey: UiSeconds = (d.videoSeconds ?? 5) === 10 ? 10 : 5;
   const costStandard = pricing.standard[secondsKey];
   const costHigh = pricing.high[secondsKey];
@@ -1086,7 +1045,6 @@ async function saveDraft(partial?: Partial<DraftDoc>): Promise<string | null> {
     { id: "1280x720", label: "YouTube / Web 横（軽量）", sub: "試作・軽量" },
   ];
 
-  // ✅ 背景画像を作る（/api/generate-bg）
   async function generateBackgroundImage(referenceImageUrl: string): Promise<string> {
     if (!uid) throw new Error("no uid");
 
@@ -1112,7 +1070,6 @@ async function saveDraft(partial?: Partial<DraftDoc>): Promise<string | null> {
 
       const j = await r.json().catch(() => ({}));
 
-      // 202：生成中（同条件の多重課金防止）
       if (r.status === 202 || j?.running) {
         throw new Error("背景がすでに生成中です。少し待ってから再度お試しください。");
       }
@@ -1124,13 +1081,10 @@ async function saveDraft(partial?: Partial<DraftDoc>): Promise<string | null> {
 
       setBgImageUrl(url);
 
-      // ✅ next配列はここで確定（state反映タイミング依存にしない）
       const nextBgUrls = [url, ...d.bgImageUrls.filter((x) => x !== url)].slice(0, 10);
 
-      // ✅ UIにも反映
       setD((prev) => ({ ...prev, bgImageUrls: nextBgUrls }));
 
-      // ✅ Firestoreにも即保存（※下書きIDが無いなら先に作る）
       const ensuredDraftId = draftId ?? (await saveDraft());
       if (!ensuredDraftId) throw new Error("failed to create draft");
 
@@ -1141,7 +1095,6 @@ async function saveDraft(partial?: Partial<DraftDoc>): Promise<string | null> {
       setBgBusy(false);
     }
   }
-
 async function syncVideosFromStorage() {
   if (!uid) return;
 
@@ -1156,70 +1109,43 @@ async function syncVideosFromStorage() {
 
   setBusy(true);
   try {
-    // ✅ サーバの保存先と100%一致（ここ以外探さない）
-    const rootRef = ref(storage, `users/${uid}/videos`);
-
-    // ✅ videos直下は「フォルダ(prefixes)」が正体
-    const root = await listAll(rootRef);
+    // ✅ 下書き専用フォルダだけ見る
+    const videosRef = ref(storage, `users/${uid}/drafts/${ensuredDraftId}/videos`);
+    const listed = await listAll(videosRef);
 
     const found: { url: string; t: number }[] = [];
 
-    // ✅ idemKeyフォルダを全部辿る（2階層目にmp4がいる）
-    for (const folderRef of root.prefixes) {
-      const inside = await listAll(folderRef);
+    for (const itemRef of listed.items) {
+      const name = itemRef.name.toLowerCase();
+      if (!name.endsWith(".mp4")) continue;
 
-      for (const itemRef of inside.items) {
-        // まず拡張子で軽く判定（速い）
-        const name = itemRef.name.toLowerCase();
-        if (!name.endsWith(".mp4")) continue;
-
-        try {
-          // ✅ できれば新しい順にしたいので metadata も取る
-          const meta = await getMetadata(itemRef);
-          const t = meta?.timeCreated ? new Date(meta.timeCreated).getTime() : 0;
-
-          const url = await getDownloadURL(itemRef);
-          found.push({ url, t });
-        } catch {
-          // 1件失敗しても続行
-        }
+      try {
+        const meta = await getMetadata(itemRef);
+        const t = meta?.timeCreated ? new Date(meta.timeCreated).getTime() : 0;
+        const url = await getDownloadURL(itemRef);
+        found.push({ url, t });
+      } catch {
+        // skip
       }
     }
 
     if (found.length === 0) {
-      alert("Storage内にmp4が見つかりませんでした（まだ生成が無い / 権限 / 保存先不一致）");
+      alert("この下書きの動画が見つかりませんでした（まだ生成が無い / 保存先不一致）");
       return;
     }
 
-    // ✅ 新しい順に並べて最大10件
     found.sort((a, b) => (b.t || 0) - (a.t || 0));
     const foundUrls = found.map((x) => x.url).slice(0, 10);
 
-    // ✅ Firestore現状とマージ（重複排除、順序は「新しい方優先」）
+    // ✅ この下書きの Firestore にだけ保存
     const refDoc = doc(db, "drafts", ensuredDraftId);
-    const snap = await getDoc(refDoc);
-    const current: string[] =
-      snap.exists() && Array.isArray((snap.data() as any).videoUrls)
-        ? (snap.data() as any).videoUrls.filter((v: any) => typeof v === "string")
-        : [];
-
-    const merged: string[] = [];
-    const seen = new Set<string>();
-    for (const u of [...foundUrls, ...current]) {
-      if (!u) continue;
-      if (seen.has(u)) continue;
-      seen.add(u);
-      merged.push(u);
-      if (merged.length >= 10) break;
-    }
-
     await updateDoc(refDoc, {
-      videoUrls: merged,
+      videoUrls: foundUrls,
       updatedAt: serverTimestamp(),
     });
 
-    setD((prev) => ({ ...prev, videoUrls: merged }));
-    alert(`同期しました：${merged.length}件`);
+    setD((prev) => ({ ...prev, videoUrls: foundUrls }));
+    alert(`同期しました：${foundUrls.length}件（この下書きのみ）`);
   } catch (e: any) {
     console.error(e);
     alert(`同期に失敗しました\n\n原因: ${e?.message || "不明"}`);
@@ -1234,7 +1160,6 @@ async function syncVideosFromStorage() {
     const vision = d.vision.trim();
     if (!vision) return alert("Vision（必須）を入力してください");
 
-    // ✅ 二重送信防止（最強）
     if (inFlightRef.current["video"]) return;
     inFlightRef.current["video"] = true;
 
@@ -1246,12 +1171,9 @@ async function syncVideosFromStorage() {
       const ensuredDraftId = draftId ?? (await saveDraft());
       if (!ensuredDraftId) throw new Error("failed to create draft");
 
-      // 「composite → base → ai」順で参照画像を拾う（imageSource依存にしない）
       const reference = d.compositeImageUrl || d.baseImageUrl || d.aiImageUrl || "";
       if (!reference) {
-        alert(
-          "先に「画像をアップロード」または「AI画像生成」または「文字入り画像を保存」を行ってください（参照画像がありません）",
-        );
+        alert("先に「画像をアップロード」または「AI画像生成」または「文字入り画像を保存」を行ってください（参照画像がありません）");
         return;
       }
 
@@ -1260,7 +1182,6 @@ async function syncVideosFromStorage() {
       const quality = (d.videoQuality ?? "standard") === "high" ? "high" : "standard";
       const size = d.videoSize ?? "1024x1792";
 
-      // ✅ 背景が無ければ先に作る
       const ensuredBgUrl = bgImageUrl ? bgImageUrl : await generateBackgroundImage(reference);
 
       const body = {
@@ -1284,7 +1205,6 @@ async function syncVideosFromStorage() {
 
       const j = await r.json().catch(() => ({}));
 
-      // ✅ 重要：202 = 生成中（課金事故防止で再実行しない）
       if (r.status === 202 || j?.running) {
         alert("すでに生成中です（同条件の再実行はしません）。少し待ってから、もう一度ページを開いて確認してください。");
         return;
@@ -1297,17 +1217,27 @@ async function syncVideosFromStorage() {
 
       setVideoPreviewUrl(url);
 
-      // ✅ ローカル履歴（端末表示用）
       setVideoHistory((prev) => {
         const next = [url, ...prev.filter((x) => x !== url)];
         return next.slice(0, 10);
       });
       setSelectedVideoUrl(url);
 
-      // ✅ videoUrls をここで確定
-const nextVideoUrls = await buildNextVideoUrls(ensuredDraftId, url);
+      async function buildNextVideoUrls(ensuredId: string, newUrl: string): Promise<string[]> {
+        try {
+          const snap = await getDoc(doc(db, "drafts", ensuredId));
+          const cur =
+            snap.exists() && Array.isArray((snap.data() as any).videoUrls)
+              ? (snap.data() as any).videoUrls.filter((v: any) => typeof v === "string")
+              : [];
+          return [newUrl, ...cur.filter((x: string) => x !== newUrl)].slice(0, 10);
+        } catch {
+          return [newUrl, ...d.videoUrls.filter((x) => x !== newUrl)].slice(0, 10);
+        }
+      }
 
-      // ✅ state更新（UI）
+      const nextVideoUrls = await buildNextVideoUrls(ensuredDraftId, url);
+
       setD((prev) => ({
         ...prev,
         videoUrl: url,
@@ -1318,7 +1248,6 @@ const nextVideoUrls = await buildNextVideoUrls(ensuredDraftId, url);
         videoUrls: nextVideoUrls,
       }));
 
-      // ✅ Firestore保存（永続化）
       await saveDraft({
         videoUrl: url,
         videoSeconds: seconds,
@@ -1327,19 +1256,6 @@ const nextVideoUrls = await buildNextVideoUrls(ensuredDraftId, url);
         videoSize: size,
         videoUrls: nextVideoUrls,
       });
-
-      async function buildNextVideoUrls(ensuredDraftId: string, newUrl: string): Promise<string[]> {
-  try {
-    const snap = await getDoc(doc(db, "drafts", ensuredDraftId));
-    const cur = snap.exists() && Array.isArray((snap.data() as any).videoUrls)
-      ? (snap.data() as any).videoUrls.filter((v: any) => typeof v === "string")
-      : [];
-    return [newUrl, ...cur.filter((x: string) => x !== newUrl)].slice(0, 10);
-  } catch {
-    // 取れなくても UI 側の state を使って継続（最悪でも最新だけは残る）
-    return [newUrl, ...d.videoUrls.filter((x) => x !== newUrl)].slice(0, 10);
-  }
-}
 
       alert("動画を生成して保存しました");
     } catch (e: any) {
@@ -1351,9 +1267,6 @@ const nextVideoUrls = await buildNextVideoUrls(ensuredDraftId, url);
     }
   }
 
-  // ==========================
-  // ✅ アップロード処理
-  // ==========================
   async function onUploadImageFile(file: File) {
     if (!uid) return;
 
@@ -1422,7 +1335,6 @@ const nextVideoUrls = await buildNextVideoUrls(ensuredDraftId, url);
       `}</style>
 
       <div className="pageWrap">
-        {/* 左：入力と生成 */}
         <section className="leftCol min-h-0 flex flex-col gap-3">
           <div className="shrink-0 flex items-center justify-between gap-3">
             <div className="flex items-center gap-2 flex-wrap" />
@@ -1433,23 +1345,16 @@ const nextVideoUrls = await buildNextVideoUrls(ensuredDraftId, url);
             ) : null}
           </div>
 
-          {/* Brand / 画像ソース / Vision / Keywords / 操作 */}
           <div className="rounded-2xl border border-white/12 bg-black/25" style={{ padding: UI.cardPadding }}>
             <div className="text-white/80 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
               Brand
             </div>
 
             <div className="flex items-center gap-2 flex-wrap">
-              <Btn
-                variant={d.brand === "vento" ? "primary" : "secondary"}
-                onClick={() => setD((p) => ({ ...p, brand: "vento" }))}
-              >
+              <Btn variant={d.brand === "vento" ? "primary" : "secondary"} onClick={() => setD((p) => ({ ...p, brand: "vento" }))}>
                 VENTO
               </Btn>
-              <Btn
-                variant={d.brand === "riva" ? "primary" : "secondary"}
-                onClick={() => setD((p) => ({ ...p, brand: "riva" }))}
-              >
+              <Btn variant={d.brand === "riva" ? "primary" : "secondary"} onClick={() => setD((p) => ({ ...p, brand: "riva" }))}>
                 RIVA
               </Btn>
               <Chip>
@@ -1457,7 +1362,6 @@ const nextVideoUrls = await buildNextVideoUrls(ensuredDraftId, url);
               </Chip>
             </div>
 
-            {/* 画像ソース */}
             <div className="text-white/80 mt-4 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
               画像（アップロード / AI生成 / 文字入り）
             </div>
@@ -1499,12 +1403,7 @@ const nextVideoUrls = await buildNextVideoUrls(ensuredDraftId, url);
                 />
               </label>
 
-              <Btn
-                variant="secondary"
-                disabled={!canGenerate}
-                onClick={generateAiImage}
-                title="AI画像は base を上書きしません（aiImageUrlへ保存）"
-              >
+              <Btn variant="secondary" disabled={!canGenerate} onClick={generateAiImage} title="AI画像は base を上書きしません（aiImageUrlへ保存）">
                 AI画像を生成（正方形）
               </Btn>
 
@@ -1550,7 +1449,6 @@ const nextVideoUrls = await buildNextVideoUrls(ensuredDraftId, url);
             </div>
           </div>
 
-          {/* IG */}
           <div className="rounded-2xl border border-white/12 bg-black/25" style={{ padding: UI.cardPadding }}>
             <div className="flex items-center justify-between gap-2">
               <div className="text-white/80" style={{ fontSize: UI.FONT.labelPx }}>
@@ -1568,7 +1466,6 @@ const nextVideoUrls = await buildNextVideoUrls(ensuredDraftId, url);
             />
           </div>
 
-          {/* X */}
           <div className="rounded-2xl border border-white/12 bg-black/25" style={{ padding: UI.cardPadding }}>
             <div className="flex items-center justify-between">
               <div className="text-white/80" style={{ fontSize: UI.FONT.labelPx }}>
@@ -1586,7 +1483,6 @@ const nextVideoUrls = await buildNextVideoUrls(ensuredDraftId, url);
             />
           </div>
 
-          {/* メモ + 状態 */}
           <div className="rounded-2xl border border-white/12 bg-black/25" style={{ padding: UI.cardPadding }}>
             <div className="text-white/80 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
               メモ（任意）
@@ -1607,7 +1503,6 @@ const nextVideoUrls = await buildNextVideoUrls(ensuredDraftId, url);
             </div>
           </div>
 
-          {/* IG3（復活） */}
           <div className="rounded-2xl border border-white/12 bg-black/20" style={{ padding: UI.cardPadding }}>
             <div className="text-white/70 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
               補助：Instagram 3案（※本文は絶対に上書きしない）
@@ -1652,21 +1547,16 @@ const nextVideoUrls = await buildNextVideoUrls(ensuredDraftId, url);
             )}
           </div>
 
-          {/* 動画生成セクション */}
           <div className="rounded-2xl border border-white/12 bg-black/25" style={{ padding: UI.cardPadding }}>
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <div className="text-white/90 font-black" style={{ fontSize: UI.FONT.inputPx }}>
                 動画生成
               </div>
               <div className="flex items-center gap-2 flex-wrap">
-                <Chip className="text-white/95">
-                  参照画像：{d.compositeImageUrl || d.baseImageUrl || d.aiImageUrl ? "あり" : "なし"}
-                </Chip>
-
+                <Chip className="text-white/95">参照画像：{d.compositeImageUrl || d.baseImageUrl || d.aiImageUrl ? "あり" : "なし"}</Chip>
                 <Chip className="text-white/95">背景：{bgImageUrl ? "準備OK" : "未作成"}</Chip>
 
                 <Btn
-
                   variant="secondary"
                   className="px-3 py-1"
                   disabled={!uid || busy || bgBusy || !d.vision.trim()}
@@ -1692,28 +1582,16 @@ const nextVideoUrls = await buildNextVideoUrls(ensuredDraftId, url);
               </div>
             </div>
 
-            {/* 秒数 */}
             <div className="mt-4">
               <div className="text-white/80 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
                 秒数（5 / 10）
               </div>
               <div className="flex flex-wrap gap-2">
-                <SelectBtn
-                  selected={(d.videoSeconds ?? 5) === 5}
-                  label="5"
-                  onClick={() => setD((p) => ({ ...p, videoSeconds: 5 }))}
-                  disabled={!uid || busy}
-                />
-                <SelectBtn
-                  selected={(d.videoSeconds ?? 5) === 10}
-                  label="10"
-                  onClick={() => setD((p) => ({ ...p, videoSeconds: 10 }))}
-                  disabled={!uid || busy}
-                />
+                <SelectBtn selected={(d.videoSeconds ?? 5) === 5} label="5" onClick={() => setD((p) => ({ ...p, videoSeconds: 5 }))} disabled={!uid || busy} />
+                <SelectBtn selected={(d.videoSeconds ?? 5) === 10} label="10" onClick={() => setD((p) => ({ ...p, videoSeconds: 10 }))} disabled={!uid || busy} />
               </div>
             </div>
 
-            {/* 品質 */}
             <div className="mt-4">
               <div className="text-white/80 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
                 品質（画質で選ぶ）
@@ -1741,7 +1619,6 @@ const nextVideoUrls = await buildNextVideoUrls(ensuredDraftId, url);
               </div>
             </div>
 
-            {/* テンプレ */}
             <div className="mt-4">
               <div className="text-white/80 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
                 テンプレ（全部表示）
@@ -1784,7 +1661,6 @@ const nextVideoUrls = await buildNextVideoUrls(ensuredDraftId, url);
               </div>
             </div>
 
-            {/* サイズ */}
             <div className="mt-4">
               <div className="text-white/80 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
                 サイズ（用途別）
@@ -1792,12 +1668,7 @@ const nextVideoUrls = await buildNextVideoUrls(ensuredDraftId, url);
               <div className="grid gap-2">
                 {sizePresets.map((p) => (
                   <div key={p.id} className="flex flex-wrap items-center gap-2">
-                    <SelectBtn
-                      selected={(d.videoSize ?? "1024x1792") === p.id}
-                      label={p.label}
-                      onClick={() => setD((x) => ({ ...x, videoSize: p.id }))}
-                      disabled={!uid || busy}
-                    />
+                    <SelectBtn selected={(d.videoSize ?? "1024x1792") === p.id} label={p.label} onClick={() => setD((x) => ({ ...x, videoSize: p.id }))} disabled={!uid || busy} />
                     <div className="text-white/55" style={{ fontSize: UI.FONT.labelPx }}>
                       {p.id} / {p.sub}
                     </div>
@@ -1806,7 +1677,6 @@ const nextVideoUrls = await buildNextVideoUrls(ensuredDraftId, url);
               </div>
             </div>
 
-            {/* 実コスト */}
             <div className="mt-4">
               <div className="flex items-center justify-between gap-2 flex-wrap">
                 <div className="text-white/80" style={{ fontSize: UI.FONT.labelPx }}>
@@ -1849,10 +1719,8 @@ const nextVideoUrls = await buildNextVideoUrls(ensuredDraftId, url);
           </div>
         </section>
 
-        {/* 右：プレビュー */}
         <section className="rightCol min-h-0 flex flex-col gap-4">
           <div className="rightScroll min-h-0" style={{ paddingBottom: 8 }}>
-            {/* 画像プレビュー */}
             <div className="rounded-2xl border border-white/12 bg-black/25" style={{ padding: UI.cardPadding }}>
               <div className="rounded-2xl border border-white/12 bg-black/30 p-3">
                 <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
@@ -1874,12 +1742,7 @@ const nextVideoUrls = await buildNextVideoUrls(ensuredDraftId, url);
                 >
                   {displayImageUrl ? (
                     // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={displayImageUrl}
-                      alt="preview"
-                      draggable={false}
-                      style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }}
-                    />
+                    <img src={displayImageUrl} alt="preview" draggable={false} style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }} />
                   ) : (
                     <div className="h-full w-full grid place-items-center text-sm text-white/55">NO IMAGE</div>
                   )}
@@ -1913,7 +1776,6 @@ const nextVideoUrls = await buildNextVideoUrls(ensuredDraftId, url);
                   ) : null}
                 </div>
 
-                {/* 背景プレビュー（動画用） */}
                 {bgImageUrl ? (
                   <div className="mt-3 rounded-2xl border border-white/12 bg-black/25" style={{ padding: UI.cardPadding }}>
                     <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -1957,7 +1819,6 @@ const nextVideoUrls = await buildNextVideoUrls(ensuredDraftId, url);
                   </div>
                 ) : null}
 
-                {/* 文字調整 */}
                 <div className="mt-4 grid gap-3">
                   <div className="flex items-center justify-between gap-2 flex-wrap">
                     <Chip className="text-white/95">文字表示</Chip>
@@ -1978,33 +1839,9 @@ const nextVideoUrls = await buildNextVideoUrls(ensuredDraftId, url);
                     />
                   </div>
 
-                  <RangeControl
-                    label="文字サイズ"
-                    value={d.overlayFontScale}
-                    min={0.6}
-                    max={1.6}
-                    step={0.05}
-                    format={(v) => v.toFixed(2)}
-                    onChange={(v) => setD((p) => ({ ...p, overlayFontScale: v }))}
-                  />
-                  <RangeControl
-                    label="位置（上下）"
-                    value={d.overlayY}
-                    min={0}
-                    max={100}
-                    step={1}
-                    format={(v) => String(Math.round(v))}
-                    onChange={(v) => setD((p) => ({ ...p, overlayY: v }))}
-                  />
-                  <RangeControl
-                    label="背景帯の濃さ"
-                    value={d.overlayBgOpacity}
-                    min={0}
-                    max={0.85}
-                    step={0.05}
-                    format={(v) => v.toFixed(2)}
-                    onChange={(v) => setD((p) => ({ ...p, overlayBgOpacity: v }))}
-                  />
+                  <RangeControl label="文字サイズ" value={d.overlayFontScale} min={0.6} max={1.6} step={0.05} format={(v) => v.toFixed(2)} onChange={(v) => setD((p) => ({ ...p, overlayFontScale: v }))} />
+                  <RangeControl label="位置（上下）" value={d.overlayY} min={0} max={100} step={1} format={(v) => String(Math.round(v))} onChange={(v) => setD((p) => ({ ...p, overlayY: v }))} />
+                  <RangeControl label="背景帯の濃さ" value={d.overlayBgOpacity} min={0} max={0.85} step={0.05} format={(v) => v.toFixed(2)} onChange={(v) => setD((p) => ({ ...p, overlayBgOpacity: v }))} />
 
                   <div className="flex flex-wrap gap-2">
                     <Btn variant="primary" disabled={busy} onClick={saveCompositeAsImageUrl}>
@@ -2026,7 +1863,6 @@ const nextVideoUrls = await buildNextVideoUrls(ensuredDraftId, url);
               </div>
             </div>
 
-            {/* 動画プレビュー */}
             <div className="mt-3 rounded-2xl border border-white/12 bg-black/25" style={{ padding: UI.cardPadding }}>
               <div className="flex items-center justify-between gap-2 flex-wrap">
                 <div className="text-white/90 font-black" style={{ fontSize: UI.FONT.inputPx }}>
@@ -2037,127 +1873,125 @@ const nextVideoUrls = await buildNextVideoUrls(ensuredDraftId, url);
                 </Chip>
               </div>
 
-                {/* 履歴（背景 / 動画） */}
-                <div className="mt-3 rounded-2xl border border-white/12 bg-black/25" style={{ padding: UI.cardPadding }}>
-                  <details>
-                    <summary className="cursor-pointer select-none" style={{ listStyle: "none", outline: "none" }}>
-                      <div className="flex items-center justify-between gap-2 flex-wrap">
-                        <div className="text-white/90 font-black" style={{ fontSize: UI.FONT.inputPx }}>
-                          履歴（背景 / 動画）
-                        </div>
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <Chip className="text-white/95">背景 {d.bgImageUrls.length}</Chip>
-                          <Chip className="text-white/95">動画 {d.videoUrls.length}</Chip>
-                        </div>
+              <div className="mt-3 rounded-2xl border border-white/12 bg-black/25" style={{ padding: UI.cardPadding }}>
+                <details>
+                  <summary className="cursor-pointer select-none" style={{ listStyle: "none", outline: "none" }}>
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <div className="text-white/90 font-black" style={{ fontSize: UI.FONT.inputPx }}>
+                        履歴（背景 / 動画）
                       </div>
-
-<Btn
-  variant="secondary"
-  className="px-3 py-1"
-  disabled={!uid || busy}
-  onClick={() => { void syncVideosFromStorage(); }}
-  title="Storageにある動画を探して、FirestoreのvideoUrlsに反映します"
->
-  過去動画を同期
-</Btn>
-
-                      <div className="text-white/55 mt-2" style={{ fontSize: UI.FONT.labelPx, lineHeight: 1.6 }}>
-                        ※ クリックするとプレビューに反映します（自動保存はしません）
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <Chip className="text-white/95">背景 {d.bgImageUrls.length}</Chip>
+                        <Chip className="text-white/95">動画 {d.videoUrls.length}</Chip>
                       </div>
-                    </summary>
-
-                    {/* 背景履歴 */}
-                    <div className="mt-4">
-                      <div className="text-white/80 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
-                        背景（bgImageUrls）
-                      </div>
-
-                      {d.bgImageUrls.length > 0 ? (
-                        <div className="grid gap-2">
-                          {d.bgImageUrls.map((url: string, idx: number) => (
-                            <button
-                              key={`${url}-${idx}`}
-                              type="button"
-                              className="w-full rounded-2xl border border-white/12 bg-black/20 hover:bg-white/5 transition"
-                              style={{ padding: 10, textAlign: "left" }}
-                              onClick={() => setBgImageUrl(url)}
-                            >
-                              <div className="flex items-center gap-3">
-                                <div
-                                  style={{
-                                    width: 74,
-                                    height: 74,
-                                    borderRadius: 12,
-                                    overflow: "hidden",
-                                    background: "rgba(255,255,255,0.04)",
-                                    border: "1px solid rgba(255,255,255,0.10)",
-                                    flex: "0 0 auto",
-                                  }}
-                                >
-                                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                                  <img src={url} alt={`bg-${idx}`} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
-                                </div>
-
-                                <div className="min-w-0">
-                                  <div className="text-white/85 font-bold" style={{ fontSize: UI.FONT.labelPx }}>
-                                    背景 #{idx + 1} {bgImageUrl === url ? "（選択中）" : ""}
-                                  </div>
-                                  <div className="text-white/45 truncate" style={{ fontSize: 11, maxWidth: 420 }}>
-                                    {url}
-                                  </div>
-                                </div>
-                              </div>
-                            </button>
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="text-white/45" style={{ fontSize: UI.FONT.labelPx }}>
-                          （背景履歴なし）
-                        </div>
-                      )}
                     </div>
 
-                    {/* 動画履歴 */}
-                    <div className="mt-5">
-                      <div className="text-white/80 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
-                        動画（videoUrls）
-                      </div>
+                    <Btn
+                      variant="secondary"
+                      className="px-3 py-1"
+                      disabled={!uid || busy}
+                      onClick={() => {
+                        void syncVideosFromStorage();
+                      }}
+                      title="Storageにある動画を探して、FirestoreのvideoUrlsに反映します"
+                    >
+                      過去動画を同期
+                    </Btn>
 
-                      {d.videoUrls.length > 0 ? (
-                        <div className="grid gap-2">
-                          {d.videoUrls.map((url: string, idx: number) => (
-                            <button
-                              key={`${url}-${idx}`}
-                              type="button"
-                              className="w-full rounded-2xl border border-white/12 bg-black/20 hover:bg-white/5 transition"
-                              style={{ padding: 10, textAlign: "left" }}
-                              onClick={() => {
-                                setVideoPreviewUrl(url);
-                                setSelectedVideoUrl(null);
-                              }}
-                            >
-                              <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div className="text-white/55 mt-2" style={{ fontSize: UI.FONT.labelPx, lineHeight: 1.6 }}>
+                      ※ クリックするとプレビューに反映します（自動保存はしません）
+                    </div>
+                  </summary>
+
+                  <div className="mt-4">
+                    <div className="text-white/80 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
+                      背景（bgImageUrls）
+                    </div>
+
+                    {d.bgImageUrls.length > 0 ? (
+                      <div className="grid gap-2">
+                        {d.bgImageUrls.map((url: string, idx: number) => (
+                          <button
+                            key={`${url}-${idx}`}
+                            type="button"
+                            className="w-full rounded-2xl border border-white/12 bg-black/20 hover:bg-white/5 transition"
+                            style={{ padding: 10, textAlign: "left" }}
+                            onClick={() => setBgImageUrl(url)}
+                          >
+                            <div className="flex items-center gap-3">
+                              <div
+                                style={{
+                                  width: 74,
+                                  height: 74,
+                                  borderRadius: 12,
+                                  overflow: "hidden",
+                                  background: "rgba(255,255,255,0.04)",
+                                  border: "1px solid rgba(255,255,255,0.10)",
+                                  flex: "0 0 auto",
+                                }}
+                              >
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img src={url} alt={`bg-${idx}`} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                              </div>
+
+                              <div className="min-w-0">
                                 <div className="text-white/85 font-bold" style={{ fontSize: UI.FONT.labelPx }}>
-                                  動画 #{idx + 1} {videoPreviewUrl === url ? "（プレビュー中）" : ""}
+                                  背景 #{idx + 1} {bgImageUrl === url ? "（選択中）" : ""}
                                 </div>
-                                <Chip className="text-white/95">クリックでプレビュー</Chip>
+                                <div className="text-white/45 truncate" style={{ fontSize: 11, maxWidth: 420 }}>
+                                  {url}
+                                </div>
                               </div>
-                              <div className="text-white/45 truncate mt-1" style={{ fontSize: 11 }}>
-                                {url}
-                              </div>
-                            </button>
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="text-white/45" style={{ fontSize: UI.FONT.labelPx }}>
-                          （動画履歴なし）
-                        </div>
-                      )}
-                    </div>
-                  </details>
-                </div>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-white/45" style={{ fontSize: UI.FONT.labelPx }}>
+                        （背景履歴なし）
+                      </div>
+                    )}
+                  </div>
 
-              {/* ✅ ローカル履歴（最大10件） */}
+                  <div className="mt-5">
+                    <div className="text-white/80 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
+                      動画（videoUrls）
+                    </div>
+
+                    {d.videoUrls.length > 0 ? (
+                      <div className="grid gap-2">
+                        {d.videoUrls.map((url: string, idx: number) => (
+                          <button
+                            key={`${url}-${idx}`}
+                            type="button"
+                            className="w-full rounded-2xl border border-white/12 bg-black/20 hover:bg-white/5 transition"
+                            style={{ padding: 10, textAlign: "left" }}
+                            onClick={() => {
+                              setVideoPreviewUrl(url);
+                              setSelectedVideoUrl(null);
+                            }}
+                          >
+                            <div className="flex items-center justify-between gap-2 flex-wrap">
+                              <div className="text-white/85 font-bold" style={{ fontSize: UI.FONT.labelPx }}>
+                                動画 #{idx + 1} {videoPreviewUrl === url ? "（プレビュー中）" : ""}
+                              </div>
+                              <Chip className="text-white/95">クリックでプレビュー</Chip>
+                            </div>
+                            <div className="text-white/45 truncate mt-1" style={{ fontSize: 11 }}>
+                              {url}
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-white/45" style={{ fontSize: UI.FONT.labelPx }}>
+                        （動画履歴なし）
+                      </div>
+                    )}
+                  </div>
+                </details>
+              </div>
+
               {videoHistory.length ? (
                 <div className="mt-3">
                   <div className="text-white/70 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
@@ -2174,22 +2008,10 @@ const nextVideoUrls = await buildNextVideoUrls(ensuredDraftId, url);
                         title={u}
                       />
                     ))}
-                    <Btn
-                      variant="ghost"
-                      className="px-3 py-2"
-                      disabled={!uid || busy}
-                      onClick={() => setSelectedVideoUrl(null)}
-                      title="自動（最新）に戻す"
-                    >
+                    <Btn variant="ghost" className="px-3 py-2" disabled={!uid || busy} onClick={() => setSelectedVideoUrl(null)} title="自動（最新）に戻す">
                       自動
                     </Btn>
-                    <Btn
-                      variant="ghost"
-                      className="px-3 py-2"
-                      disabled={!uid || busy}
-                      onClick={() => setVideoHistory([])}
-                      title="この端末の履歴だけ消します（Firestoreは消えません）"
-                    >
+                    <Btn variant="ghost" className="px-3 py-2" disabled={!uid || busy} onClick={() => setVideoHistory([])} title="この端末の履歴だけ消します（Firestoreは消えません）">
                       履歴クリア
                     </Btn>
                   </div>

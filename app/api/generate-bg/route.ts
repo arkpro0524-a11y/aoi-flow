@@ -1,4 +1,3 @@
-// /app/api/generate-bg/route.ts
 import { NextResponse } from "next/server";
 import { getAdminAuth, getAdminDb } from "@/firebaseAdmin";
 import { getStorage } from "firebase-admin/storage";
@@ -6,6 +5,7 @@ import crypto from "crypto";
 
 export const runtime = "nodejs";
 
+/* ========= auth ========= */
 function bearerToken(req: Request) {
   const h = req.headers.get("authorization") || "";
   const m = h.match(/^Bearer\s+(.+)$/i);
@@ -20,12 +20,27 @@ async function requireUid(req: Request): Promise<string> {
   return decoded.uid;
 }
 
-async function loadBrand(uid: string, brandId: string) {
-  const db = getAdminDb();
-  const ref = db.doc(`users/${uid}/brands/${brandId}`);
-  const snap = await ref.get();
-  if (!snap.exists) return null;
-  return snap.data() as any;
+/* ========= helpers ========= */
+function stableHash(input: unknown): string {
+  return crypto
+    .createHash("sha256")
+    .update(JSON.stringify(input))
+    .digest("hex")
+    .slice(0, 32);
+}
+
+function buildDownloadUrl(bucket: string, path: string, token: string) {
+  return `https://firebasestorage.googleapis.com/v0/b/${bucket}/o/${encodeURIComponent(
+    path
+  )}?alt=media&token=${token}`;
+}
+
+async function fetchAsImage(url: string): Promise<File> {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error("failed to fetch source image");
+  const ct = r.headers.get("content-type") || "image/png";
+  const ab = await r.arrayBuffer();
+  return new File([ab], "source.png", { type: ct });
 }
 
 function compactKeywords(keys: unknown): string {
@@ -43,27 +58,15 @@ function compactVoiceText(v: unknown): string {
   return s.length <= MAX ? s : s.slice(0, MAX) + "…";
 }
 
-async function fetchAsImageFile(url: string): Promise<{ file: File; mime: string }> {
-  const r = await fetch(url);
-  if (!r.ok) throw new Error("failed to fetch source image");
-  const ct = r.headers.get("content-type") || "image/png";
-  const ab = await r.arrayBuffer();
-  const blob = new Blob([ab], { type: ct });
-  const file = new File([blob], "source.png", { type: ct });
-  return { file, mime: ct };
+async function loadBrand(uid: string, brandId: string) {
+  const db = getAdminDb();
+  const ref = db.doc(`users/${uid}/brands/${brandId}`);
+  const snap = await ref.get();
+  if (!snap.exists) return null;
+  return snap.data() as any;
 }
 
-function stableHash(input: unknown): string {
-  const json = JSON.stringify(input);
-  return crypto.createHash("sha256").update(json).digest("hex").slice(0, 32);
-}
-
-function buildDownloadUrl(bucketName: string, objectPath: string, token: string) {
-  // Firebase Storage の token 付きDL URL（client SDK の getDownloadURL と同系統）
-  const encoded = encodeURIComponent(objectPath);
-  return `https://firebasestorage.googleapis.com/v0/b/${bucketName}/o/${encoded}?alt=media&token=${token}`;
-}
-
+/* ========= main ========= */
 export async function POST(req: Request) {
   try {
     const uid = await requireUid(req);
@@ -72,8 +75,8 @@ export async function POST(req: Request) {
     const brandId = typeof body.brandId === "string" ? body.brandId : "vento";
     const vision = typeof body.vision === "string" ? body.vision : "";
     const keywords = compactKeywords(body.keywords);
-    const size = typeof body.size === "string" ? body.size : "1024x1792"; // 参考として受け取る（プロンプトに反映）
-    // 互換：referenceImageUrl / sourceImageUrl の両対応
+
+    // 互換：referenceImageUrl / sourceImageUrl
     const referenceImageUrl =
       typeof body.referenceImageUrl === "string"
         ? body.referenceImageUrl
@@ -103,6 +106,10 @@ export async function POST(req: Request) {
     const captionPolicy = brand.captionPolicy ?? {};
     const voiceText = compactVoiceText(captionPolicy.voiceText ?? "");
 
+    // ✅ 背景生成は「必ず正方形」固定（UIのsizeは完全に無視）
+    // 720x1280 を投げてもここでは使わない＝エラー＆課金事故が止まる
+    const OUTPUT_SIZE = "1024x1024";
+
     const prompt = [
       "You will receive a product photo.",
       "Goal: Create a clean, attractive square background that matches the brand style.",
@@ -114,9 +121,8 @@ export async function POST(req: Request) {
       voiceText ? `Brand Voice (short): ${voiceText}` : "",
       styleText ? `Style: ${styleText}` : "",
       rules.length ? `Rules: ${rules.join(" / ")}` : "",
-      `Output usage note: This background will be used for a video size like ${size}.`,
       "No text. No logos. No watermark.",
-      "Return a square image (1024x1024).",
+      `Return a square image (${OUTPUT_SIZE}).`,
     ]
       .filter(Boolean)
       .join("\n");
@@ -124,60 +130,58 @@ export async function POST(req: Request) {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) throw new Error("OPENAI_API_KEY missing");
 
-    // ✅ 同条件の押し直しでも「同じ保存先」になる（課金事故対策の土台）
-    // ※ Storage に同名が既にあれば、それを返す（OpenAIを呼ばない）
+    // ✅ 同条件の連打で課金しない（同一key→同一保存先→再利用）
     const key = stableHash({
       uid,
       brandId,
       vision: vision.trim(),
       keywords,
-      size,
       referenceImageUrl,
       styleText,
       rules,
       voiceText,
+      OUTPUT_SIZE,
     });
 
     const bucket = getStorage().bucket();
     const objectPath = `users/${uid}/drafts/_bg/${brandId}/${key}.png`;
     const fileRef = bucket.file(objectPath);
 
-    // 既存があればそれを返す（ここで課金を増やさない）
+    // 既存があれば再利用（課金ゼロ）
     const [exists] = await fileRef.exists();
     if (exists) {
-      // 既存ファイルの token を読み出してURL化（なければ新規付与）
       const [meta] = await fileRef.getMetadata().catch(() => [null as any]);
-      const bucketName = bucket.name;
-
       const existingToken =
         meta?.metadata?.firebaseStorageDownloadTokens ||
         meta?.metadata?.firebaseStorageDownloadToken ||
         "";
 
-      if (typeof existingToken === "string" && existingToken) {
-        const token = existingToken.split(",")[0].trim();
-        const url = buildDownloadUrl(bucketName, objectPath, token);
-        return NextResponse.json({ url, reused: true });
+      const token =
+        typeof existingToken === "string" && existingToken
+          ? existingToken.split(",")[0].trim()
+          : crypto.randomUUID();
+
+      if (!existingToken) {
+        await fileRef.setMetadata({
+          metadata: { firebaseStorageDownloadTokens: token },
+          contentType: meta?.contentType || "image/png",
+        });
       }
 
-      // token が無い場合：付与して返す
-      const token = crypto.randomUUID();
-      await fileRef.setMetadata({
-        metadata: { firebaseStorageDownloadTokens: token },
-        contentType: meta?.contentType || "image/png",
+      return NextResponse.json({
+        url: buildDownloadUrl(bucket.name, objectPath, token),
+        reused: true,
       });
-      const url = buildDownloadUrl(bucketName, objectPath, token);
-      return NextResponse.json({ url, reused: true });
     }
 
-    // OpenAI へ編集（背景生成）
-    const { file } = await fetchAsImageFile(referenceImageUrl);
+    // OpenAI（背景生成）
+    const image = await fetchAsImage(referenceImageUrl);
 
     const fd = new FormData();
     fd.append("model", "gpt-image-1");
     fd.append("prompt", prompt);
-    fd.append("size", "1024x1024");
-    fd.append("image", file);
+    fd.append("size", OUTPUT_SIZE); // ★絶対固定
+    fd.append("image", image);
 
     const r = await fetch("https://api.openai.com/v1/images/edits", {
       method: "POST",
@@ -193,20 +197,19 @@ export async function POST(req: Request) {
 
     const buf = Buffer.from(b64, "base64");
 
-    // Storage 保存（token付きDL URL を作る）
+    // Storage保存（token付き）
     const token = crypto.randomUUID();
     await fileRef.save(buf, {
       contentType: "image/png",
       resumable: false,
       metadata: {
-        metadata: {
-          firebaseStorageDownloadTokens: token,
-        },
+        metadata: { firebaseStorageDownloadTokens: token },
       },
     });
 
-    const url = buildDownloadUrl(bucket.name, objectPath, token);
-    return NextResponse.json({ url });
+    return NextResponse.json({
+      url: buildDownloadUrl(bucket.name, objectPath, token),
+    });
   } catch (e: any) {
     console.error(e);
     return NextResponse.json({ error: e?.message || "error" }, { status: 500 });
