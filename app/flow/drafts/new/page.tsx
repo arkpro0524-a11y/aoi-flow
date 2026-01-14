@@ -1197,22 +1197,75 @@ async function syncVideosFromStorage() {
         bgImageUrl: ensuredBgUrl,
       };
 
-      const r = await fetch("/api/generate-video", {
-        method: "POST",
-        headers: { "content-type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify(body),
+      // ✅ UIで選んだ templateId を「送信直前」に確定（これが100%届く）
+      const templateIdToSend = String(d.videoTemplate ?? "slowZoomFade").trim();
+      const secondsToSend = (d.videoSeconds ?? 5) === 10 ? 10 : 5;
+      const qualityToSend = (d.videoQuality ?? "standard") === "high" ? "high" : "standard";
+      const sizeToSend = String(d.videoSize ?? "1024x1792");
+
+      // ✅ 最終ログ（“UIが何を送ったか”の証拠）
+      console.log("[UI] /api/generate-video SEND =>", {
+        draftId: ensuredDraftId,
+        templateId: templateIdToSend,
+        seconds: secondsToSend,
+        quality: qualityToSend,
+        size: sizeToSend,
       });
 
-      const j = await r.json().catch(() => ({}));
+      // ✅ Abort（固まった時に終わらせる）
+      const controller = new AbortController();
+      const timeoutMs = 120_000; // 2分
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-      if (r.status === 202 || j?.running) {
+      let r: Response;
+      try {
+        r = await fetch("/api/generate-video", {
+          method: "POST",
+          headers: { "content-type": "application/json", Authorization: `Bearer ${token}` },
+          signal: controller.signal,
+          body: JSON.stringify({
+            // ★サーバが使う必須群（あなたのroute.tsに合わせる）
+            draftId: ensuredDraftId,
+            bgImageUrl: ensuredBgUrl,
+            referenceImageUrl: reference,
+            prompt: vision,
+
+            // ★本題：templateId を必ず送る（body変数の古い値に依存しない）
+            templateId: templateIdToSend,
+            seconds: secondsToSend,
+            quality: qualityToSend,
+            size: sizeToSend,
+          }),
+        });
+      } finally {
+        clearTimeout(timer);
+      }
+
+      // ✅ 202(running) は失敗扱いしない（課金事故防止）
+      if (r.status === 202) {
+        const j = await r.json().catch(() => ({} as any));
+        console.log("[UI] /api/generate-video RUNNING =>", j);
+
         alert("すでに生成中です（同条件の再実行はしません）。少し待ってから、もう一度ページを開いて確認してください。");
         return;
       }
 
-      if (!r.ok) throw new Error(j?.error || "video error");
+      // ✅ JSON取り出し（200/400/500でも読む）
+      const j = await r.json().catch(() => ({} as any));
 
-      const url = typeof j?.url === "string" ? j.url : "";
+      // ✅ サーバが実際に使った templateId をログで確定（ズレ検出）
+      console.log("[UI] /api/generate-video RESP =>", {
+        httpStatus: r.status,
+        usedTemplateId: j?.usedTemplateId,
+        idemKey: j?.idemKey,
+      });
+
+      if (!r.ok) {
+        throw new Error(j?.error || "video error");
+      }
+
+      // ✅ あなたのサーバ完成形は videoUrl を返す
+      const url = typeof j?.videoUrl === "string" ? j.videoUrl : "";
       if (!url) throw new Error("no video url");
 
       setVideoPreviewUrl(url);
