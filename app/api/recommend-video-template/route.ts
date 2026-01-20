@@ -1,115 +1,103 @@
+/**
+ * app/api/recommend-video-template/route.ts
+ * ─────────────────────────────────────────────
+ * 役割：
+ * - 入力（画像有無/用途/尺/品質 等）から推奨テンプレを返す
+ *
+ * 設計：
+ * - USE_RECOMMEND_VIDEO_TEMPLATE_MOCK=true  → mock JSON
+ * - false → （現時点では未実装なので 501）
+ *
+ * 注意：
+ * - lib/server/runway.ts は「動画生成専用」なので、ここから import しない
+ * - JSON構造は mock/実 で完全一致（実装時もこの形を維持）
+ */
+
 import { NextResponse } from "next/server";
-import OpenAI from "openai";
-import { getAdminAuth, getAdminDb } from "@/firebaseAdmin";
+import { getIdempotencyKey } from "@/lib/server/idempotency";
 
-export const runtime = "nodejs";
+/* =========================================================
+   型（このAPI内だけで完結 / UIは一切触らない）
+========================================================= */
 
-function bearerToken(req: Request) {
-  const h = req.headers.get("authorization") || "";
-  const m = h.match(/^Bearer\s+(.+)$/i);
-  return m?.[1] ?? null;
+export type RecommendVideoTemplateParams = {
+  hasImage: boolean;
+  purpose?: string; // "product" etc
+  seconds?: number; // UI入力をそのまま受ける
+  quality?: string; // "standard" | "high" など
+  platform?: string; // "instagram" etc
+};
+
+type Recommendation = {
+  model: string;
+  ratio: string;
+  seconds: number;
+  quality: "standard" | "high";
+  reason: string;
+};
+
+/* =========================================================
+   ENV 切替
+========================================================= */
+
+const USE_MOCK = process.env.USE_RECOMMEND_VIDEO_TEMPLATE_MOCK === "true";
+
+/* =========================================================
+   Mock 実装
+========================================================= */
+
+function mockRecommendTemplate(params: RecommendVideoTemplateParams) {
+  const seconds = params.seconds === 5 ? 5 : 10;
+  const quality = String(params.quality).toLowerCase() === "high" ? "high" : "standard";
+
+  const recommendation: Recommendation = {
+    model: "gen4_turbo",
+    ratio: "1280:720",
+    seconds,
+    quality,
+    reason: "商品アップ向けの汎用テンプレ（安定性優先）",
+  };
+
+  return {
+    ok: true,
+    mock: true,
+    recommendation,
+  };
 }
 
-async function requireUid(req: Request): Promise<string> {
-  const token = bearerToken(req);
-  if (!token) throw new Error("missing token");
-  const decoded = await getAdminAuth().verifyIdToken(token);
-  if (!decoded?.uid) throw new Error("invalid token");
-  return decoded.uid;
-}
-
-async function loadBrand(uid: string, brandId: string) {
-  const db = getAdminDb();
-  const ref = db.doc(`users/${uid}/brands/${brandId}`);
-  const snap = await ref.get();
-  if (!snap.exists) return null;
-  return snap.data() as any;
-}
+/* =========================================================
+   POST Handler
+========================================================= */
 
 export async function POST(req: Request) {
   try {
-    const uid = await requireUid(req);
     const body = await req.json();
 
-    const brandId = typeof body.brandId === "string" ? body.brandId : "vento";
-    const vision = typeof body.vision === "string" ? body.vision : "";
-    const keywords = Array.isArray(body.keywords) ? body.keywords.map(String).slice(0, 12) : [];
+    const params: RecommendVideoTemplateParams = {
+      hasImage: Boolean(body.hasImage),
+      purpose: body.purpose ?? "product",
+      seconds: body.seconds,
+      quality: body.quality,
+      platform: body.platform ?? "instagram",
+    };
 
-    if (!vision.trim()) return NextResponse.json({ error: "vision is required" }, { status: 400 });
+    const _idemKey = getIdempotencyKey(req, params);
 
-    const brand = await loadBrand(uid, brandId);
-    if (!brand) {
-      return NextResponse.json(
-        { error: "brand not found. /flow/brands で作成・保存してください" },
-        { status: 400 }
-      );
+    // STEP6-A：Mock
+    if (USE_MOCK) {
+      return NextResponse.json(mockRecommendTemplate(params));
     }
 
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) throw new Error("OPENAI_API_KEY missing");
-    const client = new OpenAI({ apiKey });
-
-    const sys = [
-      "あなたは短尺商品動画のテンプレ選定アシスタント。",
-      "ユーザーは迷いたくないので、結論は1つに絞る。",
-      "出力は必ずJSONスキーマに一致させる。",
-    ].join("\n");
-
-    const userPrompt = [
-      "テンプレ候補は以下のみ：",
-      '["slowZoomFade","zoomIn","zoomOut","slideLeft","slideRight","fadeIn","fadeOut","static"]',
-      "",
-      `ブランド: ${String(brand.name ?? brandId)}`,
-      `ビジョン: ${vision}`,
-      keywords.length ? `キーワード: ${keywords.join(" / ")}` : "",
-      "",
-      "条件：",
-      "- reason は日本語で短く。広告臭なし。",
-      "- confidence は 0.0〜1.0 の小数。",
-    ].join("\n");
-
-    const resp = await client.responses.create({
-      model: "gpt-4o-mini",
-      input: [
-        { role: "system", content: sys },
-        { role: "user", content: userPrompt },
-      ],
-      text: {
-        format: {
-          type: "json_schema",
-          name: "template_pick",
-          strict: true,
-          schema: {
-            type: "object",
-            additionalProperties: false,
-            properties: {
-              templateId: {
-                type: "string",
-                enum: ["slowZoomFade", "zoomIn", "zoomOut", "slideLeft", "slideRight", "fadeIn", "fadeOut", "static"],
-              },
-              reason: { type: "string" },
-              confidence: { type: "number" },
-            },
-            required: ["templateId", "reason", "confidence"],
-          },
-        },
-      },
-    });
-
-    const raw = resp.output_text || "{}";
-    const out = JSON.parse(raw);
-
-    const templateId = String(out.templateId ?? "slowZoomFade");
-    const reason = String(out.reason ?? "");
-    const confidenceNum = Number(out.confidence ?? 0);
-
-    return NextResponse.json({
-      templateId,
-      reason,
-      confidence: Number.isFinite(confidenceNum) ? Math.max(0, Math.min(1, confidenceNum)) : 0,
-    });
-  } catch (e: any) {
-    console.error(e);
-    return NextResponse.json({ error: e?.message || "error" }, { status: 500 });
+    // STEP6-B：実ロジック（後続STEPで実装）
+    return NextResponse.json(
+      { ok: false, error: "recommend-video-template (real) is not implemented yet" },
+      { status: 501 }
+    );
+  } catch (err: any) {
+    console.error("[recommend-video-template]", err);
+    return NextResponse.json(
+      { ok: false, error: err?.message || "テンプレ推薦に失敗しました" },
+      { status: 500 }
+    );
   }
 }

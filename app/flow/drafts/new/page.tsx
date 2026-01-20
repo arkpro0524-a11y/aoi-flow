@@ -7,16 +7,17 @@
  * ✅ 既存機能：キャプション生成 / 画像生成 / 画像アップロード / 文字入り合成 / 下書き保存 / 一覧互換
  * ✅ 復活：IG / X / IG3（3案）ブロック（本文は絶対上書きしない）
  * ✅ 追加：動画生成（秒数 5/10、品質2段階、テンプレ、サイズ選択、コスト表示）
- * ✅ 追加：画像ソース切替（UPLOAD / AI / COMPOSITE）
- * ✅ 追加：/api/config から価格取得（リアルタイム）
- * ✅ 追加：顧客向け「写真提出 指導書」をUIに常時表示（アップロード直下）※折りたたみ必須
+ * ✅ 追加：写真提出 指導書（常時表示・折りたたみ）
  *
- * ✅ 最重要（課金事故対策）
+ * ✅ 今回の確定仕様（UI事故防止）
+ * - 「元画像 / イメージ画像 / 背景画像 / 合成画像」を“名前と表示”で完全に区別する
+ * - 押せない時は、無反応にせず「その場に1行理由」を表示（モーダル/alert/toast禁止）
+ * - 制作者だけ OpenAI / Runway / Sharp の使用状況を見える化（一般ユーザーは非表示）
+ *
+ * ✅ 課金事故対策
  * - フロントは Idempotency-Key を送らない
  *   → サーバ側が「入力から安定キー(stableHash)」を生成し、同条件の押し直しでも課金を増やさない
  * - フロントは inFlight + busy で二重クリックを防止
- *
- * ✅ 今回の全張り替えでの修正
  * - /api/generate-video が 202(running) を返した時に「失敗扱いで落とさない」
  *   → “すでに生成中です” を表示して終了（課金事故防止）
  */
@@ -24,8 +25,21 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
-import { addDoc, collection, doc, getDoc, serverTimestamp, updateDoc } from "firebase/firestore";
-import { ref, uploadString, getDownloadURL, listAll, getMetadata } from "firebase/storage";
+import {
+  addDoc,
+  collection,
+  doc,
+  getDoc,
+  serverTimestamp,
+  updateDoc,
+} from "firebase/firestore";
+import {
+  ref,
+  uploadString,
+  getDownloadURL,
+  listAll,
+  getMetadata,
+} from "firebase/storage";
 import { auth, db, storage } from "@/firebase";
 
 type Brand = "vento" | "riva";
@@ -43,8 +57,13 @@ type UiTemplate =
 
 type UiSeconds = 5 | 10;
 type UiVideoQuality = "standard" | "high";
-type ImageSource = "upload" | "ai" | "composite";
 type UiVideoSize = "1024x1792" | "720x1280" | "1792x1024" | "1280x720";
+
+/**
+ * 画像プレビュー切替（UI上の名称を確定）
+ * - “AI”という単語は曖昧なので禁止
+ */
+type PreviewMode = "base" | "idea" | "composite";
 
 type DraftDoc = {
   userId: string;
@@ -59,12 +78,30 @@ type DraftDoc = {
   x: string;
   ig3: string[];
 
-  baseImageUrl?: string; // upload（常にJPEGに正規化）
-  aiImageUrl?: string; // AI生成（PNG）
+  /**
+   * 保存先（既存スキーマ互換のまま）
+   * - baseImageUrl：元画像（アップロード画像）
+   * - aiImageUrl：合成画像（動画に使用）を基本（※暫定運用）
+   * - compositeImageUrl：文字入り（PNG）
+   *
+   * 追加フィールドは“型としては持つ”が、今フェーズでは Firestore への保存必須にはしない
+   * - imageIdeaUrl：イメージ画像（世界観・雰囲気）
+   * - bgImageUrl：背景画像（合成・動画用）
+   */
+  baseImageUrl?: string; // 元画像（アップロード画像）※常にJPEGに正規化
+  aiImageUrl?: string; // 合成画像（動画に使用）※暫定的にここへ格納する運用
   compositeImageUrl?: string; // 文字入り（PNG）
   imageUrl?: string; // 代表（一覧互換）
 
-  imageSource: ImageSource;
+  imageIdeaUrl?: string; // イメージ画像（世界観・雰囲気）※合成/動画に使わない
+  bgImageUrl?: string; // 背景画像（合成・動画用）※単発で持てるならここ（未使用なら空のまま）
+
+  /**
+   * 旧：imageSource = "upload" | "ai" | "composite"
+   * 新：プレビューは「元画像/イメージ/合成」で切替える
+   * ※ Firestore schema を壊さないため、保存値は残す（UI側で previewMode と分離して扱う）
+   */
+  imageSource: "upload" | "ai" | "composite";
 
   overlayEnabled: boolean;
   overlayText: string;
@@ -102,6 +139,9 @@ const DEFAULT: DraftDoc = {
   aiImageUrl: undefined,
   compositeImageUrl: undefined,
   imageUrl: undefined,
+
+  imageIdeaUrl: undefined,
+  bgImageUrl: undefined,
 
   imageSource: "upload",
 
@@ -233,9 +273,15 @@ function Btn(props: {
   );
 }
 
-function SelectBtn(props: { selected: boolean; label: string; onClick: () => void; disabled?: boolean; title?: string }) {
+function SelectBtn(props: {
+  selected: boolean;
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  title?: string;
+}) {
   const selected = props.selected;
-  const textColor = selected ? "rgba(0,0,0,0.95)" : "rgba(255,255,255,0.95)";
+
 
   return (
     <button
@@ -243,18 +289,17 @@ function SelectBtn(props: { selected: boolean; label: string; onClick: () => voi
       title={props.title}
       onClick={props.onClick}
       disabled={props.disabled}
+      aria-pressed={selected}
       className={[
         "inline-flex items-center justify-center rounded-full px-4 py-2 font-black transition select-none whitespace-nowrap",
         "border",
         selected
-          ? "bg-white !text-black border-white shadow-[0_0_0_3px_rgba(255,255,255,0.18),0_18px_40px_rgba(0,0,0,0.65)]"
-          : "bg-transparent !text-white border-white/25 hover:bg-white/10 shadow-[0_10px_22px_rgba(0,0,0,0.35)]",
-        props.disabled ? "opacity-40 cursor-not-allowed" : "active:scale-[0.99]",
+          ? "bg-white !text-black border-white ring-2 ring-white/70 shadow-[0_0_0_3px_rgba(255,255,255,0.22),0_18px_44px_rgba(0,0,0,0.70)]"
+          : "bg-black/25 !text-white border-white/22 hover:bg-white/12 shadow-[0_10px_22px_rgba(0,0,0,0.35)]",
+        props.disabled ? "opacity-35 cursor-not-allowed" : "active:scale-[0.99]",
       ].join(" ")}
       style={{
         fontSize: UI.FONT.buttonPx,
-        color: textColor,
-        WebkitTextFillColor: textColor as any,
       }}
     >
       {props.label}
@@ -295,8 +340,14 @@ function RangeControl(props: {
   const size = UI.stepBtnSize;
 
   return (
-    <div className="rounded-2xl border border-white/14 bg-black/25" style={{ padding: UI.RANGE.boxPad }}>
-      <div className="flex items-center justify-between gap-2" style={{ marginBottom: UI.RANGE.headerMb }}>
+    <div
+      className="rounded-2xl border border-white/14 bg-black/25"
+      style={{ padding: UI.RANGE.boxPad }}
+    >
+      <div
+        className="flex items-center justify-between gap-2"
+        style={{ marginBottom: UI.RANGE.headerMb }}
+      >
         <div className="text-white/85 font-bold" style={{ fontSize: UI.FONT.labelPx }}>
           {props.label}
         </div>
@@ -306,7 +357,12 @@ function RangeControl(props: {
             type="button"
             onClick={() => bump(-props.step)}
             className="rounded-full border border-white/25 bg-white/12 hover:bg-white/18 transition"
-            style={{ width: size, height: size, fontWeight: 900, color: "rgba(255,255,255,0.95)" }}
+            style={{
+              width: size,
+              height: size,
+              fontWeight: 900,
+              color: "rgba(255,255,255,0.95)",
+            }}
             title="小さく"
           >
             −
@@ -327,7 +383,12 @@ function RangeControl(props: {
             type="button"
             onClick={() => bump(props.step)}
             className="rounded-full border border-white/25 bg-white/12 hover:bg-white/18 transition"
-            style={{ width: size, height: size, fontWeight: 900, color: "rgba(255,255,255,0.95)" }}
+            style={{
+              width: size,
+              height: size,
+              fontWeight: 900,
+              color: "rgba(255,255,255,0.95)",
+            }}
             title="大きく"
           >
             +
@@ -350,7 +411,10 @@ function RangeControl(props: {
 
 function PhotoSubmissionGuide() {
   return (
-    <details className="rounded-2xl border border-white/12 bg-black/25 mt-3" style={{ padding: UI.cardPadding }}>
+    <details
+      className="rounded-2xl border border-white/12 bg-black/25 mt-3"
+      style={{ padding: UI.cardPadding }}
+    >
       <summary
         className="cursor-pointer select-none"
         style={{
@@ -374,7 +438,10 @@ function PhotoSubmissionGuide() {
         提出する写真は、次の3つだけ守ってください。これで仕上がりが安定します。
       </div>
 
-      <ul className="list-disc list-inside mt-2 space-y-1" style={{ color: "rgba(255,255,255,0.88)", fontSize: 13 }}>
+      <ul
+        className="list-disc list-inside mt-2 space-y-1"
+        style={{ color: "rgba(255,255,255,0.88)", fontSize: 13 }}
+      >
         <li>背景は「白い壁 / 白い紙 / 単色の布」（柄・文字はNG）</li>
         <li>商品を画面の真ん中に大きく（小さいと形が崩れやすい）</li>
         <li>影を薄く（強い影は商品と誤認されやすい）</li>
@@ -383,7 +450,10 @@ function PhotoSubmissionGuide() {
       <div className="mt-3 text-white/70 font-bold" style={{ fontSize: UI.FONT.labelPx }}>
         NG例（失敗しやすい）
       </div>
-      <ul className="list-disc list-inside mt-1 space-y-1" style={{ color: "rgba(255,255,255,0.70)", fontSize: 13 }}>
+      <ul
+        className="list-disc list-inside mt-1 space-y-1"
+        style={{ color: "rgba(255,255,255,0.70)", fontSize: 13 }}
+      >
         <li>背景がごちゃごちゃ（部屋・棚・文字・柄）</li>
         <li>商品が小さい</li>
         <li>手で持ってる</li>
@@ -393,7 +463,10 @@ function PhotoSubmissionGuide() {
       <div className="mt-3 text-white/70 font-bold" style={{ fontSize: UI.FONT.labelPx }}>
         推奨
       </div>
-      <ul className="list-disc list-inside mt-1 space-y-1" style={{ color: "rgba(255,255,255,0.70)", fontSize: 13 }}>
+      <ul
+        className="list-disc list-inside mt-1 space-y-1"
+        style={{ color: "rgba(255,255,255,0.70)", fontSize: 13 }}
+      >
         <li>正面1枚 + 斜め1枚（合計2枚）</li>
         <li>明るい場所（昼間の窓際）</li>
         <li>iPhone/Androidの標準カメラでOK（加工しない）</li>
@@ -453,8 +526,8 @@ type PricingTable = {
 type ConfigResponseLike = any;
 
 const FALLBACK_PRICING: PricingTable = {
-  standard: { 5: 180, 10: 320 },
-  high: { 5: 420, 10: 780 },
+  standard: { 5: 180, 10: 360 },
+  high: { 5: 360, 10: 720 },
 };
 
 function normalizePricing(raw: ConfigResponseLike): PricingTable {
@@ -476,7 +549,6 @@ function normalizePricing(raw: ConfigResponseLike): PricingTable {
     },
   };
 }
-
 export default function NewDraftPage() {
   const router = useRouter();
   const sp = useSearchParams();
@@ -488,8 +560,20 @@ export default function NewDraftPage() {
 
   const [draftId, setDraftId] = useState<string | null>(id ?? null);
   const [d, setD] = useState<DraftDoc>({ ...DEFAULT });
+// ✅ プレビュー切替（保存用 imageSource とは別物）
+const [previewMode, setPreviewMode] = useState<PreviewMode>("base");
+// ✅ 右カラムの表示タブ
+type RightTab = "image" | "video";
+const [rightTab, setRightTab] = useState<RightTab>("image");
 
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+// ✅ 文字入り「一時プレビュー」用（保存はしない）
+const [overlayPreviewDataUrl, setOverlayPreviewDataUrl] = useState<string | null>(null);
+
+// ✅ 「押せない理由」表示（その場に1行）
+const [previewReason, setPreviewReason] = useState<string>("");
+
+// canvas
+const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const [videoPreviewUrl, setVideoPreviewUrl] = useState<string | null>(null);
   const [videoHistory, setVideoHistory] = useState<string[]>([]);
@@ -505,11 +589,31 @@ export default function NewDraftPage() {
   const [pricingError, setPricingError] = useState<string | null>(null);
   const [pricingUpdatedAt, setPricingUpdatedAt] = useState<number | null>(null);
 
+  // ===========================
+  // OWNER 表示制御（制作者だけに見せる）
+  // ===========================
+  // - NEXT_PUBLIC_OWNER_UID が一致する時だけ「OpenAI/Runway 表示」を出す
+  // - 制作者以外は見えない（価格は見せてもOKだが、ここは要件通り“どのAIか”を隠す）
+  const OWNER_UID = (process.env.NEXT_PUBLIC_OWNER_UID || "").trim();
+  const isOwner = !!uid && !!OWNER_UID && uid === OWNER_UID;
+
+  // ✅ C-2) プレビュー切替が押せない理由を判定（その場に1行表示する用）
+  function previewDisabledReason(mode: PreviewMode, d: DraftDoc): string {
+  if (mode === "base" && !d.baseImageUrl) return "先に元画像を保存してください";
+  if (mode === "idea" && !d.imageIdeaUrl) return "先にイメージ画像を生成してください";
+  if (mode === "composite" && !(d.compositeImageUrl || d.aiImageUrl))
+  return "先に合成画像を作成してください";
+  return "";
+}
+
   async function fetchPricing() {
     setPricingBusy(true);
     setPricingError(null);
     try {
-      const r = await fetch("/api/config", { method: "GET", headers: { "cache-control": "no-store" } });
+      const r = await fetch("/api/config", {
+        method: "GET",
+        headers: { "cache-control": "no-store" },
+      });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j?.error || "config error");
       setPricing(normalizePricing(j));
@@ -546,6 +650,47 @@ export default function NewDraftPage() {
   }, []);
 
   useEffect(() => {
+  let cancelled = false;
+
+  // ✅ プレビューで「文字入り」を見せたいのは base/composite のときだけ
+  if (previewMode === "idea") {
+    setOverlayPreviewDataUrl(null);
+    return;
+  }
+
+  // 文字が空、またはoverlay無効ならプレビューは不要
+  const text = (d.overlayText || "").trim();
+  if (!d.overlayEnabled || !text) {
+    setOverlayPreviewDataUrl(null);
+    return;
+  }
+
+  // 元画像（base）が無いと描けない（仕様：文字入りは必ず元画像）
+if (!d.baseImageUrl) {
+  setOverlayPreviewDataUrl(null);
+  return;
+}
+
+  // ✅ 打鍵のたびに重くならないよう、少し遅延
+  const t = setTimeout(async () => {
+    const out = await renderToCanvasAndGetDataUrlSilent();
+    if (!cancelled) setOverlayPreviewDataUrl(out);
+  }, 150);
+
+  return () => {
+    cancelled = true;
+    clearTimeout(t);
+  };
+}, [
+  previewMode,
+  d.overlayEnabled,
+  d.overlayText,
+  d.overlayFontScale,
+  d.overlayY,
+  d.overlayBgOpacity,
+]);
+
+  useEffect(() => {
     if (!uid) return;
 
     (async () => {
@@ -568,21 +713,39 @@ export default function NewDraftPage() {
         const data = snap.data() as any;
 
         const brand: Brand = data.brand === "riva" ? "riva" : "vento";
-        const phase: Phase = data.phase === "ready" ? "ready" : data.phase === "posted" ? "posted" : "draft";
+        const phase: Phase =
+          data.phase === "ready" ? "ready" : data.phase === "posted" ? "posted" : "draft";
 
         const vision = typeof data.vision === "string" ? data.vision : "";
         const keywordsText = typeof data.keywordsText === "string" ? data.keywordsText : "";
         const memo = typeof data.memo === "string" ? data.memo : "";
 
         const ig =
-          typeof data.ig === "string" ? data.ig : typeof data.caption_final === "string" ? data.caption_final : "";
+          typeof data.ig === "string"
+            ? data.ig
+            : typeof data.caption_final === "string"
+              ? data.caption_final
+              : "";
         const x = typeof data.x === "string" ? data.x : "";
         const ig3 = Array.isArray(data.ig3) ? data.ig3.map(String).slice(0, 3) : [];
 
-        const baseImageUrl = typeof data.baseImageUrl === "string" && data.baseImageUrl ? data.baseImageUrl : undefined;
-        const aiImageUrl = typeof data.aiImageUrl === "string" && data.aiImageUrl ? data.aiImageUrl : undefined;
+        const baseImageUrl =
+          typeof data.baseImageUrl === "string" && data.baseImageUrl ? data.baseImageUrl : undefined;
+        const aiImageUrl =
+          typeof data.aiImageUrl === "string" && data.aiImageUrl ? data.aiImageUrl : undefined;
         const compositeImageUrl =
-          typeof data.compositeImageUrl === "string" && data.compositeImageUrl ? data.compositeImageUrl : undefined;
+          typeof data.compositeImageUrl === "string" && data.compositeImageUrl
+            ? data.compositeImageUrl
+            : undefined;
+const imageIdeaUrl =
+  typeof data.imageIdeaUrl === "string" && data.imageIdeaUrl
+    ? data.imageIdeaUrl
+    : undefined;
+
+const bgImageUrlSingle =
+  typeof data.bgImageUrl === "string" && data.bgImageUrl
+    ? data.bgImageUrl
+    : undefined;
 
         const bgImageUrls: string[] = Array.isArray(data.bgImageUrls)
           ? data.bgImageUrls.filter((v: any) => typeof v === "string").slice(0, 10)
@@ -600,7 +763,8 @@ export default function NewDraftPage() {
         const overlayBgOpacity =
           typeof data.overlayBgOpacity === "number" ? clamp(data.overlayBgOpacity, 0, 0.85) : 0.45;
 
-        const videoUrl = typeof data.videoUrl === "string" && data.videoUrl ? data.videoUrl : undefined;
+        const videoUrl =
+          typeof data.videoUrl === "string" && data.videoUrl ? data.videoUrl : undefined;
         const videoSeconds: UiSeconds = data.videoSeconds === 10 || data.videoSeconds === "10" ? 10 : 5;
         const videoQuality: UiVideoQuality = data.videoQuality === "high" ? "high" : "standard";
 
@@ -625,7 +789,7 @@ export default function NewDraftPage() {
           return ok.includes(s as UiVideoSize) ? (s as UiVideoSize) : "1024x1792";
         })();
 
-        const imageSource: ImageSource =
+        const imageSource: DraftDoc["imageSource"] =
           data.imageSource === "ai" || data.imageSource === "composite" || data.imageSource === "upload"
             ? data.imageSource
             : compositeImageUrl
@@ -652,6 +816,8 @@ export default function NewDraftPage() {
           compositeImageUrl,
           imageUrl: typeof data.imageUrl === "string" ? data.imageUrl : undefined,
           imageSource,
+imageIdeaUrl,
+bgImageUrl: bgImageUrlSingle,
 
           bgImageUrls,
           videoUrls,
@@ -671,8 +837,16 @@ export default function NewDraftPage() {
           updatedAt: data.updatedAt,
           createdAt: data.createdAt,
         });
+        // ✅ 初期プレビュー：あるものを優先（迷い防止）
+if (compositeImageUrl || aiImageUrl) setPreviewMode("composite");
+else if (baseImageUrl) setPreviewMode("base");
+else if (imageIdeaUrl) setPreviewMode("idea");
 
-        if (bgImageUrls.length && !bgImageUrl) setBgImageUrl(bgImageUrls[0]);
+// ✅ 背景プレビュー復元：Firestore単発(bgImageUrl)を最優先 → 無ければ履歴1件目
+const initialBg = bgImageUrlSingle ?? (bgImageUrls.length ? bgImageUrls[0] : null);
+
+// ✅ 別下書きへ切替時に「前のstate」が残ると事故るので、必ず上書きする
+setBgImageUrl(initialBg);
         if (videoUrls.length && !videoPreviewUrl) setVideoPreviewUrl(videoUrls[0]);
       } finally {
         setLoadBusy(false);
@@ -685,6 +859,7 @@ export default function NewDraftPage() {
   const phaseLabel = d.phase === "draft" ? "下書き" : d.phase === "ready" ? "投稿待ち" : "投稿済み";
   const canGenerate = d.vision.trim().length > 0 && !busy;
 
+  
   const baseForEditUrl = useMemo(() => {
     if (d.imageSource === "ai") return d.aiImageUrl || d.baseImageUrl || "";
     if (d.imageSource === "upload") return d.baseImageUrl || d.aiImageUrl || "";
@@ -692,10 +867,23 @@ export default function NewDraftPage() {
   }, [d.imageSource, d.baseImageUrl, d.aiImageUrl]);
 
   const displayImageUrl = useMemo(() => {
-    if (d.imageSource === "composite") return d.compositeImageUrl || baseForEditUrl || "";
-    if (d.imageSource === "ai") return d.aiImageUrl || d.baseImageUrl || "";
-    return d.baseImageUrl || d.aiImageUrl || "";
-  }, [d.imageSource, d.baseImageUrl, d.aiImageUrl, d.compositeImageUrl, baseForEditUrl]);
+  // ✅ プレビューは previewMode で決める（保存互換の imageSource は見ない）
+if (previewMode === "composite") {
+  return (
+    overlayPreviewDataUrl ||
+    d.compositeImageUrl ||   // ← 文字入り保存（PNG）
+    d.aiImageUrl ||          // ← 背景合成（動画用）
+    d.baseImageUrl ||        // ← 最後の保険
+    ""
+  );
+}
+  if (previewMode === "idea") {
+    // イメージ＝世界観用（未実装なら空になる）
+    return d.imageIdeaUrl || "";
+  }
+  // base（元画像）
+  return d.baseImageUrl || "";
+}, [previewMode, overlayPreviewDataUrl, d.compositeImageUrl, d.aiImageUrl, d.baseImageUrl, d.imageIdeaUrl]);
 
   const displayVideoUrl = useMemo(() => {
     const u =
@@ -731,11 +919,15 @@ export default function NewDraftPage() {
       x: next.x,
       ig3: next.ig3,
 
-      baseImageUrl: next.baseImageUrl ?? null,
-      aiImageUrl: next.aiImageUrl ?? null,
-      compositeImageUrl: next.compositeImageUrl ?? null,
-      imageUrl: representativeUrl,
-      caption_final: next.ig,
+baseImageUrl: next.baseImageUrl ?? null,
+aiImageUrl: next.aiImageUrl ?? null,
+compositeImageUrl: next.compositeImageUrl ?? null,
+
+imageIdeaUrl: next.imageIdeaUrl ?? null,
+bgImageUrl: next.bgImageUrl ?? null,
+
+imageUrl: representativeUrl,
+caption_final: next.ig,
 
       imageSource: next.imageSource ?? "upload",
 
@@ -860,11 +1052,10 @@ export default function NewDraftPage() {
       const url = await uploadDataUrlToStorage(uid, ensuredDraftId, dataUrl);
 
       setD((prev) => ({
-        ...prev,
-        aiImageUrl: url,
-        imageSource: prev.imageSource === "upload" && prev.baseImageUrl ? "upload" : "ai",
-      }));
-      await saveDraft({ aiImageUrl: url, phase: "draft" });
+  ...prev,
+  imageIdeaUrl: url,
+}));
+await saveDraft({ imageIdeaUrl: url, phase: "draft" });
     } catch (e: any) {
       console.error(e);
       alert(`画像生成に失敗しました\n\n原因: ${e?.message || "不明"}`);
@@ -874,106 +1065,97 @@ export default function NewDraftPage() {
     }
   }
 
-  async function renderToCanvasAndGetDataUrl(): Promise<string | null> {
-    const canvas = canvasRef.current;
-    if (!canvas) return null;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return null;
+async function renderToCanvasAndGetDataUrlSilent(): Promise<string | null> {
+  const canvas = canvasRef.current;
+  if (!canvas) return null;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null;
 
-    const SIZE = 1024;
-    canvas.width = SIZE;
-    canvas.height = SIZE;
+  const SIZE = 1024;
+  canvas.width = SIZE;
+  canvas.height = SIZE;
 
-    ctx.clearRect(0, 0, SIZE, SIZE);
-    ctx.fillStyle = "#0b0f18";
-    ctx.fillRect(0, 0, SIZE, SIZE);
+  ctx.clearRect(0, 0, SIZE, SIZE);
+  ctx.fillStyle = "#0b0f18";
+  ctx.fillRect(0, 0, SIZE, SIZE);
 
-    const src = baseForEditUrl;
-    if (!src) {
-      alert("先に「画像をアップロード」または「AI画像生成」を行ってください（元画像がありません）");
-      return null;
-    }
+  // ✅ 仕様：文字入りは「必ず元画像(base)」に入れる
+const src = d.baseImageUrl || "";
+if (!src) return null;
 
-    const loaded = await loadImageAsObjectUrl(src);
-    if (!loaded) {
-      alert("画像の読み込みに失敗しました（CORS/キャッシュの可能性）。少し待って再試行してください。");
-      return null;
-    }
+  const loaded = await loadImageAsObjectUrl(src);
+  if (!loaded) return null;
 
-    try {
-      const img = new Image();
-      img.src = loaded.objectUrl;
+  try {
+    const img = new Image();
+    img.src = loaded.objectUrl;
 
-      const ok = await new Promise<boolean>((res) => {
-        img.onload = () => res(true);
-        img.onerror = () => res(false);
-      });
+    const ok = await new Promise<boolean>((res) => {
+      img.onload = () => res(true);
+      img.onerror = () => res(false);
+    });
+    if (!ok) return null;
 
-      if (!ok) {
-        alert("画像の読み込みに失敗しました（ブラウザ制限の可能性）。少し待って再試行してください。");
-        return null;
-      }
-
-      const iw = img.naturalWidth || SIZE;
-      const ih = img.naturalHeight || SIZE;
-      const scale = Math.min(SIZE / iw, SIZE / ih);
-      const w = iw * scale;
-      const h = ih * scale;
-      const x = (SIZE - w) / 2;
-      const y = (SIZE - h) / 2;
-      ctx.drawImage(img, x, y, w, h);
-    } finally {
-      loaded.revoke();
-    }
-
-    const overlayText = (d.overlayText || "").trim();
-    if (d.overlayEnabled && overlayText) {
-      const fontScale = clamp(d.overlayFontScale, 0.6, 1.6);
-      const fontPx = Math.round(UI.FONT.overlayCanvasBasePx * fontScale);
-
-      ctx.font = `900 ${fontPx}px system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif`;
-      ctx.textBaseline = "top";
-
-      const maxWidth = Math.floor(SIZE * 0.86);
-
-      const fixedLines: string[] = [];
-      let buf = "";
-      for (const ch of overlayText) {
-        const t = buf + ch;
-        if (ctx.measureText(t).width <= maxWidth) buf = t;
-        else {
-          if (buf) fixedLines.push(buf);
-          buf = ch;
-        }
-      }
-      if (buf) fixedLines.push(buf);
-
-      const lineH = Math.round(fontPx * 1.25);
-      const blockH = fixedLines.length * lineH;
-
-      const yPct = clamp(d.overlayY, 0, 100) / 100;
-      const topY = Math.round((SIZE - blockH) * yPct);
-
-      const pad = Math.round(SIZE * 0.035);
-      const bgAlpha = clamp(d.overlayBgOpacity, 0, 0.85);
-
-      ctx.fillStyle = `rgba(0,0,0,${bgAlpha})`;
-      const rectY = Math.max(0, topY - Math.round(pad * 0.6));
-      const rectH = Math.min(SIZE - rectY, blockH + Math.round(pad * 1.2));
-      ctx.fillRect(0, rectY, SIZE, rectH);
-
-      ctx.fillStyle = "rgba(255,255,255,0.95)";
-      for (let i = 0; i < fixedLines.length; i++) {
-        const ln = fixedLines[i];
-        const textW = ctx.measureText(ln).width;
-        const tx = Math.round((SIZE - textW) / 2);
-        const ty = topY + i * lineH;
-        ctx.fillText(ln, tx, ty);
-      }
-    }
-
-    return canvas.toDataURL("image/png");
+    const iw = img.naturalWidth || SIZE;
+    const ih = img.naturalHeight || SIZE;
+    const scale = Math.min(SIZE / iw, SIZE / ih);
+    const w = iw * scale;
+    const h = ih * scale;
+    const x = (SIZE - w) / 2;
+    const y = (SIZE - h) / 2;
+    ctx.drawImage(img, x, y, w, h);
+  } finally {
+    loaded.revoke();
   }
+
+  const overlayText = (d.overlayText || "").trim();
+  if (d.overlayEnabled && overlayText) {
+    const fontScale = clamp(d.overlayFontScale, 0.6, 1.6);
+    const fontPx = Math.round(UI.FONT.overlayCanvasBasePx * fontScale);
+
+    ctx.font = `900 ${fontPx}px system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif`;
+    ctx.textBaseline = "top";
+
+    const maxWidth = Math.floor(SIZE * 0.86);
+
+    const fixedLines: string[] = [];
+    let buf = "";
+    for (const ch of overlayText) {
+      const t = buf + ch;
+      if (ctx.measureText(t).width <= maxWidth) buf = t;
+      else {
+        if (buf) fixedLines.push(buf);
+        buf = ch;
+      }
+    }
+    if (buf) fixedLines.push(buf);
+
+    const lineH = Math.round(fontPx * 1.25);
+    const blockH = fixedLines.length * lineH;
+
+    const yPct = clamp(d.overlayY, 0, 100) / 100;
+    const topY = Math.round((SIZE - blockH) * yPct);
+
+    const pad = Math.round(SIZE * 0.035);
+    const bgAlpha = clamp(d.overlayBgOpacity, 0, 0.85);
+
+    ctx.fillStyle = `rgba(0,0,0,${bgAlpha})`;
+    const rectY = Math.max(0, topY - Math.round(pad * 0.6));
+    const rectH = Math.min(SIZE - rectY, blockH + Math.round(pad * 1.2));
+    ctx.fillRect(0, rectY, SIZE, rectH);
+
+    ctx.fillStyle = "rgba(255,255,255,0.95)";
+    for (let i = 0; i < fixedLines.length; i++) {
+      const ln = fixedLines[i];
+      const textW = ctx.measureText(ln).width;
+      const tx = Math.round((SIZE - textW) / 2);
+      const ty = topY + i * lineH;
+      ctx.fillText(ln, tx, ty);
+    }
+  }
+
+  return canvas.toDataURL("image/png");
+}
 
   async function saveCompositeAsImageUrl() {
     if (!uid) return;
@@ -986,7 +1168,7 @@ export default function NewDraftPage() {
       const ensuredDraftId = draftId ?? (await saveDraft());
       if (!ensuredDraftId) throw new Error("failed to create draft");
 
-      const out = await renderToCanvasAndGetDataUrl();
+      const out = await renderToCanvasAndGetDataUrlSilent();
       if (!out) return;
 
       const url = await uploadDataUrlToStorage(uid, ensuredDraftId, out);
@@ -1010,11 +1192,20 @@ export default function NewDraftPage() {
     if (next === "posted") router.replace("/flow/drafts");
   }
 
-  function applyIg3ToOverlayOnly(text: string) {
-    const t = (text ?? "").trim();
-    if (!t) return;
-    setD((p) => ({ ...p, overlayText: t }));
-  }
+async function applyIg3ToOverlayOnly(text: string) {
+  const t = (text ?? "").trim();
+  if (!t) return;
+
+  // ① テキストだけ更新
+  setD((p) => ({ ...p, overlayText: t }));
+
+  // ② プレビュー用に一時レンダリング（保存しない）
+  const dataUrl = await renderToCanvasAndGetDataUrlSilent();
+if (dataUrl) {
+  setOverlayPreviewDataUrl(dataUrl);
+  setPreviewMode("composite");
+}
+}
 
   const secondsKey: UiSeconds = (d.videoSeconds ?? 5) === 10 ? 10 : 5;
   const costStandard = pricing.standard[secondsKey];
@@ -1023,7 +1214,9 @@ export default function NewDraftPage() {
 
   const pricingMetaText = useMemo(() => {
     const t = pricingUpdatedAt ? new Date(pricingUpdatedAt) : null;
-    const hhmm = t ? `${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}` : "—";
+    const hhmm = t
+      ? `${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}`
+      : "—";
     return `更新 ${hhmm}${pricingBusy ? "（取得中）" : ""}${pricingError ? "（暫定）" : ""}`;
   }, [pricingUpdatedAt, pricingBusy, pricingError]);
 
@@ -1044,6 +1237,94 @@ export default function NewDraftPage() {
     { id: "1792x1024", label: "YouTube / Web 横（高画質）", sub: "サイト・LP・YouTube向け" },
     { id: "1280x720", label: "YouTube / Web 横（軽量）", sub: "試作・軽量" },
   ];
+
+  function ratioFromVideoSize(size: UiVideoSize): string {
+    // UIの動画サイズから、合成APIに渡す比率を決める（単純でOK）
+    // 縦：9:16 / 横：16:9
+    if (size === "1024x1792" || size === "720x1280") return "720:1280";
+    return "1280:720";
+  }
+
+  async function replaceBackgroundAndSaveToAiImage() {
+    if (!uid) return;
+
+    if (inFlightRef.current["replaceBg"]) return;
+    inFlightRef.current["replaceBg"] = true;
+
+    setBusy(true);
+    try {
+      // 下書きIDを確定
+      const ensuredDraftId = draftId ?? (await saveDraft());
+      if (!ensuredDraftId) throw new Error("failed to create draft");
+
+      // ✅ 前景（商品）＝「文字入り保存(composite)」があれば最優先
+// そうでなければ「元画像(base)」
+// ※ これで「合成画像(aiImageUrl)も文字入り」になる
+const fg = d.compositeImageUrl || d.baseImageUrl || "";
+
+if (!fg) {
+  alert("先に元画像を保存してください（合成の前景がありません）");
+  return;
+}
+
+// 文字入りを使いたいのにまだ無い場合は、迷わないように明示
+if (!d.compositeImageUrl && d.overlayEnabled && (d.overlayText || "").trim()) {
+  alert("文字を入れて合成したい場合は、先に「文字入り画像を保存」を押してください");
+  // ここで return するかは運用次第。確実に迷いゼロにするなら return 推奨。
+  return;
+}
+
+      // 背景：無ければ生成して使う
+      const bg = bgImageUrl ? bgImageUrl : await generateBackgroundImage(fg);
+
+      const ratio = ratioFromVideoSize(d.videoSize ?? "1024x1792");
+
+      const r = await fetch("/api/replace-background", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          foregroundImage: fg,
+          backgroundImage: bg,
+          ratio,
+          fit: "contain",
+        }),
+      });
+
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        throw new Error(j?.error || "replace-background error");
+      }
+
+      // 返り値の取り回し（mock/実装差を吸収）
+      // - imageUrl がURLならそれを保存
+      // - dataUrl / b64 が来ても保存できるようにする
+      let outUrl = "";
+
+      if (typeof j?.imageUrl === "string" && j.imageUrl.startsWith("http")) {
+        outUrl = j.imageUrl;
+      } else if (typeof j?.dataUrl === "string" && j.dataUrl.startsWith("data:image/")) {
+        outUrl = await uploadDataUrlToStorage(uid, ensuredDraftId, j.dataUrl);
+      } else if (typeof j?.b64 === "string" && j.b64) {
+        const dataUrl = `data:image/png;base64,${j.b64}`;
+        outUrl = await uploadDataUrlToStorage(uid, ensuredDraftId, dataUrl);
+      } else {
+        throw new Error("合成結果が取得できませんでした（imageUrl/dataUrl/b64が無い）");
+      }
+
+      // ✅ 保存先：今回は schema を増やさず aiImageUrl に保存する
+      // （= “合成結果をAI側の代表画像として扱う”）
+      setD((p) => ({ ...p, aiImageUrl: outUrl, imageSource: "ai" }));
+      await saveDraft({ aiImageUrl: outUrl, imageSource: "ai", phase: "draft" });
+
+      alert("切り抜き＋背景合成を保存しました（AI画像として扱います）");
+    } catch (e: any) {
+      console.error(e);
+      alert(`背景合成に失敗しました\n\n原因: ${e?.message || "不明"}`);
+    } finally {
+      setBusy(false);
+      inFlightRef.current["replaceBg"] = false;
+    }
+  }
 
   async function generateBackgroundImage(referenceImageUrl: string): Promise<string> {
     if (!uid) throw new Error("no uid");
@@ -1079,81 +1360,84 @@ export default function NewDraftPage() {
       const url = typeof j?.url === "string" ? j.url : "";
       if (!url) throw new Error("no bg url");
 
-      setBgImageUrl(url);
+setBgImageUrl(url);
 
-      const nextBgUrls = [url, ...d.bgImageUrls.filter((x) => x !== url)].slice(0, 10);
+const nextBgUrls = [url, ...d.bgImageUrls.filter((x) => x !== url)].slice(0, 10);
 
-      setD((prev) => ({ ...prev, bgImageUrls: nextBgUrls }));
+// ✅ d.bgImageUrl（単発）も更新しておく（ロード復元の主役）
+setD((prev) => ({ ...prev, bgImageUrl: url, bgImageUrls: nextBgUrls }));
 
-      const ensuredDraftId = draftId ?? (await saveDraft());
-      if (!ensuredDraftId) throw new Error("failed to create draft");
+const ensuredDraftId = draftId ?? (await saveDraft());
+if (!ensuredDraftId) throw new Error("failed to create draft");
 
-      await saveDraft({ bgImageUrls: nextBgUrls });
+// ✅ Firestoreへも「単発(bgImageUrl) + 履歴(bgImageUrls)」を両方保存
+await saveDraft({ bgImageUrl: url, bgImageUrls: nextBgUrls });
 
-      return url;
+return url;
     } finally {
       setBgBusy(false);
     }
   }
-async function syncVideosFromStorage() {
-  if (!uid) return;
 
-  const ensuredDraftId = draftId ?? (await saveDraft());
-  if (!ensuredDraftId) {
-    alert("下書きIDの確定に失敗しました");
-    return;
-  }
+  async function syncVideosFromStorage() {
+    if (!uid) return;
 
-  if (inFlightRef.current["syncVideos"]) return;
-  inFlightRef.current["syncVideos"] = true;
-
-  setBusy(true);
-  try {
-    // ✅ 下書き専用フォルダだけ見る
-    const videosRef = ref(storage, `users/${uid}/drafts/${ensuredDraftId}/videos`);
-    const listed = await listAll(videosRef);
-
-    const found: { url: string; t: number }[] = [];
-
-    for (const itemRef of listed.items) {
-      const name = itemRef.name.toLowerCase();
-      if (!name.endsWith(".mp4")) continue;
-
-      try {
-        const meta = await getMetadata(itemRef);
-        const t = meta?.timeCreated ? new Date(meta.timeCreated).getTime() : 0;
-        const url = await getDownloadURL(itemRef);
-        found.push({ url, t });
-      } catch {
-        // skip
-      }
-    }
-
-    if (found.length === 0) {
-      alert("この下書きの動画が見つかりませんでした（まだ生成が無い / 保存先不一致）");
+    const ensuredDraftId = draftId ?? (await saveDraft());
+    if (!ensuredDraftId) {
+      alert("下書きIDの確定に失敗しました");
       return;
     }
 
-    found.sort((a, b) => (b.t || 0) - (a.t || 0));
-    const foundUrls = found.map((x) => x.url).slice(0, 10);
+    if (inFlightRef.current["syncVideos"]) return;
+    inFlightRef.current["syncVideos"] = true;
 
-    // ✅ この下書きの Firestore にだけ保存
-    const refDoc = doc(db, "drafts", ensuredDraftId);
-    await updateDoc(refDoc, {
-      videoUrls: foundUrls,
-      updatedAt: serverTimestamp(),
-    });
+    setBusy(true);
+    try {
+      // ✅ 下書き専用フォルダだけ見る
+      const videosRef = ref(storage, `users/${uid}/drafts/${ensuredDraftId}/videos`);
+      const listed = await listAll(videosRef);
 
-    setD((prev) => ({ ...prev, videoUrls: foundUrls }));
-    alert(`同期しました：${foundUrls.length}件（この下書きのみ）`);
-  } catch (e: any) {
-    console.error(e);
-    alert(`同期に失敗しました\n\n原因: ${e?.message || "不明"}`);
-  } finally {
-    setBusy(false);
-    inFlightRef.current["syncVideos"] = false;
+      const found: { url: string; t: number }[] = [];
+
+      for (const itemRef of listed.items) {
+        const name = itemRef.name.toLowerCase();
+        if (!name.endsWith(".mp4")) continue;
+
+        try {
+          const meta = await getMetadata(itemRef);
+          const t = meta?.timeCreated ? new Date(meta.timeCreated).getTime() : 0;
+          const url = await getDownloadURL(itemRef);
+          found.push({ url, t });
+        } catch {
+          // skip
+        }
+      }
+
+      if (found.length === 0) {
+        alert("この下書きの動画が見つかりませんでした（まだ生成が無い / 保存先不一致）");
+        return;
+      }
+
+      found.sort((a, b) => (b.t || 0) - (a.t || 0));
+      const foundUrls = found.map((x) => x.url).slice(0, 10);
+
+      // ✅ この下書きの Firestore にだけ保存
+      const refDoc = doc(db, "drafts", ensuredDraftId);
+      await updateDoc(refDoc, {
+        videoUrls: foundUrls,
+        updatedAt: serverTimestamp(),
+      });
+
+      setD((prev) => ({ ...prev, videoUrls: foundUrls }));
+      alert(`同期しました：${foundUrls.length}件（この下書きのみ）`);
+    } catch (e: any) {
+      console.error(e);
+      alert(`同期に失敗しました\n\n原因: ${e?.message || "不明"}`);
+    } finally {
+      setBusy(false);
+      inFlightRef.current["syncVideos"] = false;
+    }
   }
-}
 
   async function generateVideo() {
     if (!uid) return;
@@ -1171,9 +1455,15 @@ async function syncVideosFromStorage() {
       const ensuredDraftId = draftId ?? (await saveDraft());
       if (!ensuredDraftId) throw new Error("failed to create draft");
 
-      const reference = d.compositeImageUrl || d.baseImageUrl || d.aiImageUrl || "";
+      // ✅ 参照画像の優先順位：
+      // 1) 文字入り(composite) があれば最優先（意図通り）
+      // 2) 次に aiImageUrl（= 「切り抜き＋背景合成」の保存先）
+      // 3) 最後に baseImageUrl（アップロード画像）
+      const reference = d.compositeImageUrl || d.aiImageUrl || d.baseImageUrl || "";
       if (!reference) {
-        alert("先に「画像をアップロード」または「AI画像生成」または「文字入り画像を保存」を行ってください（参照画像がありません）");
+        alert(
+          "先に「画像をアップロード」または「AI画像生成」または「文字入り画像を保存」を行ってください（参照画像がありません）"
+        );
         return;
       }
 
@@ -1197,75 +1487,24 @@ async function syncVideosFromStorage() {
         bgImageUrl: ensuredBgUrl,
       };
 
-      // ✅ UIで選んだ templateId を「送信直前」に確定（これが100%届く）
-      const templateIdToSend = String(d.videoTemplate ?? "slowZoomFade").trim();
-      const secondsToSend = (d.videoSeconds ?? 5) === 10 ? 10 : 5;
-      const qualityToSend = (d.videoQuality ?? "standard") === "high" ? "high" : "standard";
-      const sizeToSend = String(d.videoSize ?? "1024x1792");
-
-      // ✅ 最終ログ（“UIが何を送ったか”の証拠）
-      console.log("[UI] /api/generate-video SEND =>", {
-        draftId: ensuredDraftId,
-        templateId: templateIdToSend,
-        seconds: secondsToSend,
-        quality: qualityToSend,
-        size: sizeToSend,
+      const r = await fetch("/api/generate-video", {
+        method: "POST",
+        headers: { "content-type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify(body),
       });
 
-      // ✅ Abort（固まった時に終わらせる）
-      const controller = new AbortController();
-      const timeoutMs = 120_000; // 2分
-      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      const j = await r.json().catch(() => ({}));
 
-      let r: Response;
-      try {
-        r = await fetch("/api/generate-video", {
-          method: "POST",
-          headers: { "content-type": "application/json", Authorization: `Bearer ${token}` },
-          signal: controller.signal,
-          body: JSON.stringify({
-            // ★サーバが使う必須群（あなたのroute.tsに合わせる）
-            draftId: ensuredDraftId,
-            bgImageUrl: ensuredBgUrl,
-            referenceImageUrl: reference,
-            prompt: vision,
-
-            // ★本題：templateId を必ず送る（body変数の古い値に依存しない）
-            templateId: templateIdToSend,
-            seconds: secondsToSend,
-            quality: qualityToSend,
-            size: sizeToSend,
-          }),
-        });
-      } finally {
-        clearTimeout(timer);
-      }
-
-      // ✅ 202(running) は失敗扱いしない（課金事故防止）
-      if (r.status === 202) {
-        const j = await r.json().catch(() => ({} as any));
-        console.log("[UI] /api/generate-video RUNNING =>", j);
-
-        alert("すでに生成中です（同条件の再実行はしません）。少し待ってから、もう一度ページを開いて確認してください。");
+      if (r.status === 202 || j?.running) {
+        alert(
+          "すでに生成中です（同条件の再実行はしません）。少し待ってから、もう一度ページを開いて確認してください。"
+        );
         return;
       }
 
-      // ✅ JSON取り出し（200/400/500でも読む）
-      const j = await r.json().catch(() => ({} as any));
+      if (!r.ok) throw new Error(j?.error || "video error");
 
-      // ✅ サーバが実際に使った templateId をログで確定（ズレ検出）
-      console.log("[UI] /api/generate-video RESP =>", {
-        httpStatus: r.status,
-        usedTemplateId: j?.usedTemplateId,
-        idemKey: j?.idemKey,
-      });
-
-      if (!r.ok) {
-        throw new Error(j?.error || "video error");
-      }
-
-      // ✅ あなたのサーバ完成形は videoUrl を返す
-      const url = typeof j?.videoUrl === "string" ? j.videoUrl : "";
+      const url = typeof j?.url === "string" ? j.url : "";
       if (!url) throw new Error("no video url");
 
       setVideoPreviewUrl(url);
@@ -1352,6 +1591,17 @@ async function syncVideosFromStorage() {
   return (
     <>
       <style jsx>{`
+      .imgPair{
+  display: grid;
+  grid-template-columns: 1fr; /* ✅ スマホは縦 */
+  gap: 8px;
+}
+
+@media (min-width: 900px){
+  .imgPair{
+    grid-template-columns: 1fr 1fr; /* ✅ PCは横 */
+  }
+}
         .pageWrap {
           min-height: 100vh;
           width: 100%;
@@ -1363,25 +1613,27 @@ async function syncVideosFromStorage() {
         .rightCol {
           width: 100%;
         }
-        @media (min-width: 1024px) {
-          .pageWrap {
-            flex-direction: row;
-            align-items: flex-start;
-          }
-          .leftCol {
-            width: 56%;
-          }
-          .rightCol {
-            width: 44%;
-            position: sticky;
-            top: ${UI.rightStickyTopPx}px;
-            height: calc(100vh - ${UI.rightStickyTopPx}px);
-          }
-          .rightScroll {
-            height: 100%;
-            overflow: auto;
-          }
-        }
+// 置換：@media (min-width: 1024px) { ... } を丸ごとこれに
+@media (min-width: 900px) {
+  .pageWrap {
+    flex-direction: row;
+    align-items: flex-start;
+    flex-wrap: nowrap; /* ✅ 横並び固定 */
+  }
+  .leftCol {
+    width: 56%;
+  }
+  .rightCol {
+    width: 44%;
+    position: sticky;
+    top: ${UI.rightStickyTopPx}px;
+    height: calc(100vh - ${UI.rightStickyTopPx}px);
+  }
+  .rightScroll {
+    height: 100%;
+    overflow: auto;
+  }
+}
         details > summary::-webkit-details-marker {
           display: none;
         }
@@ -1398,16 +1650,25 @@ async function syncVideosFromStorage() {
             ) : null}
           </div>
 
-          <div className="rounded-2xl border border-white/12 bg-black/25" style={{ padding: UI.cardPadding }}>
+          <div
+            className="rounded-2xl border border-white/12 bg-black/25"
+            style={{ padding: UI.cardPadding }}
+          >
             <div className="text-white/80 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
               Brand
             </div>
 
             <div className="flex items-center gap-2 flex-wrap">
-              <Btn variant={d.brand === "vento" ? "primary" : "secondary"} onClick={() => setD((p) => ({ ...p, brand: "vento" }))}>
+              <Btn
+                variant={d.brand === "vento" ? "primary" : "secondary"}
+                onClick={() => setD((p) => ({ ...p, brand: "vento" }))}
+              >
                 VENTO
               </Btn>
-              <Btn variant={d.brand === "riva" ? "primary" : "secondary"} onClick={() => setD((p) => ({ ...p, brand: "riva" }))}>
+              <Btn
+                variant={d.brand === "riva" ? "primary" : "secondary"}
+                onClick={() => setD((p) => ({ ...p, brand: "riva" }))}
+              >
                 RIVA
               </Btn>
               <Chip>
@@ -1415,31 +1676,47 @@ async function syncVideosFromStorage() {
               </Chip>
             </div>
 
-            <div className="text-white/80 mt-4 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
-              画像（アップロード / AI生成 / 文字入り）
-            </div>
+<div className="text-white/80 mt-4 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
+  プレビュー切替
+</div>
 
-            <div className="flex items-center gap-2 flex-wrap">
-              <SelectBtn
-                selected={d.imageSource === "upload"}
-                label={`表示: UPLOAD（base）${d.baseImageUrl ? " ✓" : ""}`}
-                onClick={() => setD((p) => ({ ...p, imageSource: "upload" }))}
-                disabled={busy}
-              />
-              <SelectBtn
-                selected={d.imageSource === "ai"}
-                label={`表示: AI${d.aiImageUrl ? " ✓" : ""}`}
-                onClick={() => setD((p) => ({ ...p, imageSource: "ai" }))}
-                disabled={busy}
-              />
-              <SelectBtn
-                selected={d.imageSource === "composite"}
-                label={`表示: COMPOSITE${d.compositeImageUrl ? " ✓" : ""}`}
-                onClick={() => setD((p) => ({ ...p, imageSource: "composite" }))}
-                disabled={busy || !d.compositeImageUrl}
-                title={!d.compositeImageUrl ? "まだ文字入り画像がありません" : ""}
-              />
-            </div>
+<div className="flex items-center gap-2 flex-wrap">
+  {(
+    [
+      { mode: "base" as const, label: `プレビュー：元画像${d.baseImageUrl ? " ✓" : ""}` },
+      { mode: "idea" as const, label: `プレビュー：イメージ${d.imageIdeaUrl ? " ✓" : ""}` },
+      { mode: "composite" as const, label: `プレビュー：合成（動画用）${d.aiImageUrl ? " ✓" : ""}` },
+    ] as const
+  ).map(({ mode, label }) => {
+    const reason = previewDisabledReason(mode, d);
+    const disabled = !!reason || busy;
+
+    return (
+      <SelectBtn
+        key={mode}
+        selected={previewMode === mode}
+        label={label}
+        disabled={disabled}
+        onClick={() => {
+          if (disabled) {
+            // ✅ その場に理由を出す（モーダル/トースト禁止）
+            setPreviewReason(reason || "処理中です");
+            return;
+          }
+          setPreviewReason("");
+          setPreviewMode(mode);
+        }}
+        title="" // title は使わない（仕様違反になりやすい）
+      />
+    );
+  })}
+</div>
+
+{previewReason ? (
+  <div className="mt-2 text-white/70 font-bold" style={{ fontSize: UI.FONT.labelPx }}>
+    {previewReason}
+  </div>
+) : null}
 
             <div className="mt-3 flex flex-wrap gap-2 items-center">
               <label className="inline-flex items-center gap-2">
@@ -1456,16 +1733,27 @@ async function syncVideosFromStorage() {
                 />
               </label>
 
-              <Btn variant="secondary" disabled={!canGenerate} onClick={generateAiImage} title="AI画像は base を上書きしません（aiImageUrlへ保存）">
-                AI画像を生成（正方形）
+              <Btn
+                variant="secondary"
+                disabled={!canGenerate}
+                onClick={generateAiImage}
+                title="AI画像は base を上書きしません（aiImageUrlへ保存）"
+              >
+                イメージ画像を生成（世界観・雰囲気）
+                
               </Btn>
-
+<div className="text-white/55 mt-2" style={{ fontSize: UI.FONT.labelPx, lineHeight: 1.5 }}>
+  ※ イメージ画像は、合成や動画の素材には使用されません。
+</div>
               <Btn variant="ghost" disabled={!uid || busy} onClick={() => saveDraft()}>
                 保存
               </Btn>
             </div>
 
-            <div className="text-white/55 mt-2" style={{ fontSize: UI.FONT.labelPx, lineHeight: 1.5 }}>
+            <div
+              className="text-white/55 mt-2"
+              style={{ fontSize: UI.FONT.labelPx, lineHeight: 1.5 }}
+            >
               ※ アップロード画像は内部でJPEGに変換して保存します。
               <br />
               ※ AI画像は aiImageUrl に保存され、アップロード画像（base）は上書きされません。
@@ -1502,619 +1790,485 @@ async function syncVideosFromStorage() {
             </div>
           </div>
 
-          <div className="rounded-2xl border border-white/12 bg-black/25" style={{ padding: UI.cardPadding }}>
-            <div className="flex items-center justify-between gap-2">
-              <div className="text-white/80" style={{ fontSize: UI.FONT.labelPx }}>
-                Instagram本文（メイン）
-              </div>
-              <Btn variant="secondary" className="px-3 py-1" onClick={() => navigator.clipboard.writeText(d.ig)}>
-                コピー
-              </Btn>
+          <div
+            className="rounded-2xl border border-white/12 bg-black/25"
+            style={{ padding: UI.cardPadding }}
+          >
+            <div className="text-white/80 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
+              Instagram 本文（編集可）
             </div>
             <textarea
               value={d.ig}
               onChange={(e) => setD((p) => ({ ...p, ig: e.target.value }))}
-              className="mt-2 w-full rounded-xl border p-3 outline-none"
+              className="w-full rounded-xl border p-3 outline-none"
               style={{ ...formStyle, minHeight: UI.hIG }}
+              placeholder="IG本文"
             />
-          </div>
 
-          <div className="rounded-2xl border border-white/12 bg-black/25" style={{ padding: UI.cardPadding }}>
-            <div className="flex items-center justify-between">
-              <div className="text-white/80" style={{ fontSize: UI.FONT.labelPx }}>
-                X本文
-              </div>
-              <Btn variant="secondary" className="px-3 py-1" onClick={() => navigator.clipboard.writeText(d.x)}>
-                コピー
-              </Btn>
+            <div className="text-white/80 mt-4 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
+              X 投稿文（編集可）
             </div>
             <textarea
               value={d.x}
               onChange={(e) => setD((p) => ({ ...p, x: e.target.value }))}
-              className="mt-2 w-full rounded-xl border p-3 outline-none"
-              style={{ ...formStyle, minHeight: UI.hX }}
-            />
-          </div>
-
-          <div className="rounded-2xl border border-white/12 bg-black/25" style={{ padding: UI.cardPadding }}>
-            <div className="text-white/80 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
-              メモ（任意）
-            </div>
-            <textarea
-              value={d.memo}
-              onChange={(e) => setD((p) => ({ ...p, memo: e.target.value }))}
               className="w-full rounded-xl border p-3 outline-none"
-              style={{ ...formStyle, minHeight: UI.hMemo }}
+              style={{ ...formStyle, minHeight: UI.hX }}
+              placeholder="X投稿文"
             />
-            <div className="mt-3 flex gap-2 flex-wrap">
-              <Btn variant="primary" disabled={!uid || busy} onClick={() => setPhase("ready")}>
-                投稿待ちにする
-              </Btn>
-              <Btn variant="secondary" disabled={!uid || busy} onClick={() => setPhase("posted")}>
-                投稿済みにする
-              </Btn>
-            </div>
-          </div>
 
-          <div className="rounded-2xl border border-white/12 bg-black/20" style={{ padding: UI.cardPadding }}>
-            <div className="text-white/70 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
-              補助：Instagram 3案（※本文は絶対に上書きしない）
+            <div className="text-white/80 mt-4 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
+              IG短文候補（ig3）※本文は上書きしない
             </div>
 
-            {d.ig3.length === 0 ? (
-              <div className="text-white/45" style={{ fontSize: UI.FONT.inputPx }}>
-                （まだありません）
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {d.ig3.map((t, i) => (
-                  <div
-                    key={i}
-                    className="w-full rounded-xl border p-3"
-                    style={{
-                      background: "rgba(0,0,0,0.35)",
-                      borderColor: "rgba(255,255,255,0.18)",
-                      color: UI.FORM.text,
-                    }}
-                  >
-                    <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
-                      <div className="text-white/55" style={{ fontSize: UI.FONT.labelPx }}>
-                        案 {i + 1}
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Btn variant="secondary" className="px-3 py-1" onClick={() => applyIg3ToOverlayOnly(t)}>
-                          文字に適用
-                        </Btn>
-                        <Btn variant="ghost" className="px-3 py-1" onClick={() => navigator.clipboard.writeText(t)}>
-                          コピー
-                        </Btn>
-                      </div>
-                    </div>
-
-                    <div style={{ fontSize: UI.FONT.inputPx, lineHeight: UI.FONT.inputLineHeight as any, whiteSpace: "pre-wrap" }}>
-                      {t}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div className="rounded-2xl border border-white/12 bg-black/25" style={{ padding: UI.cardPadding }}>
-            <div className="flex items-center justify-between gap-2 flex-wrap">
-              <div className="text-white/90 font-black" style={{ fontSize: UI.FONT.inputPx }}>
-                動画生成
-              </div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <Chip className="text-white/95">参照画像：{d.compositeImageUrl || d.baseImageUrl || d.aiImageUrl ? "あり" : "なし"}</Chip>
-                <Chip className="text-white/95">背景：{bgImageUrl ? "準備OK" : "未作成"}</Chip>
-
-                <Btn
-                  variant="secondary"
-                  className="px-3 py-1"
-                  disabled={!uid || busy || bgBusy || !d.vision.trim()}
-                  onClick={async () => {
-                    const reference = d.compositeImageUrl || d.baseImageUrl || d.aiImageUrl || "";
-                    if (!reference) {
-                      alert("先に参照画像（UPLOAD/AI/文字入り）を用意してください。");
-                      return;
-                    }
-                    try {
-                      await generateBackgroundImage(reference);
-                      alert("背景を作成しました（動画生成で使用されます）");
-                    } catch (e: any) {
-                      alert(`背景作成に失敗しました\n\n原因: ${e?.message || "不明"}`);
-                    }
-                  }}
-                  title="背景を先に作ってから動画生成します（課金事故防止）"
-                >
-                  背景を作る
-                </Btn>
-
-                <Chip className="text-white/95">{pricingMetaText}</Chip>
-              </div>
-            </div>
-
-            <div className="mt-4">
-              <div className="text-white/80 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
-                秒数（5 / 10）
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <SelectBtn selected={(d.videoSeconds ?? 5) === 5} label="5" onClick={() => setD((p) => ({ ...p, videoSeconds: 5 }))} disabled={!uid || busy} />
-                <SelectBtn selected={(d.videoSeconds ?? 5) === 10} label="10" onClick={() => setD((p) => ({ ...p, videoSeconds: 10 }))} disabled={!uid || busy} />
-              </div>
-            </div>
-
-            <div className="mt-4">
-              <div className="text-white/80 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
-                品質（画質で選ぶ）
-              </div>
-
-              <div className="flex flex-wrap gap-2">
-                <SelectBtn
-                  selected={(d.videoQuality ?? "standard") === "standard"}
-                  label="確実（標準）【おすすめ】"
-                  onClick={() => setD((p) => ({ ...p, videoQuality: "standard" }))}
-                  disabled={!uid || busy}
-                  title="雰囲気・世界観重視。通常表示向け。"
-                />
-                <SelectBtn
-                  selected={(d.videoQuality ?? "standard") === "high"}
-                  label="確実＋高精細"
-                  onClick={() => setD((p) => ({ ...p, videoQuality: "high" }))}
-                  disabled={!uid || busy}
-                  title="商品用途・拡大表示向け。"
-                />
-              </div>
-
-              <div className="text-white/55 mt-2" style={{ fontSize: UI.FONT.labelPx, lineHeight: 1.55 }}>
-                委託・納品どちらも対応しています。商品用途の場合は高精細をおすすめします。
-              </div>
-            </div>
-
-            <div className="mt-4">
-              <div className="text-white/80 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
-                テンプレ（全部表示）
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {templateItems.map((t) => (
-                  <SelectBtn
-                    key={t.id}
-                    selected={(d.videoTemplate ?? "slowZoomFade") === t.id}
-                    label={t.label}
-                    onClick={() => setD((p) => ({ ...p, videoTemplate: t.id }))}
-                    disabled={!uid || busy}
-                  />
-                ))}
-              </div>
-
-              <div className="mt-3 rounded-2xl border border-white/12 bg-black/20" style={{ padding: UI.cardPadding }}>
-                <div className="flex items-center justify-between gap-2 flex-wrap">
-                  <div className="text-white/80 font-black" style={{ fontSize: UI.FONT.labelPx }}>
-                    🤖 AIおすすめ（表示のみ・自動選択はしない）
-                  </div>
-                  <Chip className="text-white/95">判断補助コメント</Chip>
-                </div>
-
-                <div className="text-white/90 mt-2" style={{ fontSize: UI.FONT.inputPx, fontWeight: 900 }}>
-                  おすすめ：ゆっくりズーム＋フェード
-                </div>
-                <div className="text-white/70 mt-2" style={{ fontSize: UI.FONT.labelPx, lineHeight: 1.65 }}>
-                  理由：
-                </div>
-                <ul className="list-disc list-inside mt-1 space-y-1" style={{ color: "rgba(255,255,255,0.75)", fontSize: 13 }}>
-                  <li>商品の視認性を保ちやすい</li>
-                  <li>破綻が起きにくい</li>
-                  <li>SNS・商品用途どちらでも使える</li>
-                </ul>
-
-                <div className="text-white/55 mt-2" style={{ fontSize: UI.FONT.labelPx, lineHeight: 1.55 }}>
-                  ※ ボタン選択はユーザー（AIはコメントのみ）
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-4">
-              <div className="text-white/80 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
-                サイズ（用途別）
-              </div>
-              <div className="grid gap-2">
-                {sizePresets.map((p) => (
-                  <div key={p.id} className="flex flex-wrap items-center gap-2">
-                    <SelectBtn selected={(d.videoSize ?? "1024x1792") === p.id} label={p.label} onClick={() => setD((x) => ({ ...x, videoSize: p.id }))} disabled={!uid || busy} />
-                    <div className="text-white/55" style={{ fontSize: UI.FONT.labelPx }}>
-                      {p.id} / {p.sub}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="mt-4">
-              <div className="flex items-center justify-between gap-2 flex-wrap">
-                <div className="text-white/80" style={{ fontSize: UI.FONT.labelPx }}>
-                  実コスト目安（円）
-                </div>
-                <Btn variant="ghost" className="px-3 py-1" disabled={pricingBusy} onClick={fetchPricing} title="/api/config を再取得">
-                  更新
-                </Btn>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2 mt-2">
-                <Chip className="text-white/95">標準：{yen(costStandard)} / 本</Chip>
-                <Chip className="text-white/95">高精細：{yen(costHigh)} / 本</Chip>
-                <Chip className="text-white/95">選択中：{yen(shownCost)} / 本</Chip>
-              </div>
-
-              {pricingError ? (
-                <div className="text-white/55 mt-2" style={{ fontSize: UI.FONT.labelPx, lineHeight: 1.5 }}>
-                  ※ {pricingError}（表示は継続。/api/config が直れば自動で追従）
-                </div>
-              ) : (
-                <div className="text-white/55 mt-2" style={{ fontSize: UI.FONT.labelPx, lineHeight: 1.5 }}>
-                  ※ 表示は /api/config の設定値に追従します（60秒おき＋タブ復帰時に自動更新）。
-                </div>
-              )}
-            </div>
-
-            <div className="mt-4 flex flex-wrap gap-2">
-              <Btn variant="primary" disabled={!uid || busy || !d.vision.trim()} onClick={generateVideo}>
-                動画を生成して保存
-              </Btn>
-              <Btn variant="ghost" disabled={!uid || busy} onClick={() => saveDraft()}>
-                設定を保存
-              </Btn>
-            </div>
-
-            <div className="text-white/55 mt-2" style={{ fontSize: UI.FONT.labelPx }}>
-              ※ 参照画像が無い場合は生成を止めます。
-            </div>
-          </div>
-        </section>
-
-        <section className="rightCol min-h-0 flex flex-col gap-4">
-          <div className="rightScroll min-h-0" style={{ paddingBottom: 8 }}>
-            <div className="rounded-2xl border border-white/12 bg-black/25" style={{ padding: UI.cardPadding }}>
-              <div className="rounded-2xl border border-white/12 bg-black/30 p-3">
-                <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
-                  <Chip className="text-white/95">表示ソース：{d.imageSource.toUpperCase()}</Chip>
-                </div>
-
+            <div className="grid grid-cols-1 gap-2">
+              {(d.ig3 ?? []).length === 0 ? (
                 <div
-                  className="mx-auto"
-                  style={{
-                    width: "100%",
-                    maxWidth: UI.previewMaxWidth,
-                    aspectRatio: "1 / 1",
-                    borderRadius: UI.previewRadius,
-                    overflow: "hidden",
-                    position: "relative",
-                    background: "rgba(255,255,255,0.04)",
-                    border: "1px solid rgba(255,255,255,0.10)",
-                  }}
+                  className="rounded-xl border border-white/10 bg-black/20 p-3 text-white/55"
+                  style={{ fontSize: 13 }}
                 >
-                  {displayImageUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={displayImageUrl} alt="preview" draggable={false} style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }} />
-                  ) : (
-                    <div className="h-full w-full grid place-items-center text-sm text-white/55">NO IMAGE</div>
-                  )}
-
-                  {d.overlayEnabled && previewOverlayText ? (
-                    <div
-                      style={{
-                        position: "absolute",
-                        left: 0,
-                        right: 0,
-                        top: `${clamp(d.overlayY, 0, 100)}%`,
-                        transform: "translateY(-50%)",
-                        padding: "14px 14px",
-                        background: `rgba(0,0,0,${clamp(d.overlayBgOpacity, 0, 0.85)})`,
-                      }}
-                    >
-                      <div
-                        style={{
-                          textAlign: "center",
-                          fontWeight: 900,
-                          lineHeight: 1.35,
-                          fontSize: `${Math.round(UI.FONT.overlayPreviewBasePx * clamp(d.overlayFontScale, 0.6, 1.6))}px`,
-                          color: "rgba(255,255,255,0.95)",
-                          textShadow: "0 2px 10px rgba(0,0,0,0.45)",
-                          whiteSpace: "pre-wrap",
-                        }}
-                      >
-                        {previewOverlayText}
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
-
-                {bgImageUrl ? (
-                  <div className="mt-3 rounded-2xl border border-white/12 bg-black/25" style={{ padding: UI.cardPadding }}>
-                    <div className="flex items-center justify-between gap-2 flex-wrap">
-                      <div className="text-white/90 font-black" style={{ fontSize: UI.FONT.inputPx }}>
-                        背景プレビュー（動画用）
-                      </div>
-                      <Btn
-                        variant="ghost"
-                        className="px-3 py-1"
-                        disabled={busy}
-                        onClick={() => {
-                          setBgImageUrl(null);
-                          alert("背景プレビューを解除しました（保存データは消えません）");
-                        }}
-                      >
-                        解除
-                      </Btn>
-                    </div>
-
-                    <div className="mt-2">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={bgImageUrl}
-                        alt="bg preview"
-                        draggable={false}
-                        style={{
-                          width: "100%",
-                          maxWidth: UI.previewMaxWidth,
-                          borderRadius: UI.previewRadius,
-                          border: "1px solid rgba(255,255,255,0.10)",
-                          background: "rgba(255,255,255,0.04)",
-                          display: "block",
-                          margin: "0 auto",
-                        }}
-                      />
-                    </div>
-
-                    <div className="text-white/55 mt-2" style={{ fontSize: UI.FONT.labelPx, lineHeight: 1.5 }}>
-                      ※ この背景は動画生成で使用されます（動画自体は別ボタンで生成されます）
-                    </div>
-                  </div>
-                ) : null}
-
-                <div className="mt-4 grid gap-3">
-                  <div className="flex items-center justify-between gap-2 flex-wrap">
-                    <Chip className="text-white/95">文字表示</Chip>
-                    <Btn variant="secondary" onClick={() => setD((p) => ({ ...p, overlayEnabled: !p.overlayEnabled }))}>
-                      {d.overlayEnabled ? "ON" : "OFF"}
-                    </Btn>
-                  </div>
-
-                  <div className="rounded-2xl border border-white/12 bg-black/25" style={{ padding: UI.cardPadding }}>
-                    <div className="text-white/80 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
-                      載せる文字（※本文とは別）
-                    </div>
-                    <textarea
-                      value={d.overlayText}
-                      onChange={(e) => setD((p) => ({ ...p, overlayText: e.target.value }))}
-                      className="w-full rounded-xl border p-3 outline-none"
-                      style={{ ...formStyle, minHeight: UI.hOverlayText }}
-                    />
-                  </div>
-
-                  <RangeControl label="文字サイズ" value={d.overlayFontScale} min={0.6} max={1.6} step={0.05} format={(v) => v.toFixed(2)} onChange={(v) => setD((p) => ({ ...p, overlayFontScale: v }))} />
-                  <RangeControl label="位置（上下）" value={d.overlayY} min={0} max={100} step={1} format={(v) => String(Math.round(v))} onChange={(v) => setD((p) => ({ ...p, overlayY: v }))} />
-                  <RangeControl label="背景帯の濃さ" value={d.overlayBgOpacity} min={0} max={0.85} step={0.05} format={(v) => v.toFixed(2)} onChange={(v) => setD((p) => ({ ...p, overlayBgOpacity: v }))} />
-
-                  <div className="flex flex-wrap gap-2">
-                    <Btn variant="primary" disabled={busy} onClick={saveCompositeAsImageUrl}>
-                      文字入り画像を保存
-                    </Btn>
-                    <Btn variant="ghost" disabled={!uid || busy} onClick={() => saveDraft()}>
-                      調整を保存
-                    </Btn>
-                  </div>
-
-                  <div className="text-white/55" style={{ fontSize: UI.FONT.labelPx }}>
-                    ※ 保存される画像は 1024×1024 のPNGです。
-                    <br />
-                    ※ 元画像（base）は保持され、完成画像（composite）だけ追加されます。
-                  </div>
-                </div>
-
-                <canvas ref={canvasRef} style={{ display: "none" }} />
-              </div>
-            </div>
-
-            <div className="mt-3 rounded-2xl border border-white/12 bg-black/25" style={{ padding: UI.cardPadding }}>
-              <div className="flex items-center justify-between gap-2 flex-wrap">
-                <div className="text-white/90 font-black" style={{ fontSize: UI.FONT.inputPx }}>
-                  動画プレビュー（保存済み）
-                </div>
-                <Chip className="text-white/95">
-                  {(d.videoTemplate ?? "slowZoomFade")} / {(d.videoSeconds ?? 5)}s / {(d.videoSize ?? "1024x1792")}
-                </Chip>
-              </div>
-
-              <div className="mt-3 rounded-2xl border border-white/12 bg-black/25" style={{ padding: UI.cardPadding }}>
-                <details>
-                  <summary className="cursor-pointer select-none" style={{ listStyle: "none", outline: "none" }}>
-                    <div className="flex items-center justify-between gap-2 flex-wrap">
-                      <div className="text-white/90 font-black" style={{ fontSize: UI.FONT.inputPx }}>
-                        履歴（背景 / 動画）
-                      </div>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <Chip className="text-white/95">背景 {d.bgImageUrls.length}</Chip>
-                        <Chip className="text-white/95">動画 {d.videoUrls.length}</Chip>
-                      </div>
-                    </div>
-
-                    <Btn
-                      variant="secondary"
-                      className="px-3 py-1"
-                      disabled={!uid || busy}
-                      onClick={() => {
-                        void syncVideosFromStorage();
-                      }}
-                      title="Storageにある動画を探して、FirestoreのvideoUrlsに反映します"
-                    >
-                      過去動画を同期
-                    </Btn>
-
-                    <div className="text-white/55 mt-2" style={{ fontSize: UI.FONT.labelPx, lineHeight: 1.6 }}>
-                      ※ クリックするとプレビューに反映します（自動保存はしません）
-                    </div>
-                  </summary>
-
-                  <div className="mt-4">
-                    <div className="text-white/80 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
-                      背景（bgImageUrls）
-                    </div>
-
-                    {d.bgImageUrls.length > 0 ? (
-                      <div className="grid gap-2">
-                        {d.bgImageUrls.map((url: string, idx: number) => (
-                          <button
-                            key={`${url}-${idx}`}
-                            type="button"
-                            className="w-full rounded-2xl border border-white/12 bg-black/20 hover:bg-white/5 transition"
-                            style={{ padding: 10, textAlign: "left" }}
-                            onClick={() => setBgImageUrl(url)}
-                          >
-                            <div className="flex items-center gap-3">
-                              <div
-                                style={{
-                                  width: 74,
-                                  height: 74,
-                                  borderRadius: 12,
-                                  overflow: "hidden",
-                                  background: "rgba(255,255,255,0.04)",
-                                  border: "1px solid rgba(255,255,255,0.10)",
-                                  flex: "0 0 auto",
-                                }}
-                              >
-                                {/* eslint-disable-next-line @next/next/no-img-element */}
-                                <img src={url} alt={`bg-${idx}`} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
-                              </div>
-
-                              <div className="min-w-0">
-                                <div className="text-white/85 font-bold" style={{ fontSize: UI.FONT.labelPx }}>
-                                  背景 #{idx + 1} {bgImageUrl === url ? "（選択中）" : ""}
-                                </div>
-                                <div className="text-white/45 truncate" style={{ fontSize: 11, maxWidth: 420 }}>
-                                  {url}
-                                </div>
-                              </div>
-                            </div>
-                          </button>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="text-white/45" style={{ fontSize: UI.FONT.labelPx }}>
-                        （背景履歴なし）
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="mt-5">
-                    <div className="text-white/80 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
-                      動画（videoUrls）
-                    </div>
-
-                    {d.videoUrls.length > 0 ? (
-                      <div className="grid gap-2">
-                        {d.videoUrls.map((url: string, idx: number) => (
-                          <button
-                            key={`${url}-${idx}`}
-                            type="button"
-                            className="w-full rounded-2xl border border-white/12 bg-black/20 hover:bg-white/5 transition"
-                            style={{ padding: 10, textAlign: "left" }}
-                            onClick={() => {
-                              setVideoPreviewUrl(url);
-                              setSelectedVideoUrl(null);
-                            }}
-                          >
-                            <div className="flex items-center justify-between gap-2 flex-wrap">
-                              <div className="text-white/85 font-bold" style={{ fontSize: UI.FONT.labelPx }}>
-                                動画 #{idx + 1} {videoPreviewUrl === url ? "（プレビュー中）" : ""}
-                              </div>
-                              <Chip className="text-white/95">クリックでプレビュー</Chip>
-                            </div>
-                            <div className="text-white/45 truncate mt-1" style={{ fontSize: 11 }}>
-                              {url}
-                            </div>
-                          </button>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="text-white/45" style={{ fontSize: UI.FONT.labelPx }}>
-                        （動画履歴なし）
-                      </div>
-                    )}
-                  </div>
-                </details>
-              </div>
-
-              {videoHistory.length ? (
-                <div className="mt-3">
-                  <div className="text-white/70 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
-                    生成履歴（この端末の表示用）
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {videoHistory.map((u, idx) => (
-                      <SelectBtn
-                        key={u}
-                        selected={(selectedVideoUrl || (videoPreviewUrl || d.videoUrl || videoHistory[0])) === u}
-                        label={`#${videoHistory.length - idx}`}
-                        onClick={() => setSelectedVideoUrl(u)}
-                        disabled={!uid || busy}
-                        title={u}
-                      />
-                    ))}
-                    <Btn variant="ghost" className="px-3 py-2" disabled={!uid || busy} onClick={() => setSelectedVideoUrl(null)} title="自動（最新）に戻す">
-                      自動
-                    </Btn>
-                    <Btn variant="ghost" className="px-3 py-2" disabled={!uid || busy} onClick={() => setVideoHistory([])} title="この端末の履歴だけ消します（Firestoreは消えません）">
-                      履歴クリア
-                    </Btn>
-                  </div>
+                  まだ候補がありません（文章生成を実行すると入ります）
                 </div>
               ) : null}
 
-              <div className="mt-3">
-                {displayVideoUrl ? (
-                  <video
-                    key={displayVideoUrl}
-                    src={displayVideoUrl}
-                    controls
-                    playsInline
-                    style={{
-                      width: "100%",
-                      borderRadius: 14,
-                      border: "1px solid rgba(255,255,255,0.12)",
-                      background: "rgba(0,0,0,0.25)",
-                    }}
-                  />
-                ) : (
-                  <div className="h-[220px] w-full grid place-items-center text-sm text-white/55 rounded-2xl border border-white/12 bg-black/20">
-                    NO VIDEO
-                  </div>
-                )}
-              </div>
-
-              <div className="mt-3 flex flex-wrap gap-2">
-                <Btn
-                  variant="ghost"
-                  disabled={!uid || busy}
-                  onClick={() => {
-                    setVideoPreviewUrl(null);
-                    setSelectedVideoUrl(null);
-                    alert("ローカルプレビューを解除しました（保存済みURLがあればそれが表示されます）");
-                  }}
+              {(d.ig3 ?? []).map((t, idx) => (
+                <div
+                  key={`${idx}-${t.slice(0, 12)}`}
+                  className="rounded-xl border border-white/10 bg-black/20 p-3"
                 >
-                  プレビュー解除
-                </Btn>
-                <Btn variant="ghost" disabled={!uid || busy} onClick={() => saveDraft()}>
-                  状態を保存
-                </Btn>
-              </div>
+                  <div
+                    className="text-white/90"
+                    style={{ fontSize: 14, lineHeight: 1.35, fontWeight: 800 }}
+                  >
+                    {t}
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <Btn
+                      variant="secondary"
+                      disabled={busy}
+                      onClick={() => {
+                        applyIg3ToOverlayOnly(t);
+                      }}
+                      title="本文は上書きしない（文字表示だけに使う）"
+                    >
+                      文字表示に使う
+                    </Btn>
+                  </div>
+                </div>
+              ))}
+            </div>
 
-              <div className="text-white/55 mt-2" style={{ fontSize: UI.FONT.labelPx, lineHeight: 1.5 }}>
-                ※ 生成した動画は videoUrl と設定がFirestoreに保存されます。
-              </div>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <Btn variant="ghost" disabled={!uid || busy} onClick={() => saveDraft()}>
+                保存
+              </Btn>
+
+              <Btn
+                variant="secondary"
+                disabled={!uid || busy}
+                onClick={async () => {
+                  if (!draftId) {
+                    await saveDraft();
+                    alert("先に下書きを作成しました");
+                  } else {
+                    alert("この下書きはすでに作成済みです");
+                  }
+                }}
+              >
+                下書きIDを確定
+              </Btn>
             </div>
           </div>
         </section>
+
+<section className="rightCol min-h-0">
+  <div className="rightScroll flex flex-col gap-3">
+    {/* =========================
+        右：プレビュー（画像 / 動画）
+    ========================== */}
+    <div
+      className="rounded-2xl border border-white/12 bg-black/25"
+      style={{ padding: UI.cardPadding }}
+    >
+      {/* ヘッダー（内部表示 + タブ） */}
+<div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          {isOwner ? (
+            <Chip>
+              内部表示：画像=OpenAI / 背景=OpenAI / 合成=Sharp / 動画=Runway
+              {` ｜状態：元=${d.baseImageUrl ? "✓" : "—"} / 背景=${bgImageUrl ? "✓" : "—"} / 合成=${d.aiImageUrl ? "✓" : "—"} / 動画=${d.videoUrl ? "✓" : "—"}`}
+            </Chip>
+          ) : null}
+        </div>
+
+<div className="flex items-center gap-2 whitespace-nowrap">
+          <SelectBtn
+            selected={rightTab === "image"}
+            label="元画像｜背景(合成・動画用)"
+            onClick={() => setRightTab("image")}
+            disabled={busy}
+          />
+          <SelectBtn
+            selected={rightTab === "video"}
+            label="動画"
+            onClick={() => setRightTab("video")}
+            disabled={busy}
+          />
+        </div>
+      </div>
+
+      {/* =========================
+          画像タブ
+      ========================== */}
+      {rightTab === "image" ? (
+        <div className="mt-3 grid grid-cols-1 gap-2">
+{/* 元画像｜背景（横並び） */}
+<div className="imgPair">
+                {/* 元画像 */}
+            <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
+              <div className="text-white/70" style={{ fontSize: 12, marginBottom: 8 }}>
+                プレビュー：元画像（文字入りはここに表示）
+              </div>
+
+              {d.baseImageUrl ? (
+<img
+  src={overlayPreviewDataUrl || d.baseImageUrl}
+  alt="base"
+  className="w-full rounded-xl border border-white/10"
+  style={{ height: 240, objectFit: "contain", background: "rgba(0,0,0,0.25)" }}
+/>
+              ) : (
+                <div
+                  className="w-full rounded-xl border border-white/10 bg-black/30 flex items-center justify-center text-white/55"
+                  style={{ aspectRatio: "1 / 1", fontSize: 13 }}
+                >
+                  元画像がありません（アップロード→保存）
+                </div>
+              )}
+
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Btn variant="secondary" disabled={!uid || busy} onClick={saveCompositeAsImageUrl}>
+                  文字入り画像を保存
+                </Btn>
+
+                <Btn variant="ghost" disabled={!uid || busy} onClick={() => saveDraft()}>
+                  保存
+                </Btn>
+              </div>
+
+              <div className="text-white/55 mt-2" style={{ fontSize: 12, lineHeight: 1.5 }}>
+                ※ 文字入りプレビューは「元画像」に表示されます。
+              </div>
+            </div>
+
+            {/* 背景（合成・動画用） */}
+            <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
+              <div className="text-white/70" style={{ fontSize: 12, marginBottom: 8 }}>
+                背景(合成・動画用)
+              </div>
+
+              {bgImageUrl ? (
+<img
+  src={bgImageUrl}
+  alt="bg"
+  className="w-full rounded-xl border border-white/10"
+  style={{ height: 240, objectFit: "contain", background: "rgba(0,0,0,0.25)" }}
+/>
+              ) : (
+                <div
+                  className="w-full rounded-xl border border-white/10 bg-black/30 flex items-center justify-center text-white/55"
+                  style={{ aspectRatio: "1 / 1", fontSize: 13 }}
+                >
+                  背景がありません（背景生成）
+                </div>
+              )}
+
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Btn
+                  variant="secondary"
+                  disabled={!uid || busy}
+                  onClick={async () => {
+                    // 背景生成は「元画像」を基準にする（仕様：迷わせない）
+                    const base = d.baseImageUrl || "";
+                    if (!base) {
+                      alert("先に元画像を保存してください");
+                      return;
+                    }
+                    await generateBackgroundImage(base);
+                  }}
+                >
+                  背景画像を生成（合成・動画用）
+                </Btn>
+
+                <Btn variant="secondary" disabled={!uid || busy} onClick={replaceBackgroundAndSaveToAiImage}>
+                  製品画像＋背景を合成（保存）
+                </Btn>
+              </div>
+
+              <div className="text-white/55 mt-2" style={{ fontSize: 12, lineHeight: 1.5 }}>
+                ※ この背景が「合成」と「動画」に使われます。
+              </div>
+            </div>
+          </div>
+
+          {/* 文字の編集UI */}
+          <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-white/80 font-bold" style={{ fontSize: 12 }}>
+                文字表示
+              </div>
+
+              <label className="inline-flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={d.overlayEnabled}
+                  onChange={(e) => setD((p) => ({ ...p, overlayEnabled: e.target.checked }))}
+                />
+                <span className="text-white/85" style={{ fontSize: 12 }}>
+                  {d.overlayEnabled ? "ON" : "OFF"}
+                </span>
+              </label>
+            </div>
+
+            <div className="mt-3 grid grid-cols-1 gap-3">
+              <RangeControl
+                label="文字サイズ"
+                value={d.overlayFontScale}
+                min={0.6}
+                max={1.6}
+                step={0.05}
+                format={(v) => `${Math.round(v * 100)}%`}
+                onChange={(v) => setD((p) => ({ ...p, overlayFontScale: v }))}
+              />
+              <RangeControl
+                label="文字の上下位置"
+                value={d.overlayY}
+                min={0}
+                max={100}
+                step={1}
+                format={(v) => `${v}%`}
+                onChange={(v) => setD((p) => ({ ...p, overlayY: v }))}
+              />
+              <RangeControl
+                label="文字背景の濃さ"
+                value={d.overlayBgOpacity}
+                min={0}
+                max={0.85}
+                step={0.05}
+                format={(v) => `${Math.round(v * 100)}%`}
+                onChange={(v) => setD((p) => ({ ...p, overlayBgOpacity: v }))}
+              />
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* =========================
+          動画タブ
+      ========================== */}
+      {rightTab === "video" ? (
+        <div className="mt-3 grid grid-cols-1 gap-2">
+          {/* 動画プレビュー */}
+          <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
+            <div className="text-white/70" style={{ fontSize: 12, marginBottom: 8 }}>
+              動画プレビュー
+            </div>
+
+            {displayVideoUrl ? (
+<video
+  key={displayVideoUrl}
+  src={displayVideoUrl}
+  controls
+  playsInline
+  className="w-full rounded-xl border border-white/10"
+  style={{
+    height: 260,              // ✅ 好きな高さに（例: 220〜320）
+    objectFit: "contain",
+    background: "rgba(0,0,0,0.25)",
+  }}
+/>
+            ) : (
+              <div
+                className="w-full rounded-xl border border-white/10 bg-black/30 flex items-center justify-center text-white/55"
+                style={{ aspectRatio: "16 / 9", fontSize: 13 }}
+              >
+                動画がありません（動画生成）
+              </div>
+            )}
+
+            {/* 動画履歴 */}
+            {d.videoUrls?.length ? (
+              <div className="mt-3">
+                <div className="text-white/70 mb-2" style={{ fontSize: 12 }}>
+                  生成履歴（クリックで切替）
+                </div>
+
+                <div className="flex flex-col gap-2">
+                  {d.videoUrls.slice(0, 6).map((u) => {
+                    const selected = selectedVideoUrl === u;
+                    return (
+                      <button
+                        key={u}
+                        type="button"
+                        onClick={() => setSelectedVideoUrl(u)}
+                        className="text-left rounded-xl border px-3 py-2 transition"
+                        style={{
+                          borderColor: selected ? "rgba(255,255,255,0.35)" : "rgba(255,255,255,0.10)",
+                          background: selected ? "rgba(255,255,255,0.10)" : "rgba(0,0,0,0.15)",
+                          color: selected ? "rgba(255,255,255,0.95)" : "rgba(255,255,255,0.75)",
+                          fontSize: 12,
+                        }}
+                      >
+                        {selected ? "✓ " : ""}
+                        {u.slice(0, 52)}
+                        {u.length > 52 ? "…" : ""}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
+
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Btn variant="primary" disabled={!uid || busy || !canGenerate} onClick={generateVideo}>
+                動画を生成（合成画像があれば使用）
+              </Btn>
+
+              <Btn variant="secondary" disabled={!uid || busy} onClick={syncVideosFromStorage}>
+                動画を同期（Storage→Firestore）
+              </Btn>
+
+              <Btn variant="ghost" disabled={!uid || busy} onClick={() => saveDraft()}>
+                保存
+              </Btn>
+            </div>
+          </div>
+
+          {/* 動画設定 */}
+          <div className="rounded-2xl border border-white/12 bg-black/25" style={{ padding: UI.cardPadding }}>
+            <div className="text-white/85 mb-2" style={{ fontSize: UI.FONT.labelPx, fontWeight: 800 }}>
+              動画設定
+            </div>
+
+            <div className="grid grid-cols-1 gap-3">
+              <div>
+                <div className="text-white/70 mb-2" style={{ fontSize: 12 }}>
+                  動き（テンプレ）
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  {templateItems.map((t) => (
+                    <SelectBtn
+                      key={t.id}
+                      selected={d.videoTemplate === t.id}
+                      label={t.label}
+                      onClick={() => setD((p) => ({ ...p, videoTemplate: t.id }))}
+                      disabled={busy}
+                    />
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <div className="text-white/70 mb-2" style={{ fontSize: 12 }}>
+                  尺（秒）
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  <SelectBtn
+                    selected={(d.videoSeconds ?? 5) === 5}
+                    label="5秒"
+                    onClick={() => setD((p) => ({ ...p, videoSeconds: 5 }))}
+                    disabled={busy}
+                  />
+                  <SelectBtn
+                    selected={(d.videoSeconds ?? 5) === 10}
+                    label="10秒"
+                    onClick={() => setD((p) => ({ ...p, videoSeconds: 10 }))}
+                    disabled={busy}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <div className="text-white/70 mb-2" style={{ fontSize: 12 }}>
+                  品質
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  <SelectBtn
+                    selected={(d.videoQuality ?? "standard") === "standard"}
+                    label={`標準（約 ${costStandard.toLocaleString()}円 / ${secondsKey}s）`}
+                    onClick={() => setD((p) => ({ ...p, videoQuality: "standard" }))}
+                    disabled={busy}
+                  />
+                  <SelectBtn
+                    selected={(d.videoQuality ?? "standard") === "high"}
+                    label={`高品質（約 ${costHigh.toLocaleString()}円 / ${secondsKey}s）`}
+                    onClick={() => setD((p) => ({ ...p, videoQuality: "high" }))}
+                    disabled={busy}
+                  />
+                </div>
+
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <Chip>{pricingMetaText}</Chip>
+                  <Chip>
+                    目安: {shownCost.toLocaleString()}円 / {secondsKey}s（{d.videoQuality ?? "standard"}）
+                  </Chip>
+                </div>
+              </div>
+
+              <div>
+                <div className="text-white/70 mb-2" style={{ fontSize: 12 }}>
+                  サイズ（用途）
+                </div>
+
+                <div className="grid grid-cols-1 gap-2">
+                  {sizePresets.map((s) => {
+                    const selected = d.videoSize === s.id;
+                    return (
+                      <button
+                        key={s.id}
+                        type="button"
+                        onClick={() => setD((p) => ({ ...p, videoSize: s.id }))}
+                        disabled={busy}
+                        className="text-left rounded-xl border px-3 py-2 transition"
+                        style={{
+                          borderColor: selected ? "rgba(255,255,255,0.35)" : "rgba(255,255,255,0.10)",
+                          background: selected ? "rgba(255,255,255,0.10)" : "rgba(0,0,0,0.15)",
+                          color: selected ? "rgba(255,255,255,0.95)" : "rgba(255,255,255,0.78)",
+                        }}
+                      >
+                        <div style={{ fontSize: 13, fontWeight: 800 }}>
+                          {selected ? `✓ ${s.label}` : s.label}
+                        </div>
+                        <div style={{ fontSize: 12, opacity: 0.75 }}>{s.sub}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <Btn variant="ghost" disabled={!uid || busy} onClick={() => saveDraft()}>
+                  動画設定を保存
+                </Btn>
+                <Btn variant="secondary" disabled={!uid || busy} onClick={() => setPhase("ready")}>
+                  投稿待ちへ
+                </Btn>
+                <Btn variant="secondary" disabled={!uid || busy} onClick={() => setPhase("posted")}>
+                  投稿済みへ
+                </Btn>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </div>
+
+    {/* canvas（文字入り画像生成用：画面には出さない） */}
+    <canvas ref={canvasRef} style={{ display: "none" }} />
+  </div>
+</section>
       </div>
     </>
   );

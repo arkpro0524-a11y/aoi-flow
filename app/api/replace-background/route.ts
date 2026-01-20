@@ -1,173 +1,212 @@
-// /app/api/replace-background/route.ts
+/**
+ * app/api/replace-background/route.ts
+ * ─────────────────────────────────────────────
+ * 役割：
+ * - 「商品（前景）＋ 背景画像」を合成して最終画像を生成
+ * - mock → 実API を ENV で切替
+ *
+ * 切替：
+ * - USE_REPLACE_BG_MOCK=true  → mock JSON
+ * - USE_REPLACE_BG_MOCK=false → sharp で実合成
+ *
+ * 注意：
+ * - lib/server/runway.ts は「動画生成専用」なので、ここから import しない
+ */
+
 import { NextResponse } from "next/server";
-import crypto from "crypto";
+import { PRICING } from "@/lib/server/pricing";
+import { getIdempotencyKey } from "@/lib/server/idempotency";
 import sharp from "sharp";
-import { getAdminAuth } from "@/firebaseAdmin";
-import { getStorage } from "firebase-admin/storage";
 
+/* =========================================================
+   Next.js runtime（sharpはnode runtime必須）
+========================================================= */
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-function bearerToken(req: Request) {
-  const h = req.headers.get("authorization") || "";
-  const m = h.match(/^Bearer\s+(.+)$/i);
-  return m?.[1] ?? null;
-}
-async function requireUid(req: Request): Promise<string> {
-  const token = bearerToken(req);
-  if (!token) throw new Error("missing token");
-  const decoded = await getAdminAuth().verifyIdToken(token);
-  if (!decoded?.uid) throw new Error("invalid token");
-  return decoded.uid;
-}
-function safeStr(v: any) {
-  return String(v ?? "").trim();
-}
-function requiredEnv(name: string, fallbackNames: string[] = []) {
-  const names = [name, ...fallbackNames];
-  for (const n of names) {
-    const v = process.env[n];
-    if (v && String(v).trim()) return String(v).trim();
-  }
-  throw new Error(`${name} missing`);
-}
+/* =========================================================
+   型（このAPI内だけで完結 / UIは触らない）
+========================================================= */
+export type ReplaceBackgroundParams = {
+  foregroundImage: string;
+  backgroundImage: string;
+  ratio: string; // "1280:720" 等
+  fit: "contain" | "cover";
+};
 
-type UiSize = "1024x1792" | "720x1280" | "1792x1024" | "1280x720";
-type OpenAISize = "720x1280" | "1280x720";
-function normUiSize(v: any): UiSize {
-  const s = String(v ?? "");
-  const ok: UiSize[] = ["1024x1792", "720x1280", "1792x1024", "1280x720"];
-  return ok.includes(s as UiSize) ? (s as UiSize) : "1024x1792";
-}
-function toOpenAISize(ui: UiSize): OpenAISize {
-  if (ui === "1792x1024" || ui === "1280x720") return "1280x720";
-  return "720x1280";
-}
-function parseSize(size: OpenAISize) {
-  const [w, h] = size.split("x").map((n) => parseInt(n, 10));
-  if (!Number.isFinite(w) || !Number.isFinite(h)) throw new Error("invalid size");
-  return { w, h };
+/* =========================================================
+   ENV 切替
+========================================================= */
+const USE_MOCK = process.env.USE_REPLACE_BG_MOCK === "true";
+
+/* =========================================================
+   Utils
+========================================================= */
+
+function parseRatioToSize(ratio: string): { w: number; h: number } {
+  // ratio は "1280:720" のように "W:H" を想定
+  const s = String(ratio || "").trim();
+  const m = s.match(/^(\d{2,5})\s*:\s*(\d{2,5})$/);
+  if (!m) return { w: 1280, h: 720 };
+
+  const w = Number(m[1]);
+  const h = Number(m[2]);
+
+  // 安全策：極端な値は丸める（サーバ負荷防止）
+  const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
+  const ww = clamp(Number.isFinite(w) ? w : 1280, 256, 2048);
+  const hh = clamp(Number.isFinite(h) ? h : 720, 256, 2048);
+
+  return { w: ww, h: hh };
 }
 
-async function fetchAsBuffer(url: string) {
-  const res = await fetch(url, { method: "GET" });
-  if (!res.ok) throw new Error(`failed to fetch image: ${res.status}`);
+function isDataUrl(s: string) {
+  return /^data:image\/(png|jpeg|jpg|webp);base64,/i.test(String(s || ""));
+}
+
+function dataUrlToBuffer(dataUrl: string): Buffer {
+  const idx = dataUrl.indexOf("base64,");
+  if (idx < 0) throw new Error("Invalid data URL");
+  const b64 = dataUrl.slice(idx + "base64,".length);
+  return Buffer.from(b64, "base64");
+}
+
+async function fetchUrlToBuffer(url: string): Promise<Buffer> {
+  const res = await fetch(url, { method: "GET", cache: "no-store" as any });
+  if (!res.ok) throw new Error(`Failed to fetch image: ${res.status}`);
   const ab = await res.arrayBuffer();
   return Buffer.from(ab);
 }
-async function toExactSizePng(input: Buffer, size: OpenAISize) {
-  const { w, h } = parseSize(size);
-  const out = await sharp(input)
-    .rotate()
-    .resize(w, h, { fit: "cover", position: "centre" })
-    .png({ compressionLevel: 9 })
+
+async function readImageInputToBuffer(input: string): Promise<Buffer> {
+  const s = String(input || "").trim();
+  if (!s) throw new Error("Empty image input");
+  if (isDataUrl(s)) return dataUrlToBuffer(s);
+  // URL想定
+  return await fetchUrlToBuffer(s);
+}
+
+function pickYenEstimateForReplaceBackground(): number | null {
+  // あなたの pricing.ts の public() に openai.estimateYen.background がある前提
+  // なければ null（UI側は出せるなら出す、出せないなら無視できる）
+  try {
+    const pub = PRICING.public?.();
+    const n = pub?.openai?.estimateYen?.background;
+    const yen = Number(n);
+    return Number.isFinite(yen) && yen > 0 ? yen : null;
+  } catch {
+    return null;
+  }
+}
+
+/* =========================================================
+   Mock 実装（UI接続確認用）
+========================================================= */
+function mockReplaceBackground(params: ReplaceBackgroundParams) {
+  const yen = pickYenEstimateForReplaceBackground();
+
+  return {
+    ok: true,
+    mock: true,
+    // mock はURL返しのままでも良いが、UI側が dataUrl を期待するならここも dataUrl に合わせられる
+    imageUrl: "https://example.com/mock-composited.png",
+    foregroundUrl: params.foregroundImage,
+    backgroundUrl: params.backgroundImage,
+    ratio: params.ratio,
+    fit: params.fit,
+    yen,
+  };
+}
+
+/* =========================================================
+   Real 合成（sharp）
+========================================================= */
+
+async function composeWithSharp(params: ReplaceBackgroundParams) {
+  const { w, h } = parseRatioToSize(params.ratio);
+
+  const fgBuf = await readImageInputToBuffer(params.foregroundImage);
+  const bgBuf = await readImageInputToBuffer(params.backgroundImage);
+
+  // 背景は常に canvas 全面（cover）
+  const bg = await sharp(bgBuf)
+    .resize(w, h, { fit: "cover" })
+    .png()
     .toBuffer();
-  return { buf: out, w, h, filename: `bgsrc_${w}x${h}.png`, contentType: "image/png" as const };
+
+  // 前景は contain / cover を選択
+  // - contain: 全体が入る（上下左右に余白が出ることがある）
+  // - cover: 余白が出ない（はみ出しは切れる）
+  const fgFit = params.fit === "cover" ? "cover" : "contain";
+
+  // 前景のリサイズ結果をpng化
+  const fg = await sharp(fgBuf)
+    .resize(w, h, { fit: fgFit, position: "center" })
+    .png()
+    .toBuffer();
+
+  // 背景に前景を重ねる
+  const out = await sharp(bg)
+    .composite([{ input: fg, top: 0, left: 0 }])
+    .png()
+    .toBuffer();
+
+  const b64 = out.toString("base64");
+  const dataUrl = `data:image/png;base64,${b64}`;
+
+  return { w, h, dataUrl };
 }
 
-function getBucket() {
-  const bucketName = requiredEnv("FIREBASE_STORAGE_BUCKET", ["NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET"]);
-  return getStorage().bucket(bucketName);
-}
-function makeDownloadUrl(bucketName: string, filePath: string, token: string) {
-  const encPath = encodeURIComponent(filePath);
-  return `https://firebasestorage.googleapis.com/v0/b/${bucketName}/o/${encPath}?alt=media&token=${token}`;
-}
-async function savePng(uid: string, draftId: string, png: Buffer) {
-  const bucket = getBucket();
-  const bucketName = bucket.name;
-
-  const token = crypto.randomUUID();
-  const pathKey = `${Date.now()}_${crypto.randomUUID()}.png`;
-  const fullPath = `users/${uid}/bg/${draftId}/${pathKey}`;
-
-  const file = bucket.file(fullPath);
-  await file.save(png, {
-    contentType: "image/png",
-    resumable: false,
-    metadata: {
-      metadata: { firebaseStorageDownloadTokens: token },
-      cacheControl: "public, max-age=31536000, immutable",
-    },
-  });
-
-  return makeDownloadUrl(bucketName, fullPath, token);
-}
-
-type ReqBody = {
-  draftId?: string; // ✅ 必須
-  vision?: string;
-  size?: string;
-  referenceImageUrl?: string;
-};
-
+/* =========================================================
+   POST Handler
+========================================================= */
 export async function POST(req: Request) {
-  let uid = "";
   try {
-    uid = await requireUid(req);
-  } catch (e: any) {
-    return NextResponse.json({ ok: false, error: String(e?.message ?? e) }, { status: 401 });
-  }
+    const body = await req.json().catch(() => ({}));
 
-  const body = (await req.json().catch(() => ({}))) as ReqBody;
+    const params: ReplaceBackgroundParams = {
+      foregroundImage: String(body?.foregroundImage || ""),
+      backgroundImage: String(body?.backgroundImage || ""),
+      ratio: String(body?.ratio || "1280:720"),
+      fit: body?.fit === "cover" ? "cover" : "contain",
+    };
 
-  const draftId = safeStr(body.draftId);
-  if (!draftId) return NextResponse.json({ ok: false, error: "draftId is required" }, { status: 400 });
+    if (!params.foregroundImage || !params.backgroundImage) {
+      return NextResponse.json(
+        { ok: false, error: "foregroundImage と backgroundImage は必須です" },
+        { status: 400 }
+      );
+    }
 
-  const vision = safeStr(body.vision);
-  if (!vision) return NextResponse.json({ ok: false, error: "vision is required" }, { status: 400 });
+    const idemKey = getIdempotencyKey(req, params);
 
-  const referenceImageUrl = safeStr(body.referenceImageUrl);
-  if (!referenceImageUrl) {
-    return NextResponse.json({ ok: false, error: "referenceImageUrl is required" }, { status: 400 });
-  }
+    // STEP4-A：Mock
+    if (USE_MOCK) {
+      return NextResponse.json({
+        ...mockReplaceBackground(params),
+        idemKey,
+      });
+    }
 
-  const uiSize = normUiSize(body.size);
-  const openaiSize = toOpenAISize(uiSize);
+    // STEP4-B：実合成
+    const out = await composeWithSharp(params);
+    const yen = pickYenEstimateForReplaceBackground();
 
-  try {
-    const apiKey = requiredEnv("OPENAI_API_KEY");
-    requiredEnv("FIREBASE_STORAGE_BUCKET", ["NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET"]);
-
-    const raw = await fetchAsBuffer(referenceImageUrl);
-    const exact = await toExactSizePng(raw, openaiSize);
-
-    const fd = new FormData();
-    fd.set("model", "gpt-image-1");
-    fd.set("size", openaiSize);
-    fd.set(
-      "prompt",
-      [
-        "Replace ONLY the background of the product photo.",
-        "Keep the product exactly the same. Do not change the product shape, color, or details.",
-        "Create a clean, premium, minimalist background that matches the vision.",
-        "No text. No logo. No watermark.",
-        `Vision: ${vision}`,
-        `Output size: ${openaiSize}`,
-      ].join("\n")
-    );
-
-    const bytes = new Uint8Array(exact.buf.byteLength);
-    bytes.set(exact.buf);
-    const blob = new Blob([bytes], { type: exact.contentType });
-    fd.set("image", blob, exact.filename);
-
-    const res = await fetch("https://api.openai.com/v1/images/edits", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}` },
-      body: fd,
+    return NextResponse.json({
+      ok: true,
+      mock: false,
+      ratio: params.ratio,
+      fit: params.fit,
+      size: { w: out.w, h: out.h },
+      dataUrl: out.dataUrl, // ✅ UI側でそのまま Storage 保存できる
+      yen, // 目安（出せるなら）
+      idemKey,
     });
-
-    const j = await res.json().catch(() => ({} as any));
-    if (!res.ok) throw new Error(j?.error?.message || "openai image edit error");
-
-    const b64 = j?.data?.[0]?.b64_json;
-    if (typeof b64 !== "string" || !b64) throw new Error("no image returned");
-
-    const png = Buffer.from(b64, "base64");
-    const bgImageUrl = await savePng(uid, draftId, png);
-
-    return NextResponse.json({ ok: true, draftId, bgImageUrl, uiSize, openaiSize });
-  } catch (e: any) {
-    return NextResponse.json({ ok: false, error: String(e?.message ?? e) }, { status: 500 });
+  } catch (err: any) {
+    console.error("[replace-background]", err);
+    return NextResponse.json(
+      { ok: false, error: err?.message || "背景合成に失敗しました" },
+      { status: 500 }
+    );
   }
 }

@@ -1,131 +1,93 @@
-// /app/api/generate-background/route.ts
+/**
+ * app/api/generate-background/route.ts
+ * ─────────────────────────────────────────────
+ * 役割：
+ * - 背景画像生成（商品切り抜き後に合成する“背景”）
+ * - mock → 実API を ENV で切替
+ *
+ * 切替：
+ * - USE_BACKGROUND_MOCK=true  → mock JSON
+ * - USE_BACKGROUND_MOCK=false → （現時点では未実装なので 501）
+ *
+ * 注意：
+ * - lib/server/runway.ts は「動画生成専用」なので、ここから import しない
+ */
+
 import { NextResponse } from "next/server";
-import { getAdminAuth, getAdminDb } from "@/firebaseAdmin";
+import { PRICING } from "@/lib/server/pricing";
+import { getIdempotencyKey } from "@/lib/server/idempotency";
 
-export const runtime = "nodejs";
+/* =========================================================
+   型（このAPI内だけで完結 / UIは触らない）
+========================================================= */
 
-function bearerToken(req: Request) {
-  const h = req.headers.get("authorization") || "";
-  const m = h.match(/^Bearer\s+(.+)$/i);
-  return m?.[1] ?? null;
+export type BackgroundGenParams = {
+  prompt: string;
+  ratio: string; // "1280:720" 等
+  style: string; // UI入力をそのまま受ける
+};
+
+/* =========================================================
+   ENV 切替
+========================================================= */
+
+const USE_MOCK = process.env.USE_BACKGROUND_MOCK === "true";
+
+/* =========================================================
+   Mock 実装（UI接続確認用）
+========================================================= */
+
+function mockGenerateBackground(params: BackgroundGenParams) {
+  const yen = PRICING.calcImageCostYen();
+
+  return {
+    ok: true,
+    mock: true,
+    imageUrl: "https://example.com/mock-background.png",
+    prompt: params.prompt,
+    ratio: params.ratio,
+    yen,
+  };
 }
 
-async function requireUid(req: Request): Promise<string> {
-  const token = bearerToken(req);
-  if (!token) throw new Error("missing token");
-  const decoded = await getAdminAuth().verifyIdToken(token);
-  if (!decoded?.uid) throw new Error("invalid token");
-  return decoded.uid;
-}
-
-async function loadBrand(uid: string, brandId: string) {
-  const db = getAdminDb();
-  const ref = db.doc(`users/${uid}/brands/${brandId}`);
-  const snap = await ref.get();
-  if (!snap.exists) return null;
-  return snap.data() as any;
-}
-
-function compactKeywords(keys: unknown): string {
-  if (!Array.isArray(keys)) return "";
-  return keys.map(String).slice(0, 12).join(", ");
-}
-
-function compactVoiceText(v: unknown): string {
-  const s = String(v ?? "")
-    .replace(/\r?\n/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  if (!s) return "";
-  const MAX = 220;
-  return s.length <= MAX ? s : s.slice(0, MAX) + "…";
-}
-
-async function fetchAsImageFile(url: string): Promise<{ file: File; mime: string }> {
-  const r = await fetch(url);
-  if (!r.ok) throw new Error("failed to fetch source image");
-  const ct = r.headers.get("content-type") || "image/png";
-  const ab = await r.arrayBuffer();
-  const blob = new Blob([ab], { type: ct });
-  const file = new File([blob], "source.png", { type: ct });
-  return { file, mime: ct };
-}
+/* =========================================================
+   POST Handler
+========================================================= */
 
 export async function POST(req: Request) {
   try {
-    const uid = await requireUid(req);
     const body = await req.json();
 
-    const brandId = typeof body.brandId === "string" ? body.brandId : "vento";
-    const vision = typeof body.vision === "string" ? body.vision : "";
-    const keywords = compactKeywords(body.keywords);
-    const sourceImageUrl = typeof body.sourceImageUrl === "string" ? body.sourceImageUrl : "";
+    const params: BackgroundGenParams = {
+      prompt: body.prompt,
+      ratio: body.ratio || "1280:720",
+      style: body.style || "clean",
+    };
 
-    if (!vision.trim()) {
-      return NextResponse.json({ error: "vision is required" }, { status: 400 });
-    }
-    if (!sourceImageUrl) {
-      return NextResponse.json({ error: "sourceImageUrl is required" }, { status: 400 });
-    }
-
-    const brand = await loadBrand(uid, brandId);
-    if (!brand) {
+    if (!params.prompt) {
       return NextResponse.json(
-        { error: "brand not found. /flow/brands で作成・保存してください" },
+        { ok: false, error: "prompt は必須です" },
         { status: 400 }
       );
     }
 
-    const imagePolicy = brand.imagePolicy ?? {};
-    const styleText = String(imagePolicy.styleText ?? "");
-    const rules = Array.isArray(imagePolicy.rules) ? imagePolicy.rules.map(String) : [];
+    const _idemKey = getIdempotencyKey(req, params);
 
-    const captionPolicy = brand.captionPolicy ?? {};
-    const voiceText = compactVoiceText(captionPolicy.voiceText ?? "");
+    // STEP3-A：Mock
+    if (USE_MOCK) {
+      return NextResponse.json(mockGenerateBackground(params));
+    }
 
-    const prompt = [
-      "You will receive a product photo.",
-      "Goal: Create a clean, attractive square background that matches the brand style.",
-      "IMPORTANT: Keep the main subject (product) unchanged and sharp. Do NOT distort the product.",
-      "If needed, extend / improve background, lighting, and composition.",
-      `Brand: ${String(brand.name ?? brandId)}`,
-      `Vision: ${vision}`,
-      keywords ? `Keywords: ${keywords}` : "",
-      voiceText ? `Brand Voice (short): ${voiceText}` : "",
-      styleText ? `Style: ${styleText}` : "",
-      rules.length ? `Rules: ${rules.join(" / ")}` : "",
-      "No text. No logos. No watermark.",
-      "Return a square image (1024x1024).",
-    ]
-      .filter(Boolean)
-      .join("\n");
-
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) throw new Error("OPENAI_API_KEY missing");
-
-    const { file } = await fetchAsImageFile(sourceImageUrl);
-
-    const fd = new FormData();
-    fd.append("model", "gpt-image-1"); // edits対応モデル（環境でgpt-image-1.5があるなら差し替え可）
-    fd.append("prompt", prompt);
-    fd.append("size", "1024x1024");
-    fd.append("image", file);
-
-    const r = await fetch("https://api.openai.com/v1/images/edits", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}` },
-      body: fd,
-    });
-
-    const j = await r.json();
-    if (!r.ok) throw new Error(j?.error?.message || "openai image edit error");
-
-    const b64 = j?.data?.[0]?.b64_json;
-    if (typeof b64 === "string" && b64) return NextResponse.json({ b64 });
-
-    throw new Error("no image returned");
-  } catch (e: any) {
-    console.error(e);
-    return NextResponse.json({ error: e?.message || "error" }, { status: 500 });
+    // STEP3-B：実API（後続STEPで実装）
+    return NextResponse.json(
+      { ok: false, error: "generate-background (real) is not implemented yet" },
+      { status: 501 }
+    );
+  } catch (err: any) {
+    console.error("[generate-background]", err);
+    return NextResponse.json(
+      { ok: false, error: err?.message || "背景生成に失敗しました" },
+      { status: 500 }
+    );
   }
 }
