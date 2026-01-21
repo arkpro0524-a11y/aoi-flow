@@ -1,12 +1,14 @@
 // /app/api/generate-image/route.ts
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
-import { getDb } from "@/lib/server/firebaseAdmin";
+import crypto from "crypto";
+import { getStorage } from "firebase-admin/storage";
 import { getIdempotencyKey } from "@/lib/server/idempotency";
 import { PRICING } from "@/lib/server/pricing";
-import { getAdminAuth } from "@/firebaseAdmin";
+import { getAdminAuth, getAdminDb } from "@/firebaseAdmin";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 type ReqBody = {
   brandId?: string;
@@ -14,7 +16,7 @@ type ReqBody = {
   keywords?: unknown;
   tone?: string;
 
-  // 互換入力（古い呼び出しも吸収）
+  // 互換入力
   prompt?: string;
 
   requestId?: string;
@@ -38,14 +40,19 @@ async function requireUid(req: Request): Promise<string> {
   return decoded.uid;
 }
 
-// data:image/png;base64,xxxx から b64 だけ抜く
-function b64FromDataUrl(dataUrl: string) {
-  const m = String(dataUrl || "").match(/^data:image\/png;base64,(.+)$/);
-  return m?.[1] ?? "";
+function buildDownloadUrl(bucket: string, path: string, token: string) {
+  return `https://firebasestorage.googleapis.com/v0/b/${bucket}/o/${encodeURIComponent(
+    path
+  )}?alt=media&token=${token}`;
+}
+
+function compactKeywords(keys: unknown): string[] {
+  if (!Array.isArray(keys)) return [];
+  return keys.map(String).slice(0, 12);
 }
 
 export async function POST(req: Request) {
-  // ✅ 認証（本番必須：悪用・課金事故防止）
+  // ✅ auth
   let uid = "";
   try {
     uid = await requireUid(req);
@@ -55,16 +62,16 @@ export async function POST(req: Request) {
 
   const body = (await req.json().catch(() => ({}))) as ReqBody;
 
-  // ✅ 入力互換：brand/vision/keywords からも prompt からも作れる
+  // ✅ prompt を作る（既存互換）
   const directPrompt = String(body.prompt ?? "").trim();
   const vision = String(body.vision ?? "").trim();
   const brandId = String(body.brandId ?? "").trim();
-  const keywords = Array.isArray(body.keywords) ? body.keywords.map(String).slice(0, 12) : [];
+  const keywords = compactKeywords(body.keywords);
 
   const prompt =
     (directPrompt ||
       [
-        "You are generating a clean, premium product photo background.",
+        "You are generating a clean, premium product photo style image.",
         "No text. No watermark. No logos.",
         brandId ? `Brand: ${brandId}` : "",
         vision ? `Vision: ${vision}` : "",
@@ -79,17 +86,88 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: "prompt is required" }, { status: 400 });
   }
 
-  // ✅ uid を必ず含めて idemKey を作る（ユーザー間衝突防止）
+  // ✅ uid含めて idemKey（ユーザー間衝突防止）
   const idemKey = getIdempotencyKey(req, { ...body, type: "image", uid, prompt });
 
-  const db = getDb();
+  const db = getAdminDb();
   const docRef = db.collection("generations").doc(idemKey);
 
-  const reserved = await db.runTransaction(async (tx) => {
-    const snap = await tx.get(docRef);
-    if (snap.exists) return { already: true, data: snap.data() as any };
+  // ✅ Storage 保存先（同一 idemKey ＝同一ファイル）
+  const bucket = getStorage().bucket();
+  const objectPath = `users/${uid}/generations/images/${idemKey}.png`;
+  const fileRef = bucket.file(objectPath);
 
-    tx.set(docRef, {
+  // ✅ 既に Storage にあるなら「確実に再利用」
+  {
+    const [exists] = await fileRef.exists();
+    if (exists) {
+      const [meta] = await fileRef.getMetadata().catch(() => [null as any]);
+      const existingToken =
+        meta?.metadata?.firebaseStorageDownloadTokens ||
+        meta?.metadata?.firebaseStorageDownloadToken ||
+        "";
+
+      const token =
+        typeof existingToken === "string" && existingToken
+          ? existingToken.split(",")[0].trim()
+          : crypto.randomUUID();
+
+      if (!existingToken) {
+        await fileRef.setMetadata({
+          metadata: { firebaseStorageDownloadTokens: token },
+          contentType: meta?.contentType || "image/png",
+        });
+      }
+
+      const url = buildDownloadUrl(bucket.name, objectPath, token);
+
+      // Firestoreも最低限整合させる（無くてもOK）
+      await docRef.set(
+        {
+          id: idemKey,
+          type: "image",
+          status: "succeeded",
+          uid,
+          prompt,
+          imageUrl: url,
+          costYen: PRICING.calcImageCostYen(),
+          finishedAt: Date.now(),
+        },
+        { merge: true }
+      );
+
+      return NextResponse.json({ ok: true, reused: true, url, generation: { id: idemKey } });
+    }
+  }
+
+  // ✅ Firestore が存在しても「成功してURLがある時だけ reused」
+  // 失敗/途中の doc が残ってても再生成できるようにする
+  const snap = await docRef.get().catch(() => null as any);
+  if (snap?.exists) {
+    const gen = snap.data() as any;
+    const status = String(gen?.status ?? "");
+    const imageUrl = String(gen?.imageUrl ?? "");
+
+    if (status === "succeeded" && imageUrl) {
+      return NextResponse.json({ ok: true, reused: true, url: imageUrl, generation: gen });
+    }
+
+    // running が直近なら「処理中」を返す（連打で課金事故防止）
+    if (status === "running") {
+      const createdAt = Number(gen?.createdAt ?? 0);
+      if (createdAt && Date.now() - createdAt < 60_000) {
+        return NextResponse.json(
+          { ok: false, status: "running", error: "generation is running" },
+          { status: 202 }
+        );
+      }
+    }
+    // failed / stale running は下で再実行
+  }
+
+  // ✅ 予約（running）
+  await docRef.set(
+    {
       id: idemKey,
       type: "image",
       status: "running",
@@ -97,17 +175,9 @@ export async function POST(req: Request) {
       prompt,
       createdAt: Date.now(),
       costYen: PRICING.calcImageCostYen(),
-    });
-    return { already: false, data: null };
-  });
-
-  // ✅ reused のときも b64 を返す（フロント事故防止）
-  if (reserved.already) {
-    const gen = reserved.data || {};
-    const dataUrl = String(gen.imageDataUrl ?? "");
-    const b64 = b64FromDataUrl(dataUrl);
-    return NextResponse.json({ ok: true, reused: true, b64: b64 || null, generation: gen });
-  }
+    },
+    { merge: true }
+  );
 
   try {
     const apiKey = process.env.OPENAI_API_KEY;
@@ -122,23 +192,40 @@ export async function POST(req: Request) {
     const b64 = res.data?.[0]?.b64_json;
     if (!b64) throw new Error("Image generation failed (no b64_json)");
 
+    const buf = Buffer.from(b64, "base64");
+
+    // ✅ Storage保存（token付き）
+    const token = crypto.randomUUID();
+    await fileRef.save(buf, {
+      contentType: "image/png",
+      resumable: false,
+      metadata: {
+        metadata: { firebaseStorageDownloadTokens: token },
+      },
+    });
+
+    const url = buildDownloadUrl(bucket.name, objectPath, token);
+
     const generation = {
       id: idemKey,
       type: "image",
       status: "succeeded",
       uid,
       prompt,
-      imageDataUrl: `data:image/png;base64,${b64}`,
+      imageUrl: url,
       costYen: PRICING.calcImageCostYen(),
       finishedAt: Date.now(),
     };
 
     await docRef.set(generation, { merge: true });
 
-    // ✅ フロント互換：b64 をトップレベルでも返す
-    return NextResponse.json({ ok: true, reused: false, b64, generation });
+    // ✅ UI互換：url を返す（b64も欲しければ返せるが、まずURL安定を優先）
+    return NextResponse.json({ ok: true, reused: false, url, generation });
   } catch (e: any) {
-    await docRef.set({ status: "failed", error: String(e?.message ?? e), finishedAt: Date.now() }, { merge: true });
+    await docRef.set(
+      { status: "failed", error: String(e?.message ?? e), finishedAt: Date.now() },
+      { merge: true }
+    );
     return NextResponse.json({ ok: false, error: String(e?.message ?? e), id: idemKey }, { status: 500 });
   }
 }
