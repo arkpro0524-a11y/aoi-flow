@@ -904,7 +904,7 @@ export default function NewDraftPage() {
     const sep = u.includes("?") ? "&" : "?";
     return `${u}${sep}v=${Date.now()}`;
   }, [selectedVideoUrl, videoPreviewUrl, d.videoUrl, videoHistory, d.videoUrls]);
-    async function saveDraft(partial?: Partial<DraftDoc>): Promise<string | null> {
+  async function saveDraft(partial?: Partial<DraftDoc>): Promise<string | null> {
     if (!uid) return null;
 
     const includeVideoUrls = !!partial && Object.prototype.hasOwnProperty.call(partial, "videoUrls");
@@ -1592,655 +1592,303 @@ export default function NewDraftPage() {
   }
 
   const previewOverlayText = (d.overlayText || "").trim();
-    return (
-    <>
-      <style jsx>{`
-        .pageWrap {
-          min-height: 100vh;
-          width: 100%;
-          display: flex;
-          flex-direction: column;
-          gap: ${UI.gap}px;
-        }
-        .leftCol,
-        .rightCol {
-          width: 100%;
-        }
-        @media (min-width: 1024px) {
-          .pageWrap {
-            flex-direction: row;
-            align-items: flex-start;
-          }
-          .leftCol {
-            width: 56%;
-          }
-          .rightCol {
-            width: 44%;
-            position: sticky;
-            top: ${UI.rightStickyTopPx}px;
-            height: calc(100vh - ${UI.rightStickyTopPx}px);
-          }
-          .rightScroll {
-            height: 100%;
-            overflow: auto;
-          }
-        }
-        details > summary::-webkit-details-marker {
-          display: none;
-        }
-      `}</style>
 
-      <div className="pageWrap">
-        <section className="leftCol min-h-0 flex flex-col gap-3">
-          <div className="shrink-0 flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2 flex-wrap" />
-            {UI.showLoadingText && loadBusy ? (
-              <div className="text-white/75" style={{ fontSize: UI.FONT.labelPx }}>
-                読み込み中...
-              </div>
-            ) : null}
+  // ===========================
+  // UI（PRART3）
+  // ===========================
+
+  if (loadBusy) {
+    return (
+      <div className="min-h-screen flex items-center justify-center text-white/80">
+        読み込み中…
+      </div>
+    );
+  }
+
+  return (
+    <div className="flowRoot">
+      <canvas ref={canvasRef} className="hidden" />
+
+      {/* =======================
+          ヘッダー
+      ======================= */}
+      <div className="headerRow">
+        <div className="headerLeft">
+          <div className="brand">{brandLabel}</div>
+          <div className="phase">{phaseLabel}</div>
+        </div>
+
+        <div className="headerRight">
+          <Btn
+            variant="secondary"
+            disabled={busy}
+            onClick={() => saveDraft()}
+            title="途中保存"
+          >
+            保存
+          </Btn>
+
+          <Btn
+            variant="danger"
+            disabled={busy}
+            onClick={() => setPhase("ready")}
+            title="投稿待ちへ"
+          >
+            投稿準備完了
+          </Btn>
+        </div>
+      </div>
+
+      {/* =======================
+          3カラム
+      ======================= */}
+      <div className="columns">
+        {/* ===== 左 ===== */}
+        <div className="col left">
+          <div className="card">
+            <div className="label">Vision（必須）</div>
+            <textarea
+              value={d.vision}
+              onChange={(e) => setD({ ...d, vision: e.target.value })}
+              style={{ ...formStyle, height: UI.hVision }}
+            />
           </div>
 
-          <div
-            className="rounded-2xl border border-white/12 bg-black/25"
-            style={{ padding: UI.cardPadding }}
-          >
-            <div className="text-white/80 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
-              Brand
-            </div>
+          <div className="card">
+            <div className="label">キーワード</div>
+            <textarea
+              value={d.keywordsText}
+              onChange={(e) => setD({ ...d, keywordsText: e.target.value })}
+              style={{ ...formStyle, height: UI.hMemo }}
+            />
+          </div>
 
-            <div className="flex items-center gap-2 flex-wrap">
-              <Btn
-                variant={d.brand === "vento" ? "primary" : "secondary"}
-                onClick={() => setD((p) => ({ ...p, brand: "vento" }))}
-              >
-                VENTO
-              </Btn>
-              <Btn
-                variant={d.brand === "riva" ? "primary" : "secondary"}
-                onClick={() => setD((p) => ({ ...p, brand: "riva" }))}
-              >
-                RIVA
-              </Btn>
-              <Chip>
-                {brandLabel} / {phaseLabel}
-              </Chip>
-            </div>
+          <div className="card">
+            <Btn disabled={!canGenerate} onClick={generateCaptions}>
+              文章生成
+            </Btn>
+          </div>
 
-            <div className="text-white/80 mt-4 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
-              プレビュー切替
-            </div>
+          <div className="card">
+            <div className="label">Instagram</div>
+            <textarea
+              value={d.ig}
+              onChange={(e) => setD({ ...d, ig: e.target.value })}
+              style={{ ...formStyle, height: UI.hIG }}
+            />
 
-            <div className="flex items-center gap-2 flex-wrap">
-              {(
-                [
-                  { mode: "base" as const, label: `プレビュー：元画像${d.baseImageUrl ? " ✓" : ""}` },
-                  { mode: "idea" as const, label: `プレビュー：イメージ${d.imageIdeaUrl ? " ✓" : ""}` },
-                  { mode: "composite" as const, label: `プレビュー：合成（動画用）${d.aiImageUrl ? " ✓" : ""}` },
-                ] as const
-              ).map(({ mode, label }) => {
-                const reason = previewDisabledReason(mode, d);
-                const disabled = !!reason || busy;
+            <div className="label mt">X</div>
+            <textarea
+              value={d.x}
+              onChange={(e) => setD({ ...d, x: e.target.value })}
+              style={{ ...formStyle, height: UI.hX }}
+            />
+          </div>
+        </div>
 
+        {/* ===== 中央 ===== */}
+        <div className="col center">
+          <div className="card">
+            <div className="label">画像プレビュー</div>
+
+            {/* 切替ボタン */}
+            <div className="previewTabs">
+              {(["base", "idea", "composite"] as PreviewMode[]).map((m) => {
+                const reason = previewDisabledReason(m, d);
                 return (
                   <SelectBtn
-                    key={mode}
-                    selected={previewMode === mode}
-                    label={label}
-                    disabled={disabled}
+                    key={m}
+                    selected={previewMode === m}
+                    label={
+                      m === "base"
+                        ? "元画像"
+                        : m === "idea"
+                        ? "イメージ"
+                        : "合成"
+                    }
+                    disabled={!!reason}
+                    title={reason || undefined}
                     onClick={() => {
-                      if (disabled) {
-                        // ✅ その場に理由を出す（モーダル/トースト禁止）
-                        setPreviewReason(reason || "処理中です");
+                      if (reason) {
+                        setPreviewReason(reason);
                         return;
                       }
                       setPreviewReason("");
-                      setPreviewMode(mode);
+                      setPreviewMode(m);
                     }}
-                    title="" // title は使わない（仕様違反になりやすい）
                   />
                 );
               })}
             </div>
 
-            {previewReason ? (
-              <div className="mt-2 text-white/70 font-bold" style={{ fontSize: UI.FONT.labelPx }}>
-                {previewReason}
-              </div>
-            ) : null}
+            {previewReason && (
+              <div className="reasonText">{previewReason}</div>
+            )}
 
-            <div className="mt-3 flex flex-wrap gap-2 items-center">
-              <label className="inline-flex items-center gap-2">
+            <div className="previewBox">
+              {displayImageUrl ? (
+                <img src={displayImageUrl} alt="" />
+              ) : (
+                <div className="previewEmpty">画像がありません</div>
+              )}
+            </div>
+          </div>
+
+          <div className="card">
+            <Btn disabled={busy} onClick={generateAiImage}>
+              イメージ画像生成
+            </Btn>
+            <Btn disabled={busy} onClick={saveCompositeAsImageUrl}>
+              文字入り画像を保存
+            </Btn>
+            <Btn disabled={busy} onClick={replaceBackgroundAndSaveToAiImage}>
+              背景合成
+            </Btn>
+          </div>
+        </div>
+
+        {/* ===== 右 ===== */}
+        <div className="col right">
+          <div className="card sticky">
+            <div className="tabs">
+              <SelectBtn
+                selected={rightTab === "image"}
+                label="画像"
+                onClick={() => setRightTab("image")}
+              />
+              <SelectBtn
+                selected={rightTab === "video"}
+                label="動画"
+                onClick={() => setRightTab("video")}
+              />
+            </div>
+
+            {rightTab === "image" && (
+              <>
+                <div className="label">画像アップロード</div>
                 <input
                   type="file"
                   accept="image/*"
-                  disabled={!uid || busy}
-                  onChange={async (e) => {
+                  onChange={(e) => {
                     const f = e.target.files?.[0];
-                    e.currentTarget.value = "";
-                    if (!f) return;
-                    await onUploadImageFile(f);
+                    if (f) void onUploadImageFile(f);
                   }}
                 />
-              </label>
+              </>
+            )}
 
-              <Btn
-                variant="secondary"
-                disabled={!canGenerate}
-                onClick={generateAiImage}
-                title="AI画像は base を上書きしません（aiImageUrlへ保存）"
-              >
-                イメージ画像を生成（世界観・雰囲気）
-              </Btn>
-              <div className="text-white/55 mt-2" style={{ fontSize: UI.FONT.labelPx, lineHeight: 1.5 }}>
-                ※ イメージ画像は、合成や動画の素材には使用されません。
-              </div>
-              <Btn variant="ghost" disabled={!uid || busy} onClick={() => saveDraft()}>
-                保存
-              </Btn>
-            </div>
+            {rightTab === "video" && (
+              <>
+                <div className="label">動画生成</div>
 
-            <div className="text-white/55 mt-2" style={{ fontSize: UI.FONT.labelPx, lineHeight: 1.5 }}>
-              ※ アップロード画像は内部でJPEGに変換して保存します。
-              <br />
-              ※ AI画像は aiImageUrl に保存され、アップロード画像（base）は上書きされません。
-            </div>
-
-            <PhotoSubmissionGuide />
-
-            <div className="text-white/80 mt-4 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
-              Vision（必須）
-            </div>
-            <textarea
-              value={d.vision}
-              onChange={(e) => setD((p) => ({ ...p, vision: e.target.value }))}
-              className="w-full rounded-xl border p-3 outline-none"
-              style={{ ...formStyle, minHeight: UI.hVision }}
-              placeholder="例：流行や価格ではなく、時間が残した佇まいを見る。"
-            />
-
-            <div className="text-white/80 mt-4 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
-              Keywords（任意）
-            </div>
-            <input
-              value={d.keywordsText}
-              onChange={(e) => setD((p) => ({ ...p, keywordsText: e.target.value }))}
-              className="w-full rounded-xl border p-3 outline-none"
-              style={formStyle}
-              placeholder="例：ビンテージ, 静けさ, 選別, 余白"
-            />
-
-            <div className="mt-4 flex flex-wrap gap-2">
-              <Btn variant="primary" disabled={!canGenerate} onClick={generateCaptions}>
-                文章を生成（IG＋X）
-              </Btn>
-            </div>
-          </div>
-
-          <div
-            className="rounded-2xl border border-white/12 bg-black/25"
-            style={{ padding: UI.cardPadding }}
-          >
-            <div className="text-white/80 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
-              Instagram 本文（編集可）
-            </div>
-            <textarea
-              value={d.ig}
-              onChange={(e) => setD((p) => ({ ...p, ig: e.target.value }))}
-              className="w-full rounded-xl border p-3 outline-none"
-              style={{ ...formStyle, minHeight: UI.hIG }}
-              placeholder="IG本文"
-            />
-
-            <div className="text-white/80 mt-4 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
-              X 投稿文（編集可）
-            </div>
-            <textarea
-              value={d.x}
-              onChange={(e) => setD((p) => ({ ...p, x: e.target.value }))}
-              className="w-full rounded-xl border p-3 outline-none"
-              style={{ ...formStyle, minHeight: UI.hX }}
-              placeholder="X投稿文"
-            />
-
-            <div className="text-white/80 mt-4 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
-              IG短文候補（ig3）※本文は上書きしない
-            </div>
-
-            <div className="grid grid-cols-1 gap-2">
-              {(d.ig3 ?? []).length === 0 ? (
-                <div
-                  className="rounded-xl border border-white/10 bg-black/20 p-3 text-white/55"
-                  style={{ fontSize: 13 }}
-                >
-                  まだ候補がありません（文章生成を実行すると入ります）
-                </div>
-              ) : null}
-
-              {(d.ig3 ?? []).map((t, idx) => (
-                <div
-                  key={`${idx}-${t.slice(0, 12)}`}
-                  className="rounded-xl border border-white/10 bg-black/20 p-3"
-                >
-                  <div className="text-white/90" style={{ fontSize: 14, lineHeight: 1.35, fontWeight: 800 }}>
-                    {t}
-                  </div>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    <Btn
-                      variant="secondary"
-                      disabled={busy}
-                      onClick={() => {
-                        applyIg3ToOverlayOnly(t);
-                      }}
-                      title="本文は上書きしない（文字表示だけに使う）"
-                    >
-                      文字表示に使う
-                    </Btn>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="mt-4 flex flex-wrap gap-2">
-              <Btn variant="ghost" disabled={!uid || busy} onClick={() => saveDraft()}>
-                保存
-              </Btn>
-
-              <Btn
-                variant="secondary"
-                disabled={!uid || busy}
-                onClick={async () => {
-                  if (!draftId) {
-                    await saveDraft();
-                    alert("先に下書きを作成しました");
-                  } else {
-                    alert("この下書きはすでに作成済みです");
-                  }
-                }}
-              >
-                下書きIDを確定
-              </Btn>
-            </div>
-          </div>
-        </section>
-
-        <section className="rightCol min-h-0">
-          <div className="rightScroll flex flex-col gap-3">
-            {/* =========================
-                右：プレビュー（画像 / 動画）
-            ========================== */}
-            <div className="rounded-2xl border border-white/12 bg-black/25" style={{ padding: UI.cardPadding }}>
-              {/* ヘッダー（内部表示 + タブ） */}
-              <div className="flex items-center justify-between gap-2 flex-wrap">
-                <div className="flex items-center gap-2 flex-wrap">
-                  {isOwner ? (
-                    <Chip>
-                      内部表示：画像=OpenAI / 背景=OpenAI / 合成=Sharp / 動画=Runway
-                      {` ｜状態：元=${d.baseImageUrl ? "✓" : "—"} / 背景=${bgImageUrl ? "✓" : "—"} / 合成=${
-                        d.aiImageUrl ? "✓" : "—"
-                      } / 動画=${d.videoUrl ? "✓" : "—"}`}
-                    </Chip>
-                  ) : null}
+                <div className="cost">
+                  目安：{yen(shownCost)}
+                  <div className="costMeta">{pricingMetaText}</div>
                 </div>
 
-                <div className="flex items-center gap-2">
-                  <SelectBtn
-                    selected={rightTab === "image"}
-                    label="元画像｜背景(合成・動画用)"
-                    onClick={() => setRightTab("image")}
-                    disabled={busy}
+                <Btn disabled={busy} onClick={generateVideo}>
+                  動画生成
+                </Btn>
+
+                {displayVideoUrl && (
+                  <video
+                    src={displayVideoUrl}
+                    controls
+                    className="videoPreview"
                   />
-                  <SelectBtn selected={rightTab === "video"} label="動画" onClick={() => setRightTab("video")} disabled={busy} />
-                </div>
-              </div>
-
-              {/* =========================
-                  画像タブ
-              ========================== */}
-              {rightTab === "image" ? (
-                <div className="mt-3 grid grid-cols-1 gap-2">
-                  {/* 元画像｜背景（横並び） */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                    {/* 元画像 */}
-                    <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
-                      <div className="text-white/70" style={{ fontSize: 12, marginBottom: 8 }}>
-                        プレビュー：元画像（文字入りはここに表示）
-                      </div>
-
-                      {d.baseImageUrl ? (
-                        <img
-                          src={overlayPreviewDataUrl || d.baseImageUrl}
-                          alt="base"
-                          className="w-full rounded-xl border border-white/10"
-                          style={{ aspectRatio: "1 / 1", objectFit: "cover" }}
-                        />
-                      ) : (
-                        <div
-                          className="w-full rounded-xl border border-white/10 bg-black/30 flex items-center justify-center text-white/55"
-                          style={{ aspectRatio: "1 / 1", fontSize: 13 }}
-                        >
-                          元画像がありません（アップロード→保存）
-                        </div>
-                      )}
-
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        <Btn variant="secondary" disabled={!uid || busy} onClick={saveCompositeAsImageUrl}>
-                          文字入り画像を保存
-                        </Btn>
-
-                        <Btn variant="ghost" disabled={!uid || busy} onClick={() => saveDraft()}>
-                          保存
-                        </Btn>
-                      </div>
-
-                      <div className="text-white/55 mt-2" style={{ fontSize: 12, lineHeight: 1.5 }}>
-                        ※ 文字入りプレビューは「元画像」に表示されます。
-                      </div>
-                    </div>
-
-                    {/* 背景（合成・動画用） */}
-                    <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
-                      <div className="text-white/70" style={{ fontSize: 12, marginBottom: 8 }}>
-                        背景(合成・動画用)
-                      </div>
-
-                      {bgImageUrl ? (
-                        <img
-                          src={bgImageUrl}
-                          alt="bg"
-                          className="w-full rounded-xl border border-white/10"
-                          style={{ aspectRatio: "1 / 1", objectFit: "cover" }}
-                        />
-                      ) : (
-                        <div
-                          className="w-full rounded-xl border border-white/10 bg-black/30 flex items-center justify-center text-white/55"
-                          style={{ aspectRatio: "1 / 1", fontSize: 13 }}
-                        >
-                          背景がありません（背景生成）
-                        </div>
-                      )}
-
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        <Btn
-                          variant="secondary"
-                          disabled={!uid || busy}
-                          onClick={async () => {
-                            // 背景生成は「元画像」を基準にする（仕様：迷わせない）
-                            const base = d.baseImageUrl || "";
-                            if (!base) {
-                              alert("先に元画像を保存してください");
-                              return;
-                            }
-                            await generateBackgroundImage(base);
-                          }}
-                        >
-                          背景画像を生成（合成・動画用）
-                        </Btn>
-
-                        <Btn variant="secondary" disabled={!uid || busy} onClick={replaceBackgroundAndSaveToAiImage}>
-                          製品画像＋背景を合成（保存）
-                        </Btn>
-                      </div>
-
-                      <div className="text-white/55 mt-2" style={{ fontSize: 12, lineHeight: 1.5 }}>
-                        ※ この背景が「合成」と「動画」に使われます。
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* 文字の編集UI */}
-                  <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="text-white/80 font-bold" style={{ fontSize: 12 }}>
-                        文字表示
-                      </div>
-
-                      <label className="inline-flex items-center gap-2 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={d.overlayEnabled}
-                          onChange={(e) => setD((p) => ({ ...p, overlayEnabled: e.target.checked }))}
-                        />
-                        <span className="text-white/85" style={{ fontSize: 12 }}>
-                          {d.overlayEnabled ? "ON" : "OFF"}
-                        </span>
-                      </label>
-                    </div>
-
-                    <div className="mt-3 grid grid-cols-1 gap-3">
-                      <RangeControl
-                        label="文字サイズ"
-                        value={d.overlayFontScale}
-                        min={0.6}
-                        max={1.6}
-                        step={0.05}
-                        format={(v) => `${Math.round(v * 100)}%`}
-                        onChange={(v) => setD((p) => ({ ...p, overlayFontScale: v }))}
-                      />
-                      <RangeControl
-                        label="文字の上下位置"
-                        value={d.overlayY}
-                        min={0}
-                        max={100}
-                        step={1}
-                        format={(v) => `${v}%`}
-                        onChange={(v) => setD((p) => ({ ...p, overlayY: v }))}
-                      />
-                      <RangeControl
-                        label="文字背景の濃さ"
-                        value={d.overlayBgOpacity}
-                        min={0}
-                        max={0.85}
-                        step={0.05}
-                        format={(v) => `${Math.round(v * 100)}%`}
-                        onChange={(v) => setD((p) => ({ ...p, overlayBgOpacity: v }))}
-                      />
-                    </div>
-                  </div>
-                </div>
-              ) : null}
-
-              {/* =========================
-                  動画タブ
-              ========================== */}
-              {rightTab === "video" ? (
-                <div className="mt-3 grid grid-cols-1 gap-2">
-                  {/* 動画プレビュー */}
-                  <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
-                    <div className="text-white/70" style={{ fontSize: 12, marginBottom: 8 }}>
-                      動画プレビュー
-                    </div>
-
-                    {displayVideoUrl ? (
-                      <video
-                        key={displayVideoUrl}
-                        src={displayVideoUrl}
-                        controls
-                        playsInline
-                        className="w-full rounded-xl border border-white/10"
-                      />
-                    ) : (
-                      <div
-                        className="w-full rounded-xl border border-white/10 bg-black/30 flex items-center justify-center text-white/55"
-                        style={{ aspectRatio: "16 / 9", fontSize: 13 }}
-                      >
-                        動画がありません（動画生成）
-                      </div>
-                    )}
-
-                    {/* 動画履歴 */}
-                    {d.videoUrls?.length ? (
-                      <div className="mt-3">
-                        <div className="text-white/70 mb-2" style={{ fontSize: 12 }}>
-                          生成履歴（クリックで切替）
-                        </div>
-
-                        <div className="flex flex-col gap-2">
-                          {d.videoUrls.slice(0, 6).map((u) => {
-                            const selected = selectedVideoUrl === u;
-                            return (
-                              <button
-                                key={u}
-                                type="button"
-                                onClick={() => setSelectedVideoUrl(u)}
-                                className="text-left rounded-xl border px-3 py-2 transition"
-                                style={{
-                                  borderColor: selected ? "rgba(255,255,255,0.35)" : "rgba(255,255,255,0.10)",
-                                  background: selected ? "rgba(255,255,255,0.10)" : "rgba(0,0,0,0.15)",
-                                  color: selected ? "rgba(255,255,255,0.95)" : "rgba(255,255,255,0.75)",
-                                  fontSize: 12,
-                                }}
-                              >
-                                {selected ? "✓ " : ""}
-                                {u.slice(0, 52)}
-                                {u.length > 52 ? "…" : ""}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    ) : null}
-
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      <Btn variant="primary" disabled={!uid || busy || !canGenerate} onClick={generateVideo}>
-                        動画を生成（合成画像があれば使用）
-                      </Btn>
-
-                      <Btn variant="secondary" disabled={!uid || busy} onClick={syncVideosFromStorage}>
-                        動画を同期（Storage→Firestore）
-                      </Btn>
-
-                      <Btn variant="ghost" disabled={!uid || busy} onClick={() => saveDraft()}>
-                        保存
-                      </Btn>
-                    </div>
-                  </div>
-
-                  {/* 動画設定 */}
-                  <div className="rounded-2xl border border-white/12 bg-black/25" style={{ padding: UI.cardPadding }}>
-                    <div className="text-white/85 mb-2" style={{ fontSize: UI.FONT.labelPx, fontWeight: 800 }}>
-                      動画設定
-                    </div>
-
-                    <div className="grid grid-cols-1 gap-3">
-                      <div>
-                        <div className="text-white/70 mb-2" style={{ fontSize: 12 }}>
-                          動き（テンプレ）
-                        </div>
-
-                        <div className="flex flex-wrap gap-2">
-                          {templateItems.map((t) => (
-                            <SelectBtn
-                              key={t.id}
-                              selected={d.videoTemplate === t.id}
-                              label={t.label}
-                              onClick={() => setD((p) => ({ ...p, videoTemplate: t.id }))}
-                              disabled={busy}
-                            />
-                          ))}
-                        </div>
-                      </div>
-
-                      <div>
-                        <div className="text-white/70 mb-2" style={{ fontSize: 12 }}>
-                          尺（秒）
-                        </div>
-
-                        <div className="flex flex-wrap gap-2">
-                          <SelectBtn
-                            selected={(d.videoSeconds ?? 5) === 5}
-                            label="5秒"
-                            onClick={() => setD((p) => ({ ...p, videoSeconds: 5 }))}
-                            disabled={busy}
-                          />
-                          <SelectBtn
-                            selected={(d.videoSeconds ?? 5) === 10}
-                            label="10秒"
-                            onClick={() => setD((p) => ({ ...p, videoSeconds: 10 }))}
-                            disabled={busy}
-                          />
-                        </div>
-                      </div>
-
-                      <div>
-                        <div className="text-white/70 mb-2" style={{ fontSize: 12 }}>
-                          品質
-                        </div>
-
-                        <div className="flex flex-wrap gap-2">
-                          <SelectBtn
-                            selected={(d.videoQuality ?? "standard") === "standard"}
-                            label={`標準（約 ${costStandard.toLocaleString()}円 / ${secondsKey}s）`}
-                            onClick={() => setD((p) => ({ ...p, videoQuality: "standard" }))}
-                            disabled={busy}
-                          />
-                          <SelectBtn
-                            selected={(d.videoQuality ?? "standard") === "high"}
-                            label={`高品質（約 ${costHigh.toLocaleString()}円 / ${secondsKey}s）`}
-                            onClick={() => setD((p) => ({ ...p, videoQuality: "high" }))}
-                            disabled={busy}
-                          />
-                        </div>
-
-                        <div className="mt-2 flex flex-wrap gap-2">
-                          <Chip>{pricingMetaText}</Chip>
-                          <Chip>
-                            目安: {shownCost.toLocaleString()}円 / {secondsKey}s（{d.videoQuality ?? "standard"}）
-                          </Chip>
-                        </div>
-                      </div>
-
-                      <div>
-                        <div className="text-white/70 mb-2" style={{ fontSize: 12 }}>
-                          サイズ（用途）
-                        </div>
-
-                        <div className="grid grid-cols-1 gap-2">
-                          {sizePresets.map((s) => {
-                            const selected = d.videoSize === s.id;
-                            return (
-                              <button
-                                key={s.id}
-                                type="button"
-                                onClick={() => setD((p) => ({ ...p, videoSize: s.id }))}
-                                disabled={busy}
-                                className="text-left rounded-xl border px-3 py-2 transition"
-                                style={{
-                                  borderColor: selected ? "rgba(255,255,255,0.35)" : "rgba(255,255,255,0.10)",
-                                  background: selected ? "rgba(255,255,255,0.10)" : "rgba(0,0,0,0.15)",
-                                  color: selected ? "rgba(255,255,255,0.95)" : "rgba(255,255,255,0.78)",
-                                }}
-                              >
-                                <div style={{ fontSize: 13, fontWeight: 800 }}>{selected ? `✓ ${s.label}` : s.label}</div>
-                                <div style={{ fontSize: 12, opacity: 0.75 }}>{s.sub}</div>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-
-                      <div className="flex flex-wrap gap-2">
-                        <Btn variant="ghost" disabled={!uid || busy} onClick={() => saveDraft()}>
-                          動画設定を保存
-                        </Btn>
-                        <Btn variant="secondary" disabled={!uid || busy} onClick={() => setPhase("ready")}>
-                          投稿待ちへ
-                        </Btn>
-                        <Btn variant="secondary" disabled={!uid || busy} onClick={() => setPhase("posted")}>
-                          投稿済みへ
-                        </Btn>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ) : null}
-            </div>
-
-            {/* canvas（文字入り画像生成用：画面には出さない） */}
-            <canvas ref={canvasRef} style={{ display: "none" }} />
+                )}
+              </>
+            )}
           </div>
-        </section>
+        </div>
       </div>
-    </>
+
+      <style jsx>{`
+        .flowRoot {
+          padding: 16px;
+          color: white;
+        }
+        .headerRow {
+          display: flex;
+          justify-content: space-between;
+          margin-bottom: 16px;
+        }
+        .brand {
+          font-weight: 900;
+        }
+        .columns {
+          display: grid;
+          grid-template-columns: 1fr 1.2fr 1fr;
+          gap: 12px;
+        }
+        .col {
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+        }
+        .card {
+          background: rgba(0, 0, 0, 0.45);
+          border: 1px solid rgba(255, 255, 255, 0.18);
+          border-radius: 14px;
+          padding: 12px;
+        }
+        .label {
+          font-size: 12px;
+          font-weight: 700;
+          margin-bottom: 6px;
+        }
+        .previewTabs {
+          display: flex;
+          gap: 6px;
+          margin-bottom: 8px;
+          flex-wrap: wrap;
+        }
+        .previewBox {
+          width: 100%;
+          aspect-ratio: 1 / 1;
+          background: black;
+          border-radius: 12px;
+          overflow: hidden;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .previewBox img {
+          max-width: 100%;
+          max-height: 100%;
+        }
+        .previewEmpty {
+          color: rgba(255, 255, 255, 0.5);
+          font-size: 12px;
+        }
+        .reasonText {
+          font-size: 11px;
+          color: #ffcc66;
+          margin-bottom: 6px;
+        }
+        .tabs {
+          display: flex;
+          gap: 6px;
+          margin-bottom: 10px;
+        }
+        .sticky {
+          position: sticky;
+          top: ${UI.rightStickyTopPx}px;
+        }
+        .videoPreview {
+          width: 100%;
+          margin-top: 8px;
+          border-radius: 10px;
+        }
+        .cost {
+          font-size: 13px;
+          margin-bottom: 8px;
+        }
+        .costMeta {
+          font-size: 11px;
+          opacity: 0.7;
+        }
+      `}</style>
+    </div>
   );
 }
