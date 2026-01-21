@@ -576,6 +576,8 @@ const [previewReason, setPreviewReason] = useState<string>("");
 const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const [videoPreviewUrl, setVideoPreviewUrl] = useState<string | null>(null);
+  // ✅ 動画のキャッシュバスター：切替時だけ更新する（常時は更新しない）
+  const [videoCacheKey, setVideoCacheKey] = useState<number>(0);
   const [videoHistory, setVideoHistory] = useState<string[]>([]);
   const [selectedVideoUrl, setSelectedVideoUrl] = useState<string | null>(null);
 
@@ -867,24 +869,47 @@ setBgImageUrl(initialBg);
   }, [d.imageSource, d.baseImageUrl, d.aiImageUrl]);
 
   const displayImageUrl = useMemo(() => {
-  // ✅ プレビューは previewMode で決める（保存互換の imageSource は見ない）
-if (previewMode === "composite") {
-  return (
-    overlayPreviewDataUrl ||
-    d.compositeImageUrl ||   // ← 文字入り保存（PNG）
-    d.aiImageUrl ||          // ← 背景合成（動画用）
-    d.baseImageUrl ||        // ← 最後の保険
-    ""
-  );
-}
-  if (previewMode === "idea") {
-    // イメージ＝世界観用（未実装なら空になる）
-    return d.imageIdeaUrl || "";
-  }
-  // base（元画像）
-  return d.baseImageUrl || "";
-}, [previewMode, overlayPreviewDataUrl, d.compositeImageUrl, d.aiImageUrl, d.baseImageUrl, d.imageIdeaUrl]);
+    // ✅ プレビューは previewMode で決める（保存互換の imageSource は見ない）
+    if (previewMode === "composite") {
+      return (
+        overlayPreviewDataUrl ||
+        d.compositeImageUrl || // ← 文字入り保存（PNG）
+        d.aiImageUrl || // ← 背景合成（動画用）
+        d.baseImageUrl || // ← 最後の保険
+        ""
+      );
+    }
+    if (previewMode === "idea") {
+      // イメージ＝世界観用（未実装なら空になる）
+      return d.imageIdeaUrl || "";
+    }
+    // base（元画像）
+    return d.baseImageUrl || "";
+  }, [
+    previewMode,
+    overlayPreviewDataUrl,
+    d.compositeImageUrl,
+    d.aiImageUrl,
+    d.baseImageUrl,
+    d.imageIdeaUrl,
+  ]);
 
+  // ✅ B.「URLが切り替わった時だけ」cache key を更新（常時 Date.now() しない）
+  useEffect(() => {
+    const u =
+      selectedVideoUrl ||
+      videoPreviewUrl ||
+      d.videoUrl ||
+      (videoHistory.length ? videoHistory[0] : "") ||
+      (d.videoUrls.length ? d.videoUrls[0] : "");
+
+    if (!u) return;
+
+    setVideoCacheKey(Date.now());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedVideoUrl, videoPreviewUrl, d.videoUrl, videoHistory, d.videoUrls]);
+
+  // ✅ C. 動画URLは「切替時にだけ」v= を更新する（Range/206安定のため）
   const displayVideoUrl = useMemo(() => {
     const u =
       selectedVideoUrl ||
@@ -895,9 +920,12 @@ if (previewMode === "composite") {
 
     if (!u) return undefined;
 
+    // ✅ 初回だけは v= を付けない（不要なキャッシュ破壊を避ける）
+    if (!videoCacheKey) return u;
+
     const sep = u.includes("?") ? "&" : "?";
-    return `${u}${sep}v=${Date.now()}`;
-  }, [selectedVideoUrl, videoPreviewUrl, d.videoUrl, videoHistory, d.videoUrls]);
+    return `${u}${sep}v=${videoCacheKey}`;
+  }, [selectedVideoUrl, videoPreviewUrl, d.videoUrl, videoHistory, d.videoUrls, videoCacheKey]);
 
   async function saveDraft(partial?: Partial<DraftDoc>): Promise<string | null> {
     if (!uid) return null;
@@ -1245,86 +1273,81 @@ if (dataUrl) {
     return "1280:720";
   }
 
-  async function replaceBackgroundAndSaveToAiImage() {
-    if (!uid) return;
+async function replaceBackgroundAndSaveToAiImage() {
+  if (!uid) return;
 
-    if (inFlightRef.current["replaceBg"]) return;
-    inFlightRef.current["replaceBg"] = true;
+  if (inFlightRef.current["replaceBg"]) return;
+  inFlightRef.current["replaceBg"] = true;
 
-    setBusy(true);
-    try {
-      // 下書きIDを確定
-      const ensuredDraftId = draftId ?? (await saveDraft());
-      if (!ensuredDraftId) throw new Error("failed to create draft");
+  setBusy(true);
+  try {
+    // 下書きIDを確定
+    const ensuredDraftId = draftId ?? (await saveDraft());
+    if (!ensuredDraftId) throw new Error("failed to create draft");
 
-      // ✅ 前景（商品）＝「文字入り保存(composite)」があれば最優先
-// そうでなければ「元画像(base)」
-// ※ これで「合成画像(aiImageUrl)も文字入り」になる
-const fg = d.compositeImageUrl || d.baseImageUrl || "";
-
-if (!fg) {
-  alert("先に元画像を保存してください（合成の前景がありません）");
-  return;
-}
-
-// 文字入りを使いたいのにまだ無い場合は、迷わないように明示
-if (!d.compositeImageUrl && d.overlayEnabled && (d.overlayText || "").trim()) {
-  alert("文字を入れて合成したい場合は、先に「文字入り画像を保存」を押してください");
-  // ここで return するかは運用次第。確実に迷いゼロにするなら return 推奨。
-  return;
-}
-
-      // 背景：無ければ生成して使う
-      const bg = bgImageUrl ? bgImageUrl : await generateBackgroundImage(fg);
-
-      const ratio = ratioFromVideoSize(d.videoSize ?? "1024x1792");
-
-      const r = await fetch("/api/replace-background", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          foregroundImage: fg,
-          backgroundImage: bg,
-          ratio,
-          fit: "contain",
-        }),
-      });
-
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok) {
-        throw new Error(j?.error || "replace-background error");
-      }
-
-      // 返り値の取り回し（mock/実装差を吸収）
-      // - imageUrl がURLならそれを保存
-      // - dataUrl / b64 が来ても保存できるようにする
-      let outUrl = "";
-
-      if (typeof j?.imageUrl === "string" && j.imageUrl.startsWith("http")) {
-        outUrl = j.imageUrl;
-      } else if (typeof j?.dataUrl === "string" && j.dataUrl.startsWith("data:image/")) {
-        outUrl = await uploadDataUrlToStorage(uid, ensuredDraftId, j.dataUrl);
-      } else if (typeof j?.b64 === "string" && j.b64) {
-        const dataUrl = `data:image/png;base64,${j.b64}`;
-        outUrl = await uploadDataUrlToStorage(uid, ensuredDraftId, dataUrl);
-      } else {
-        throw new Error("合成結果が取得できませんでした（imageUrl/dataUrl/b64が無い）");
-      }
-
-      // ✅ 保存先：今回は schema を増やさず aiImageUrl に保存する
-      // （= “合成結果をAI側の代表画像として扱う”）
-      setD((p) => ({ ...p, aiImageUrl: outUrl, imageSource: "ai" }));
-      await saveDraft({ aiImageUrl: outUrl, imageSource: "ai", phase: "draft" });
-
-      alert("切り抜き＋背景合成を保存しました（AI画像として扱います）");
-    } catch (e: any) {
-      console.error(e);
-      alert(`背景合成に失敗しました\n\n原因: ${e?.message || "不明"}`);
-    } finally {
-      setBusy(false);
-      inFlightRef.current["replaceBg"] = false;
+    // ✅ 前景（商品）＝「文字入り保存(composite)」があれば最優先
+    // そうでなければ「元画像(base)」
+    const fg = d.compositeImageUrl || d.baseImageUrl || "";
+    if (!fg) {
+      alert("先に元画像を保存してください（合成の前景がありません）");
+      return;
     }
+
+    // 文字入りを使いたいのにまだ無い場合は明示して止める
+    if (!d.compositeImageUrl && d.overlayEnabled && (d.overlayText || "").trim()) {
+      alert("文字を入れて合成したい場合は、先に「文字入り画像を保存」を押してください");
+      return;
+    }
+
+    // 背景：無ければ生成して使う
+    const bg = bgImageUrl ? bgImageUrl : await generateBackgroundImage(fg);
+
+    const ratio = ratioFromVideoSize(d.videoSize ?? "1024x1792");
+
+    const r = await fetch("/api/replace-background", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        foregroundImage: fg,
+        backgroundImage: bg,
+        ratio,
+        fit: "contain",
+      }),
+    });
+
+    const j = await r.json().catch(() => ({}));
+
+    if (!r.ok || j?.ok === false) {
+      throw new Error(j?.error || "replace-background error");
+    }
+
+    // ✅ 新route.ts は dataUrl を返す（mock時は imageUrl の場合もある）ので両対応
+    let outUrl = "";
+
+    if (typeof j?.dataUrl === "string" && j.dataUrl.startsWith("data:image/")) {
+      outUrl = await uploadDataUrlToStorage(uid, ensuredDraftId, j.dataUrl);
+    } else if (typeof j?.imageUrl === "string" && j.imageUrl.startsWith("http")) {
+      outUrl = j.imageUrl;
+    } else if (typeof j?.b64 === "string" && j.b64) {
+      const dataUrl = `data:image/png;base64,${j.b64}`;
+      outUrl = await uploadDataUrlToStorage(uid, ensuredDraftId, dataUrl);
+    } else {
+      throw new Error("合成結果が取得できませんでした（dataUrl/imageUrl/b64が無い）");
+    }
+
+    // ✅ 保存先：aiImageUrl（合成画像＝動画用の代表）
+    setD((p) => ({ ...p, aiImageUrl: outUrl, imageSource: "ai" }));
+    await saveDraft({ aiImageUrl: outUrl, imageSource: "ai", phase: "draft" });
+
+    alert("切り抜き＋背景合成を保存しました（AI画像として扱います）");
+  } catch (e: any) {
+    console.error(e);
+    alert(`背景合成に失敗しました\n\n原因: ${e?.message || "不明"}`);
+  } finally {
+    setBusy(false);
+    inFlightRef.current["replaceBg"] = false;
   }
+}
 
   async function generateBackgroundImage(referenceImageUrl: string): Promise<string> {
     if (!uid) throw new Error("no uid");

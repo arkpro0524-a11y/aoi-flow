@@ -5,12 +5,14 @@ import React from "react";
 import { signOut } from "firebase/auth";
 import { auth } from "@/firebase";
 import FlowShell from "@/components/FlowShell";
-import { useAuthUser } from "@/components/AuthGate";
+import AuthGate, { useAuthUser } from "@/components/AuthGate";
 
-export default function FlowLayout({ children }: { children: React.ReactNode }) {
+function Inner({ children }: { children: React.ReactNode }) {
   const user = useAuthUser();
 
   async function onLogout() {
+    // auth が何らかで壊れてても落とさない（保険）
+    if (!auth) return;
     await signOut(auth);
   }
 
@@ -18,5 +20,14 @@ export default function FlowLayout({ children }: { children: React.ReactNode }) 
     <FlowShell user={user} onLogout={onLogout}>
       {children}
     </FlowShell>
+  );
+}
+
+export default function FlowLayout({ children }: { children: React.ReactNode }) {
+  // ✅ ここで /flow 配下をガードする（未ログインなら /login へ）
+  return (
+    <AuthGate>
+      <Inner>{children}</Inner>
+    </AuthGate>
   );
 }
