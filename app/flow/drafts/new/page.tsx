@@ -1046,52 +1046,75 @@ caption_final: next.ig,
     }
   }
 
-  async function generateAiImage() {
-    if (!uid) return;
-    const vision = d.vision.trim();
-    if (!vision) return alert("Vision（必須）を入力してください");
+async function generateAiImage() {
+  if (!uid) return;
+  const vision = d.vision.trim();
+  if (!vision) return alert("Vision（必須）を入力してください");
 
-    if (inFlightRef.current["image"]) return;
-    inFlightRef.current["image"] = true;
+  if (inFlightRef.current["image"]) return;
+  inFlightRef.current["image"] = true;
 
-    setBusy(true);
-    try {
-      const token = await auth.currentUser?.getIdToken(true);
-      if (!token) throw new Error("no token");
+  setBusy(true);
+  try {
+    const token = await auth.currentUser?.getIdToken(true);
+    if (!token) throw new Error("no token");
 
-      const ensuredDraftId = draftId ?? (await saveDraft());
-      if (!ensuredDraftId) throw new Error("failed to create draft");
+    const ensuredDraftId = draftId ?? (await saveDraft());
+    if (!ensuredDraftId) throw new Error("failed to create draft");
 
-      const body = { brandId: d.brand, vision, keywords: splitKeywords(d.keywordsText), tone: "" };
+    const body = {
+      brandId: d.brand,
+      vision,
+      keywords: splitKeywords(d.keywordsText),
+      tone: "",
+    };
 
-      const r = await fetch("/api/generate-image", {
-        method: "POST",
-        headers: { "content-type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify(body),
-      });
+    const r = await fetch("/api/generate-image", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(body),
+    });
 
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(j?.error || "image error");
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j?.error || "image error");
 
-      const b64 = typeof j.b64 === "string" ? j.b64 : "";
-      if (!b64) throw new Error("no b64");
+    // ✅ /api/generate-image の返却差異に全部対応する
+    let outUrl = "";
 
-      const dataUrl = `data:image/png;base64,${b64}`;
-      const url = await uploadDataUrlToStorage(uid, ensuredDraftId, dataUrl);
+    // 1) dataUrl（推奨）
+    if (typeof j?.dataUrl === "string" && j.dataUrl.startsWith("data:image/")) {
+      outUrl = await uploadDataUrlToStorage(uid, ensuredDraftId, j.dataUrl);
 
-      setD((prev) => ({
-  ...prev,
-  imageIdeaUrl: url,
-}));
-await saveDraft({ imageIdeaUrl: url, phase: "draft" });
-    } catch (e: any) {
-      console.error(e);
-      alert(`画像生成に失敗しました\n\n原因: ${e?.message || "不明"}`);
-    } finally {
-      setBusy(false);
-      inFlightRef.current["image"] = false;
+      // 2) imageUrl / url（既にStorage等にあるURL）
+    } else if (typeof j?.imageUrl === "string" && j.imageUrl.startsWith("http")) {
+      outUrl = j.imageUrl;
+    } else if (typeof j?.url === "string" && j.url.startsWith("http")) {
+      outUrl = j.url;
+
+      // 3) b64（旧方式）
+    } else if (typeof j?.b64 === "string" && j.b64) {
+      const dataUrl = `data:image/png;base64,${j.b64}`;
+      outUrl = await uploadDataUrlToStorage(uid, ensuredDraftId, dataUrl);
+
+    } else {
+      // デバッグしやすいように「何が来たか」を残す
+      console.error("generate-image response:", j);
+      throw new Error("画像生成結果が取得できませんでした（dataUrl/url/imageUrl/b64が無い）");
     }
+
+    setD((prev) => ({ ...prev, imageIdeaUrl: outUrl }));
+    await saveDraft({ imageIdeaUrl: outUrl, phase: "draft" });
+  } catch (e: any) {
+    console.error(e);
+    alert(`画像生成に失敗しました\n\n原因: ${e?.message || "不明"}`);
+  } finally {
+    setBusy(false);
+    inFlightRef.current["image"] = false;
   }
+}
 
 async function renderToCanvasAndGetDataUrlSilent(): Promise<string | null> {
   const canvas = canvasRef.current;
