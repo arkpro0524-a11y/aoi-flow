@@ -1642,6 +1642,17 @@ return url;
   grid-template-columns: 1fr; /* ✅ スマホは縦 */
   gap: 8px;
 }
+.imgPair3{
+  display: grid;
+  grid-template-columns: 1fr; /* スマホは縦 */
+  gap: 8px;
+}
+
+@media (min-width: 900px){
+  .imgPair3{
+    grid-template-columns: 1fr 1fr 1fr; /* PCは3列 */
+  }
+}
 
 @media (min-width: 900px){
   .imgPair{
@@ -1967,94 +1978,141 @@ return url;
       ========================== */}
       {rightTab === "image" ? (
         <div className="mt-3 grid grid-cols-1 gap-2">
-{/* 元画像｜背景（横並び） */}
-<div className="imgPair">
-                {/* 元画像 */}
-            <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
-              <div className="text-white/70" style={{ fontSize: 12, marginBottom: 8 }}>
-                プレビュー：元画像（文字入りはここに表示）
-              </div>
+{/* 元画像｜背景｜合成（横並び） */}
+<div className="imgPair3">
+  {/* 元画像 */}
+  <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
+    <div className="text-white/70" style={{ fontSize: 12, marginBottom: 8 }}>
+      プレビュー：元画像（文字入りはここに表示）
+    </div>
 
-              {d.baseImageUrl ? (
-<img
-  src={overlayPreviewDataUrl || d.baseImageUrl}
-  alt="base"
-  className="w-full rounded-xl border border-white/10"
-  style={{ height: 240, objectFit: "contain", background: "rgba(0,0,0,0.25)" }}
-/>
-              ) : (
-                <div
-                  className="w-full rounded-xl border border-white/10 bg-black/30 flex items-center justify-center text-white/55"
-                  style={{ aspectRatio: "1 / 1", fontSize: 13 }}
-                >
-                  元画像がありません（アップロード→保存）
-                </div>
-              )}
+    {d.baseImageUrl ? (
+      <img
+        src={overlayPreviewDataUrl || d.baseImageUrl}
+        alt="base"
+        className="w-full rounded-xl border border-white/10"
+        style={{ height: 240, objectFit: "contain", background: "rgba(0,0,0,0.25)" }}
+      />
+    ) : (
+      <div
+        className="w-full rounded-xl border border-white/10 bg-black/30 flex items-center justify-center text-white/55"
+        style={{ aspectRatio: "1 / 1", fontSize: 13 }}
+      >
+        元画像がありません（アップロード→保存）
+      </div>
+    )}
 
-              <div className="mt-3 flex flex-wrap gap-2">
-                <Btn variant="secondary" disabled={!uid || busy} onClick={saveCompositeAsImageUrl}>
-                  文字入り画像を保存
-                </Btn>
+    <div className="mt-3 flex flex-wrap gap-2">
+      <Btn variant="secondary" disabled={!uid || busy} onClick={saveCompositeAsImageUrl}>
+        文字入り画像を保存
+      </Btn>
 
-                <Btn variant="ghost" disabled={!uid || busy} onClick={() => saveDraft()}>
-                  保存
-                </Btn>
-              </div>
+      <Btn variant="ghost" disabled={!uid || busy} onClick={() => saveDraft()}>
+        保存
+      </Btn>
+    </div>
 
-              <div className="text-white/55 mt-2" style={{ fontSize: 12, lineHeight: 1.5 }}>
-                ※ 文字入りプレビューは「元画像」に表示されます。
-              </div>
-            </div>
+    <div className="text-white/55 mt-2" style={{ fontSize: 12, lineHeight: 1.5 }}>
+      ※ 文字入りプレビューは「元画像」に表示されます。
+    </div>
+  </div>
 
-            {/* 背景（合成・動画用） */}
-            <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
-              <div className="text-white/70" style={{ fontSize: 12, marginBottom: 8 }}>
-                背景(合成・動画用)
-              </div>
+  {/* 背景（合成・動画用） */}
+  <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
+    <div className="text-white/70" style={{ fontSize: 12, marginBottom: 8 }}>
+      背景(合成・動画用)
+    </div>
 
-              {bgImageUrl ? (
-<img
-  src={bgImageUrl}
-  alt="bg"
-  className="w-full rounded-xl border border-white/10"
-  style={{ height: 240, objectFit: "contain", background: "rgba(0,0,0,0.25)" }}
-/>
-              ) : (
-                <div
-                  className="w-full rounded-xl border border-white/10 bg-black/30 flex items-center justify-center text-white/55"
-                  style={{ aspectRatio: "1 / 1", fontSize: 13 }}
-                >
-                  背景がありません（背景生成）
-                </div>
-              )}
+    {bgImageUrl ? (
+      <img
+        src={bgImageUrl}
+        alt="bg"
+        className="w-full rounded-xl border border-white/10"
+        style={{ height: 240, objectFit: "contain", background: "rgba(0,0,0,0.25)" }}
+      />
+    ) : (
+      <div
+        className="w-full rounded-xl border border-white/10 bg-black/30 flex items-center justify-center text-white/55"
+        style={{ aspectRatio: "1 / 1", fontSize: 13 }}
+      >
+        背景がありません（背景生成）
+      </div>
+    )}
 
-              <div className="mt-3 flex flex-wrap gap-2">
-                <Btn
-                  variant="secondary"
-                  disabled={!uid || busy}
-                  onClick={async () => {
-                    // 背景生成は「元画像」を基準にする（仕様：迷わせない）
-                    const base = d.baseImageUrl || "";
-                    if (!base) {
-                      alert("先に元画像を保存してください");
-                      return;
-                    }
-                    await generateBackgroundImage(base);
-                  }}
-                >
-                  背景画像を生成（合成・動画用）
-                </Btn>
+    <div className="mt-3 flex flex-wrap gap-2">
+      <Btn
+        variant="secondary"
+        disabled={!uid || busy}
+        onClick={async () => {
+          const base = d.baseImageUrl || "";
+          if (!base) {
+            alert("先に元画像を保存してください");
+            return;
+          }
+          await generateBackgroundImage(base);
+        }}
+      >
+        背景画像を生成（合成・動画用）
+      </Btn>
 
-                <Btn variant="secondary" disabled={!uid || busy} onClick={replaceBackgroundAndSaveToAiImage}>
-                  製品画像＋背景を合成（保存）
-                </Btn>
-              </div>
+      <Btn
+        variant="secondary"
+        disabled={!uid || busy}
+        onClick={replaceBackgroundAndSaveToAiImage}
+      >
+        製品画像＋背景を合成（保存）
+      </Btn>
+    </div>
 
-              <div className="text-white/55 mt-2" style={{ fontSize: 12, lineHeight: 1.5 }}>
-                ※ この背景が「合成」と「動画」に使われます。
-              </div>
-            </div>
-          </div>
+    <div className="text-white/55 mt-2" style={{ fontSize: 12, lineHeight: 1.5 }}>
+      ※ この背景が「合成」と「動画」に使われます。
+    </div>
+  </div>
+
+  {/* 合成結果（動画用）＝ aiImageUrl */}
+  <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
+    <div className="text-white/70" style={{ fontSize: 12, marginBottom: 8 }}>
+      合成結果（動画用）
+    </div>
+
+    {d.aiImageUrl ? (
+      <img
+        src={d.aiImageUrl}
+        alt="ai"
+        className="w-full rounded-xl border border-white/10"
+        style={{ height: 240, objectFit: "contain", background: "rgba(0,0,0,0.25)" }}
+      />
+    ) : (
+      <div
+        className="w-full rounded-xl border border-white/10 bg-black/30 flex items-center justify-center text-white/55"
+        style={{ aspectRatio: "1 / 1", fontSize: 13 }}
+      >
+        合成画像がありません（合成→保存）
+      </div>
+    )}
+
+    <div className="mt-3 flex flex-wrap gap-2">
+      <Btn
+        variant="ghost"
+        disabled={!uid || busy || !d.aiImageUrl}
+        onClick={() => {
+          setPreviewMode("composite");
+          setPreviewReason("");
+        }}
+      >
+        プレビューを「合成」に切替
+      </Btn>
+
+      <Btn variant="ghost" disabled={!uid || busy} onClick={() => saveDraft()}>
+        保存
+      </Btn>
+    </div>
+
+    <div className="text-white/55 mt-2" style={{ fontSize: 12, lineHeight: 1.5 }}>
+      ※ 「製品画像＋背景を合成（保存）」の結果がここに出ます（aiImageUrl）。
+    </div>
+  </div>
+</div>
 
           {/* 文字の編集UI */}
           <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
