@@ -1,9 +1,12 @@
-===== app/api/check-video-task/route.ts =====
 // /app/api/check-video-task/route.ts
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/server/firebaseAdmin";
 import { checkVideoTaskWithRunway } from "@/lib/server/runway";
 import admin from "firebase-admin";
+import crypto from "crypto";
+
+// ✅ firebase-admin / Buffer / crypto を使うので Node 固定（Edge 回避）
+export const runtime = "nodejs";
 
 async function requireUser(req: Request) {
   const authz = req.headers.get("authorization") || "";
@@ -14,6 +17,58 @@ async function requireUser(req: Request) {
   return { uid: decoded.uid };
 }
 
+function toUiStatus(runwayStatus: string): "queued" | "running" | "done" | "error" {
+  // runway: queued/running/succeeded/failed/...
+  if (runwayStatus === "queued") return "queued";
+  if (runwayStatus === "running") return "running";
+  if (runwayStatus === "succeeded") return "done";
+  if (runwayStatus === "failed") return "error";
+  // 予期しない値は running 扱い（課金事故防止：勝手に失敗扱いしない）
+  return "running";
+}
+
+// ✅ Runwayの戻り値が揺れても拾えるように「動画URL候補」を吸収
+function pickVideoUrl(res: any): string | null {
+  const cands: any[] = [
+    res?.videoUrl,
+    res?.url,
+    res?.outputUrl,
+    res?.output_url,
+    res?.result?.url,
+    res?.result?.videoUrl,
+    res?.data?.url,
+    res?.data?.videoUrl,
+    // よくある配列パターンも拾う（存在すれば）
+    ...(Array.isArray(res?.assets) ? res.assets.map((a: any) => a?.url) : []),
+    ...(Array.isArray(res?.outputs) ? res.outputs.map((o: any) => o?.url) : []),
+  ];
+
+  for (const v of cands) {
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return null;
+}
+
+async function fetchAsBuffer(url: string): Promise<Buffer> {
+  // ✅ タイムアウト（無限待ち防止）
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 60_000);
+
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    if (!res.ok) throw new Error(`failed to download video: ${res.status}`);
+    const ab = await res.arrayBuffer();
+    return Buffer.from(ab);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function storageDownloadUrl(bucketName: string, filePath: string, token: string) {
+  const encoded = encodeURIComponent(filePath);
+  return `https://firebasestorage.googleapis.com/v0/b/${bucketName}/o/${encoded}?alt=media&token=${token}`;
+}
+
 export async function POST(req: Request) {
   try {
     const payload = await req.json();
@@ -21,14 +76,10 @@ export async function POST(req: Request) {
     const draftId = String(payload?.draftId || "");
     const taskId = String(payload?.taskId || "");
 
-    if (!draftId) {
-      return NextResponse.json({ error: "draftId is required" }, { status: 400 });
-    }
-    if (!taskId) {
-      return NextResponse.json({ error: "taskId is required" }, { status: 400 });
-    }
+    if (!draftId) return NextResponse.json({ error: "draftId is required" }, { status: 400 });
+    if (!taskId) return NextResponse.json({ error: "taskId is required" }, { status: 400 });
 
-    // ✅ 課金事故防止：未認証は不可
+    // ✅ 未認証は不可
     const user = await requireUser(req);
 
     const db = getDb();
@@ -36,10 +87,9 @@ export async function POST(req: Request) {
 
     // ✅ 所有者チェック
     const snap = await ref.get();
-    if (!snap.exists) {
-      return NextResponse.json({ error: "draft not found" }, { status: 404 });
-    }
+    if (!snap.exists) return NextResponse.json({ error: "draft not found" }, { status: 404 });
     const data = snap.data() as any;
+
     if (String(data?.userId || "") !== user.uid) {
       return NextResponse.json({ error: "forbidden" }, { status: 403 });
     }
@@ -47,46 +97,126 @@ export async function POST(req: Request) {
     // ✅ task確認
     const res = await checkVideoTaskWithRunway(taskId);
 
-    // ✅【致命修正②】成功したら videoUrl を draft に確定保存
-    if (res.status === "succeeded" && res.videoUrl) {
+    // status は checkVideoTaskWithRunway が整形してる想定だが、念のため raw も拾う
+    const uiStatus = toUiStatus(String(res?.status || res?.rawStatus || ""));
+
+    // ✅ Runwayの動画URL揺れを吸収
+    const runwayVideoUrl = pickVideoUrl(res);
+
+    // ✅ 返すURL（UIが拾うキーは url / videoUrl / outputUrl を吸収するが、UI側は url が最も確実）
+    let finalUrl: string | null = null;
+
+    // =========================
+    // ✅ succeeded → Firebase Storage に mp4 を保存してURLを確定
+    // =========================
+    if (uiStatus === "done" && runwayVideoUrl) {
+      // すでに Storage URL が入っているなら再アップロードしない（無限増殖防止）
+      const already = String(data?.videoUrl || "");
+      if (already.includes("firebasestorage.googleapis.com")) {
+        finalUrl = already;
+      } else {
+        // ✅ admin.app().options 前提を捨てる：bucket() の default を使い、name から bucketName を取る
+        // （これで admin.app 未初期化由来のクラッシュを避ける）
+        const bucket = admin.storage().bucket(); // default bucket
+        const bucketName = String(bucket?.name || "").trim();
+        if (!bucketName) throw new Error("Firebase Storage bucket is not configured (bucket name empty)");
+
+        const filePath = `users/${user.uid}/drafts/${draftId}/videos/${Date.now()}_${taskId}.mp4`;
+        const buf = await fetchAsBuffer(runwayVideoUrl);
+
+        const token = crypto.randomUUID();
+        const file = bucket.file(filePath);
+
+        // ✅ token をメタに入れると「downloadURL形式」で配れる
+        await file.save(buf, {
+          contentType: "video/mp4",
+          resumable: false,
+          metadata: {
+            metadata: {
+              firebaseStorageDownloadTokens: token,
+            },
+            cacheControl: "public,max-age=31536000",
+          },
+        });
+
+        finalUrl = storageDownloadUrl(bucketName, filePath, token);
+      }
+
+      // ✅ Firestoreへ確定保存（UI語彙に統一）
+      // videoUrls 履歴も更新（最大10）
+      const prev: string[] = Array.isArray(data?.videoUrls)
+        ? data.videoUrls.filter((x: any) => typeof x === "string")
+        : [];
+
+      const nextUrls = finalUrl
+        ? [finalUrl, ...prev.filter((x) => x !== finalUrl)].slice(0, 10)
+        : prev.slice(0, 10);
+
       await ref.set(
         {
           videoTaskId: taskId,
-          videoUrl: res.videoUrl,
-          videoStatus: "succeeded",
+          videoUrl: finalUrl,
+          videoUrls: nextUrls,
+          videoStatus: "done",
           videoCompletedAt: admin.firestore.FieldValue.serverTimestamp(),
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         },
         { merge: true }
       );
-    } else if (res.status === "failed") {
+
+      return NextResponse.json({
+        ok: true,
+        taskId: res?.taskId || taskId,
+        status: "done",
+        url: finalUrl, // ✅ UIが最も確実に拾う
+        videoUrl: finalUrl, // 互換
+        rawStatus: res?.rawStatus || null,
+      });
+    }
+
+    // =========================
+    // ✅ failed → error
+    // =========================
+    if (uiStatus === "error") {
       await ref.set(
         {
           videoTaskId: taskId,
-          videoStatus: "failed",
+          videoStatus: "error",
           videoFailedAt: admin.firestore.FieldValue.serverTimestamp(),
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         },
         { merge: true }
       );
-    } else {
-      // queued / running
-      await ref.set(
-        {
-          videoTaskId: taskId,
-          videoStatus: res.status,
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        },
-        { merge: true }
-      );
+
+      return NextResponse.json({
+        ok: true,
+        taskId: res?.taskId || taskId,
+        status: "error",
+        url: null,
+        videoUrl: null,
+        rawStatus: res?.rawStatus || null,
+      });
     }
+
+    // =========================
+    // ✅ queued/running
+    // =========================
+    await ref.set(
+      {
+        videoTaskId: taskId,
+        videoStatus: uiStatus, // queued or running
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
 
     return NextResponse.json({
       ok: true,
-      taskId: res.taskId,
-      status: res.status,
-      videoUrl: res.videoUrl || null,
-      rawStatus: res.rawStatus || null,
+      taskId: res?.taskId || taskId,
+      status: uiStatus, // queued | running
+      url: null,
+      videoUrl: null,
+      rawStatus: res?.rawStatus || null,
     });
   } catch (e: any) {
     return NextResponse.json(
@@ -94,7 +224,7 @@ export async function POST(req: Request) {
       { status: 500 }
     );
   }
-}===== app/api/_pricing/pricing.ts =====
+}
 /**
  * app/api/_pricing/pricing.ts
  * ==========================
@@ -136,7 +266,7 @@ export function estimateRunwayVideoCostJPY(
   quality: "standard" | "high" = "standard"
 ) {
   return estimateVideoCostJPY(uiSeconds, quality);
-}===== app/api/migrate-video/route.ts =====
+}
 /**
  * app/api/migrate-video/route.ts
  * ─────────────────────────────────────────────
@@ -168,1847 +298,3 @@ export type MigrateVideoParams = {
    ENV 切替
 ========================================================= */
 
-const USE_MOCK = process.env.USE_MIGRATE_VIDEO_MOCK === "true";
-
-/* =========================================================
-   Mock 実装（UI接続確認用）
-========================================================= */
-
-function mockMigrateVideo(params: MigrateVideoParams) {
-  return {
-    ok: true,
-    mock: true,
-    sourceUrl: params.sourceVideoUrl,
-    runwayVideoUrl: "https://example.com/mock-migrated-video.mp4",
-    model: params.model ?? "gen4_turbo",
-  };
-}
-
-/* =========================================================
-   POST Handler
-========================================================= */
-
-export async function POST(req: Request) {
-  try {
-    const body = await req.json();
-
-    const params: MigrateVideoParams = {
-      sourceVideoUrl: body.sourceVideoUrl,
-      model: body.model ?? "gen4_turbo",
-    };
-
-    if (!params.sourceVideoUrl) {
-      return NextResponse.json(
-        { ok: false, error: "sourceVideoUrl は必須です" },
-        { status: 400 }
-      );
-    }
-
-    // 冪等キー（将来の実装でも同じキーで扱える）
-    const _idemKey = getIdempotencyKey(req, params);
-
-    // STEP5-A：Mock
-    if (USE_MOCK) {
-      return NextResponse.json(mockMigrateVideo(params));
-    }
-
-    // STEP5-B：実API（後続STEPで実装）
-    return NextResponse.json(
-      { ok: false, error: "migrate-video (real) is not implemented yet" },
-      { status: 501 }
-    );
-  } catch (err: any) {
-    console.error("[migrate-video]", err);
-    return NextResponse.json(
-      { ok: false, error: err?.message || "動画の移行に失敗しました" },
-      { status: 500 }
-    );
-  }
-}===== app/api/recommend-video-template/route.ts =====
-/**
- * app/api/recommend-video-template/route.ts
- * ─────────────────────────────────────────────
- * 役割：
- * - 入力（画像有無/用途/尺/品質 等）から推奨テンプレを返す
- *
- * 設計：
- * - USE_RECOMMEND_VIDEO_TEMPLATE_MOCK=true  → mock JSON
- * - false → （現時点では未実装なので 501）
- *
- * 注意：
- * - lib/server/runway.ts は「動画生成専用」なので、ここから import しない
- * - JSON構造は mock/実 で完全一致（実装時もこの形を維持）
- */
-
-import { NextResponse } from "next/server";
-import { getIdempotencyKey } from "@/lib/server/idempotency";
-
-/* =========================================================
-   型（このAPI内だけで完結 / UIは一切触らない）
-========================================================= */
-
-export type RecommendVideoTemplateParams = {
-  hasImage: boolean;
-  purpose?: string; // "product" etc
-  seconds?: number; // UI入力をそのまま受ける
-  quality?: string; // "standard" | "high" など
-  platform?: string; // "instagram" etc
-};
-
-type Recommendation = {
-  model: string;
-  ratio: string;
-  seconds: number;
-  quality: "standard" | "high";
-  reason: string;
-};
-
-/* =========================================================
-   ENV 切替
-========================================================= */
-
-const USE_MOCK = process.env.USE_RECOMMEND_VIDEO_TEMPLATE_MOCK === "true";
-
-/* =========================================================
-   Mock 実装
-========================================================= */
-
-function mockRecommendTemplate(params: RecommendVideoTemplateParams) {
-  const seconds = params.seconds === 5 ? 5 : 10;
-  const quality = String(params.quality).toLowerCase() === "high" ? "high" : "standard";
-
-  const recommendation: Recommendation = {
-    model: "gen4_turbo",
-    ratio: "1280:720",
-    seconds,
-    quality,
-    reason: "商品アップ向けの汎用テンプレ（安定性優先）",
-  };
-
-  return {
-    ok: true,
-    mock: true,
-    recommendation,
-  };
-}
-
-/* =========================================================
-   POST Handler
-========================================================= */
-
-export async function POST(req: Request) {
-  try {
-    const body = await req.json();
-
-    const params: RecommendVideoTemplateParams = {
-      hasImage: Boolean(body.hasImage),
-      purpose: body.purpose ?? "product",
-      seconds: body.seconds,
-      quality: body.quality,
-      platform: body.platform ?? "instagram",
-    };
-
-    const _idemKey = getIdempotencyKey(req, params);
-
-    // STEP6-A：Mock
-    if (USE_MOCK) {
-      return NextResponse.json(mockRecommendTemplate(params));
-    }
-
-    // STEP6-B：実ロジック（後続STEPで実装）
-    return NextResponse.json(
-      { ok: false, error: "recommend-video-template (real) is not implemented yet" },
-      { status: 501 }
-    );
-  } catch (err: any) {
-    console.error("[recommend-video-template]", err);
-    return NextResponse.json(
-      { ok: false, error: err?.message || "テンプレ推薦に失敗しました" },
-      { status: 500 }
-    );
-  }
-}===== app/api/config/route.ts =====
-// /app/api/config/route.ts
-/**
- * app/api/config/route.ts
- * ─────────────────────────────────────────────
- * 役割：
- * - フロント/UI が参照する「機能フラグ・上限・対応可否」を一元提供
- * - UIはこのJSONだけを見て表示/非表示・説明文を切替
- *
- * 設計原則（厳守）：
- * - UI / 既存UX を一切変更しない
- * - 既存 props / state / Firestore schema を壊さない
- * - mock / 実 の差は「値」だけ（JSON構造は完全一致）
- */
-
-import { NextResponse } from "next/server";
-import { PRICING, MAX_PROMPT_CHARS } from "@/lib/server/pricing";
-
-/* =========================================================
-   ENV
-========================================================= */
-
-const USE_MOCK = process.env.USE_CONFIG_MOCK === "true";
-
-/* =========================================================
-   共通：Runway設定（UI向けに“説明可能”な形）
-   ✅ enabled は引数で注入（重複定義を根絶）
-========================================================= */
-
-function runwayPublicConfig(enabled: boolean) {
-  return {
-    enabled,
-
-    // UIがそのまま表示できる定義
-    models: [
-      {
-        key: "gen4_turbo",
-        label: "Gen-4 Turbo",
-        use: "image-to-video",
-        note: "高速・安定（商品/広告向け）",
-      },
-    ],
-
-    ratios: [
-      {
-        key: "1280:720",
-        label: "16:9（横）",
-        platforms: ["instagram", "youtube"],
-      },
-      {
-        key: "720:1280",
-        label: "9:16（縦）",
-        platforms: ["instagram", "tiktok"],
-      },
-      {
-        key: "1080:1080",
-        label: "1:1（正方形）",
-        platforms: ["instagram"],
-      },
-    ],
-
-    seconds: [5, 10] as const,
-    quality: ["standard", "high"] as const,
-
-    notes: ["Runwayは動画生成のみ担当", "背景生成/画像生成はOpenAI系と併用可能"],
-  };
-}
-
-/* =========================================================
-   Mock
-========================================================= */
-
-function mockConfig() {
-  const enabled = true;
-
-  return {
-    ok: true,
-    mock: true,
-
-    // ✅ UIはここを読む（価格目安）
-    pricing: PRICING.public(),
-
-    features: {
-      imageGeneration: true,
-      backgroundGeneration: true,
-      videoGeneration: true,
-      replaceBackground: true,
-      migrateVideo: true,
-    },
-
-    runway: runwayPublicConfig(enabled),
-
-    limits: {
-      maxPromptChars: MAX_PROMPT_CHARS,
-      recommendTemplate: true,
-    },
-  };
-}
-
-/* =========================================================
-   GET Handler
-========================================================= */
-
-export async function GET() {
-  try {
-    /* ---------------------------------------------
-       STEP7-A：Mock
-    --------------------------------------------- */
-    if (USE_MOCK) {
-      return NextResponse.json(mockConfig());
-    }
-
-    /* ---------------------------------------------
-       STEP7-B：実設定
-    --------------------------------------------- */
-
-    const hasRunwayKey = Boolean(process.env.RUNWAYML_API_SECRET);
-
-    return NextResponse.json({
-      ok: true,
-      mock: false,
-
-      // ✅ UIはここを読む（価格目安）
-      pricing: PRICING.public(),
-
-      features: {
-        imageGeneration: true,
-        backgroundGeneration: true,
-        videoGeneration: hasRunwayKey,
-        replaceBackground: true,
-        migrateVideo: true,
-      },
-
-      runway: runwayPublicConfig(hasRunwayKey),
-
-      limits: {
-        maxPromptChars: MAX_PROMPT_CHARS,
-        recommendTemplate: true,
-      },
-    });
-  } catch (err: any) {
-    console.error("[config]", err);
-
-    return NextResponse.json(
-      {
-        ok: false,
-        error: err?.message || "config 取得に失敗しました",
-      },
-      { status: 500 }
-    );
-  }
-}===== app/api/replace-background/route.ts =====
-/**
- * app/api/replace-background/route.ts
- * ─────────────────────────────────────────────
- * 役割：
- * - 「商品（前景）＋ 背景画像」を合成して最終画像を生成
- * - mock → 実API を ENV で切替
- *
- * 切替：
- * - USE_REPLACE_BG_MOCK=true  → mock JSON
- * - USE_REPLACE_BG_MOCK=false → sharp で実合成
- *
- * 注意：
- * - lib/server/runway.ts は「動画生成専用」なので、ここから import しない
- */
-
-import { NextResponse } from "next/server";
-import { PRICING } from "@/lib/server/pricing";
-import { getIdempotencyKey } from "@/lib/server/idempotency";
-import sharp from "sharp";
-
-/* =========================================================
-   Next.js runtime（sharpはnode runtime必須）
-========================================================= */
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
-
-/* =========================================================
-   型（このAPI内だけで完結 / UIは触らない）
-========================================================= */
-export type ReplaceBackgroundParams = {
-  foregroundImage: string;
-  backgroundImage: string;
-  ratio: string; // "1280:720" 等
-  fit: "contain" | "cover";
-};
-
-/* =========================================================
-   ENV 切替
-========================================================= */
-const USE_MOCK = process.env.USE_REPLACE_BG_MOCK === "true";
-
-/* =========================================================
-   Utils
-========================================================= */
-
-function parseRatioToSize(ratio: string): { w: number; h: number } {
-  // ratio は "1280:720" のように "W:H" を想定
-  const s = String(ratio || "").trim();
-  const m = s.match(/^(\d{2,5})\s*:\s*(\d{2,5})$/);
-  if (!m) return { w: 1280, h: 720 };
-
-  const w = Number(m[1]);
-  const h = Number(m[2]);
-
-  // 安全策：極端な値は丸める（サーバ負荷防止）
-  const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
-  const ww = clamp(Number.isFinite(w) ? w : 1280, 256, 2048);
-  const hh = clamp(Number.isFinite(h) ? h : 720, 256, 2048);
-
-  return { w: ww, h: hh };
-}
-
-function isDataUrl(s: string) {
-  return /^data:image\/(png|jpeg|jpg|webp);base64,/i.test(String(s || ""));
-}
-
-function dataUrlToBuffer(dataUrl: string): Buffer {
-  const idx = dataUrl.indexOf("base64,");
-  if (idx < 0) throw new Error("Invalid data URL");
-  const b64 = dataUrl.slice(idx + "base64,".length);
-  return Buffer.from(b64, "base64");
-}
-
-async function fetchUrlToBuffer(url: string): Promise<Buffer> {
-  const res = await fetch(url, { method: "GET", cache: "no-store" as any });
-  if (!res.ok) throw new Error(`Failed to fetch image: ${res.status}`);
-  const ab = await res.arrayBuffer();
-  return Buffer.from(ab);
-}
-
-async function readImageInputToBuffer(input: string): Promise<Buffer> {
-  const s = String(input || "").trim();
-  if (!s) throw new Error("Empty image input");
-  if (isDataUrl(s)) return dataUrlToBuffer(s);
-  // URL想定
-  return await fetchUrlToBuffer(s);
-}
-
-function pickYenEstimateForReplaceBackground(): number | null {
-  // あなたの pricing.ts の public() に openai.estimateYen.background がある前提
-  // なければ null（UI側は出せるなら出す、出せないなら無視できる）
-  try {
-    const pub = PRICING.public?.();
-    const n = pub?.openai?.estimateYen?.background;
-    const yen = Number(n);
-    return Number.isFinite(yen) && yen > 0 ? yen : null;
-  } catch {
-    return null;
-  }
-}
-
-/* =========================================================
-   Mock 実装（UI接続確認用）
-========================================================= */
-function mockReplaceBackground(params: ReplaceBackgroundParams) {
-  const yen = pickYenEstimateForReplaceBackground();
-
-  return {
-    ok: true,
-    mock: true,
-    // mock はURL返しのままでも良いが、UI側が dataUrl を期待するならここも dataUrl に合わせられる
-    imageUrl: "https://example.com/mock-composited.png",
-    foregroundUrl: params.foregroundImage,
-    backgroundUrl: params.backgroundImage,
-    ratio: params.ratio,
-    fit: params.fit,
-    yen,
-  };
-}
-
-/* =========================================================
-   Real 合成（sharp）
-========================================================= */
-
-async function composeWithSharp(params: ReplaceBackgroundParams) {
-  const { w, h } = parseRatioToSize(params.ratio);
-
-  const fgBuf = await readImageInputToBuffer(params.foregroundImage);
-  const bgBuf = await readImageInputToBuffer(params.backgroundImage);
-
-  // 背景は常に canvas 全面（cover）
-  const bg = await sharp(bgBuf)
-    .resize(w, h, { fit: "cover" })
-    .png()
-    .toBuffer();
-
-  // 前景は contain / cover を選択
-  // - contain: 全体が入る（上下左右に余白が出ることがある）
-  // - cover: 余白が出ない（はみ出しは切れる）
-  const fgFit = params.fit === "cover" ? "cover" : "contain";
-
-  // 前景のリサイズ結果をpng化
-  const fg = await sharp(fgBuf)
-    .resize(w, h, { fit: fgFit, position: "center" })
-    .png()
-    .toBuffer();
-
-  // 背景に前景を重ねる
-  const out = await sharp(bg)
-    .composite([{ input: fg, top: 0, left: 0 }])
-    .png()
-    .toBuffer();
-
-  const b64 = out.toString("base64");
-  const dataUrl = `data:image/png;base64,${b64}`;
-
-  return { w, h, dataUrl };
-}
-
-/* =========================================================
-   POST Handler
-========================================================= */
-export async function POST(req: Request) {
-  try {
-    const body = await req.json().catch(() => ({}));
-
-    const params: ReplaceBackgroundParams = {
-      foregroundImage: String(body?.foregroundImage || ""),
-      backgroundImage: String(body?.backgroundImage || ""),
-      ratio: String(body?.ratio || "1280:720"),
-      fit: body?.fit === "cover" ? "cover" : "contain",
-    };
-
-    if (!params.foregroundImage || !params.backgroundImage) {
-      return NextResponse.json(
-        { ok: false, error: "foregroundImage と backgroundImage は必須です" },
-        { status: 400 }
-      );
-    }
-
-    const idemKey = getIdempotencyKey(req, params);
-
-    // STEP4-A：Mock
-    if (USE_MOCK) {
-      return NextResponse.json({
-        ...mockReplaceBackground(params),
-        idemKey,
-      });
-    }
-
-    // STEP4-B：実合成
-    const out = await composeWithSharp(params);
-    const yen = pickYenEstimateForReplaceBackground();
-
-    return NextResponse.json({
-      ok: true,
-      mock: false,
-      ratio: params.ratio,
-      fit: params.fit,
-      size: { w: out.w, h: out.h },
-      dataUrl: out.dataUrl, // ✅ UI側でそのまま Storage 保存できる
-      yen, // 目安（出せるなら）
-      idemKey,
-    });
-  } catch (err: any) {
-    console.error("[replace-background]", err);
-    return NextResponse.json(
-      { ok: false, error: err?.message || "背景合成に失敗しました" },
-      { status: 500 }
-    );
-  }
-}===== app/api/generate-video/route.ts =====
-// /app/api/generate-video/route.ts
-import { NextResponse } from "next/server";
-import { getDb } from "@/lib/server/firebaseAdmin";
-import { getIdempotencyKey } from "@/lib/server/idempotency";
-import { PRICING } from "@/lib/server/pricing";
-import { startVideoTaskWithRunway, type RunwayVideoParams } from "@/lib/server/runway";
-import admin from "firebase-admin";
-
-async function requireUser(req: Request) {
-  const authz = req.headers.get("authorization") || "";
-  const m = authz.match(/^Bearer (.+)$/i);
-  const token = m?.[1];
-  if (!token) throw new Error("Missing Authorization Bearer token");
-  const decoded = await admin.auth().verifyIdToken(token);
-  return { uid: decoded.uid };
-}
-
-export async function POST(req: Request) {
-  try {
-    const payload = await req.json();
-
-    // ✅ 必須：draftId（どの下書きに紐づく動画か）
-    const draftId = String(payload?.draftId || "");
-    if (!draftId) {
-      return NextResponse.json({ error: "draftId is required" }, { status: 400 });
-    }
-
-    // ✅ 課金事故防止：未認証は不可（外部から叩かれたら損失）
-    const user = await requireUser(req);
-
-    // ✅ draft の所有者チェック（他人のdraftに書き込ませない）
-    const db = getDb();
-    const ref = db.collection("drafts").doc(draftId);
-    const snap = await ref.get();
-    if (!snap.exists) {
-      return NextResponse.json({ error: "draft not found" }, { status: 404 });
-    }
-    const data = snap.data() as any;
-    if (String(data?.userId || "") !== user.uid) {
-      return NextResponse.json({ error: "forbidden" }, { status: 403 });
-    }
-
-    // ✅ UI由来を正規化（価格計算にも使用）
-    const seconds = PRICING.normalizeVideoSeconds(payload?.seconds);
-    const quality = PRICING.normalizeVideoQuality(payload?.quality);
-    const ratio = String(payload?.ratio || "1280:720");
-    const model = String(payload?.model || "gen4_turbo");
-
-    const promptImage = String(payload?.promptImage || "");
-    const promptText = String(payload?.promptText || "");
-
-    if (!promptImage) {
-      return NextResponse.json({ error: "promptImage is required" }, { status: 400 });
-    }
-    if (!promptText) {
-      return NextResponse.json({ error: "promptText is required" }, { status: 400 });
-    }
-
-    const idempotencyKey = getIdempotencyKey(req, payload);
-
-    const params: RunwayVideoParams = {
-      model,
-      promptImage,
-      promptText,
-      seconds,
-      ratio,
-      quality,
-    };
-
-    // ✅ 非同期開始（taskIdを返す）
-    const started = await startVideoTaskWithRunway(params, { idempotencyKey });
-
-    // ✅【致命修正①】task開始時点で draft に taskId を保存
-    await ref.set(
-      {
-        videoTaskId: started.taskId,
-        videoStatus: "queued", // queued/running/succeeded/failed の想定
-        videoModel: started.model,
-        videoSeconds: started.seconds,
-        videoRatio: started.ratio,
-        videoQuality: started.quality,
-        videoRequestedAt: admin.firestore.FieldValue.serverTimestamp(),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      },
-      { merge: true }
-    );
-
-    // 返却（UIが即ポーリング開始できる）
-    return NextResponse.json({
-      ok: true,
-      taskId: started.taskId,
-      seconds: started.seconds,
-      ratio: started.ratio,
-      quality: started.quality,
-      model: started.model,
-    });
-  } catch (e: any) {
-    return NextResponse.json(
-      { error: e?.message || "generate-video failed" },
-      { status: 500 }
-    );
-  }
-}===== app/api/generate-background/route.ts =====
-/**
- * app/api/generate-background/route.ts
- * ─────────────────────────────────────────────
- * 役割：
- * - 背景画像生成（商品切り抜き後に合成する“背景”）
- * - mock → 実API を ENV で切替
- *
- * 切替：
- * - USE_BACKGROUND_MOCK=true  → mock JSON
- * - USE_BACKGROUND_MOCK=false → （現時点では未実装なので 501）
- *
- * 注意：
- * - lib/server/runway.ts は「動画生成専用」なので、ここから import しない
- */
-
-import { NextResponse } from "next/server";
-import { PRICING } from "@/lib/server/pricing";
-import { getIdempotencyKey } from "@/lib/server/idempotency";
-
-/* =========================================================
-   型（このAPI内だけで完結 / UIは触らない）
-========================================================= */
-
-export type BackgroundGenParams = {
-  prompt: string;
-  ratio: string; // "1280:720" 等
-  style: string; // UI入力をそのまま受ける
-};
-
-/* =========================================================
-   ENV 切替
-========================================================= */
-
-const USE_MOCK = process.env.USE_BACKGROUND_MOCK === "true";
-
-/* =========================================================
-   Mock 実装（UI接続確認用）
-========================================================= */
-
-function mockGenerateBackground(params: BackgroundGenParams) {
-  const yen = PRICING.calcImageCostYen();
-
-  return {
-    ok: true,
-    mock: true,
-    imageUrl: "https://example.com/mock-background.png",
-    prompt: params.prompt,
-    ratio: params.ratio,
-    yen,
-  };
-}
-
-/* =========================================================
-   POST Handler
-========================================================= */
-
-export async function POST(req: Request) {
-  try {
-    const body = await req.json();
-
-    const params: BackgroundGenParams = {
-      prompt: body.prompt,
-      ratio: body.ratio || "1280:720",
-      style: body.style || "clean",
-    };
-
-    if (!params.prompt) {
-      return NextResponse.json(
-        { ok: false, error: "prompt は必須です" },
-        { status: 400 }
-      );
-    }
-
-    const _idemKey = getIdempotencyKey(req, params);
-
-    // STEP3-A：Mock
-    if (USE_MOCK) {
-      return NextResponse.json(mockGenerateBackground(params));
-    }
-
-    // STEP3-B：実API（後続STEPで実装）
-    return NextResponse.json(
-      { ok: false, error: "generate-background (real) is not implemented yet" },
-      { status: 501 }
-    );
-  } catch (err: any) {
-    console.error("[generate-background]", err);
-    return NextResponse.json(
-      { ok: false, error: err?.message || "背景生成に失敗しました" },
-      { status: 500 }
-    );
-  }
-}===== app/api/generate-image/route.ts =====
-// /app/api/generate-image/route.ts
-import { NextResponse } from "next/server";
-import OpenAI from "openai";
-import crypto from "crypto";
-import { getStorage } from "firebase-admin/storage";
-import { getIdempotencyKey } from "@/lib/server/idempotency";
-import { PRICING } from "@/lib/server/pricing";
-import { getAdminAuth, getAdminDb } from "@/firebaseAdmin";
-
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
-
-type ReqBody = {
-  brandId?: string;
-  vision?: string;
-  keywords?: unknown;
-  tone?: string;
-
-  // 互換入力
-  prompt?: string;
-
-  requestId?: string;
-  idempotencyKey?: string;
-
-  imageSize?: "1024x1024" | "1024x1536" | "1536x1024";
-  model?: string;
-};
-
-function bearerToken(req: Request) {
-  const h = req.headers.get("authorization") || "";
-  const m = h.match(/^Bearer\s+(.+)$/i);
-  return m?.[1] ?? null;
-}
-
-async function requireUid(req: Request): Promise<string> {
-  const token = bearerToken(req);
-  if (!token) throw new Error("missing token");
-  const decoded = await getAdminAuth().verifyIdToken(token);
-  if (!decoded?.uid) throw new Error("invalid token");
-  return decoded.uid;
-}
-
-function buildDownloadUrl(bucket: string, path: string, token: string) {
-  return `https://firebasestorage.googleapis.com/v0/b/${bucket}/o/${encodeURIComponent(
-    path
-  )}?alt=media&token=${token}`;
-}
-
-function compactKeywords(keys: unknown): string[] {
-  if (!Array.isArray(keys)) return [];
-  return keys.map(String).slice(0, 12);
-}
-
-export async function POST(req: Request) {
-  // ✅ auth
-  let uid = "";
-  try {
-    uid = await requireUid(req);
-  } catch (e: any) {
-    return NextResponse.json({ ok: false, error: String(e?.message ?? e) }, { status: 401 });
-  }
-
-  const body = (await req.json().catch(() => ({}))) as ReqBody;
-
-  // ✅ prompt を作る（既存互換）
-  const directPrompt = String(body.prompt ?? "").trim();
-  const vision = String(body.vision ?? "").trim();
-  const brandId = String(body.brandId ?? "").trim();
-  const keywords = compactKeywords(body.keywords);
-
-  const prompt =
-    (directPrompt ||
-      [
-        "You are generating a clean, premium product photo style image.",
-        "No text. No watermark. No logos.",
-        brandId ? `Brand: ${brandId}` : "",
-        vision ? `Vision: ${vision}` : "",
-        keywords.length ? `Keywords: ${keywords.join(" / ")}` : "",
-      ]
-        .filter(Boolean)
-        .join("\n"))
-      .slice(0, PRICING.MAX_PROMPT_CHARS)
-      .trim();
-
-  if (!prompt) {
-    return NextResponse.json({ ok: false, error: "prompt is required" }, { status: 400 });
-  }
-
-  // ✅ uid含めて idemKey（ユーザー間衝突防止）
-  const idemKey = getIdempotencyKey(req, { ...body, type: "image", uid, prompt });
-
-  const db = getAdminDb();
-  const docRef = db.collection("generations").doc(idemKey);
-
-  // ✅ Storage 保存先（同一 idemKey ＝同一ファイル）
-  const bucket = getStorage().bucket();
-  const objectPath = `users/${uid}/generations/images/${idemKey}.png`;
-  const fileRef = bucket.file(objectPath);
-
-  // ✅ 既に Storage にあるなら「確実に再利用」
-  {
-    const [exists] = await fileRef.exists();
-    if (exists) {
-      const [meta] = await fileRef.getMetadata().catch(() => [null as any]);
-      const existingToken =
-        meta?.metadata?.firebaseStorageDownloadTokens ||
-        meta?.metadata?.firebaseStorageDownloadToken ||
-        "";
-
-      const token =
-        typeof existingToken === "string" && existingToken
-          ? existingToken.split(",")[0].trim()
-          : crypto.randomUUID();
-
-      if (!existingToken) {
-        await fileRef.setMetadata({
-          metadata: { firebaseStorageDownloadTokens: token },
-          contentType: meta?.contentType || "image/png",
-        });
-      }
-
-      const url = buildDownloadUrl(bucket.name, objectPath, token);
-
-      // Firestoreも最低限整合させる（無くてもOK）
-      await docRef.set(
-        {
-          id: idemKey,
-          type: "image",
-          status: "succeeded",
-          uid,
-          prompt,
-          imageUrl: url,
-          costYen: PRICING.calcImageCostYen(),
-          finishedAt: Date.now(),
-        },
-        { merge: true }
-      );
-
-      return NextResponse.json({ ok: true, reused: true, url, generation: { id: idemKey } });
-    }
-  }
-
-  // ✅ Firestore が存在しても「成功してURLがある時だけ reused」
-  // 失敗/途中の doc が残ってても再生成できるようにする
-  const snap = await docRef.get().catch(() => null as any);
-  if (snap?.exists) {
-    const gen = snap.data() as any;
-    const status = String(gen?.status ?? "");
-    const imageUrl = String(gen?.imageUrl ?? "");
-
-    if (status === "succeeded" && imageUrl) {
-      return NextResponse.json({ ok: true, reused: true, url: imageUrl, generation: gen });
-    }
-
-    // running が直近なら「処理中」を返す（連打で課金事故防止）
-    if (status === "running") {
-      const createdAt = Number(gen?.createdAt ?? 0);
-      if (createdAt && Date.now() - createdAt < 60_000) {
-        return NextResponse.json(
-          { ok: false, status: "running", error: "generation is running" },
-          { status: 202 }
-        );
-      }
-    }
-    // failed / stale running は下で再実行
-  }
-
-  // ✅ 予約（running）
-  await docRef.set(
-    {
-      id: idemKey,
-      type: "image",
-      status: "running",
-      uid,
-      prompt,
-      createdAt: Date.now(),
-      costYen: PRICING.calcImageCostYen(),
-    },
-    { merge: true }
-  );
-
-  try {
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) throw new Error("OPENAI_API_KEY missing");
-
-    const client = new OpenAI({ apiKey });
-
-    const size = body.imageSize ?? "1024x1024";
-    const model = body.model ?? "gpt-image-1";
-
-    const res = await client.images.generate({ model, prompt, size });
-    const b64 = res.data?.[0]?.b64_json;
-    if (!b64) throw new Error("Image generation failed (no b64_json)");
-
-    const buf = Buffer.from(b64, "base64");
-
-    // ✅ Storage保存（token付き）
-    const token = crypto.randomUUID();
-    await fileRef.save(buf, {
-      contentType: "image/png",
-      resumable: false,
-      metadata: {
-        metadata: { firebaseStorageDownloadTokens: token },
-      },
-    });
-
-    const url = buildDownloadUrl(bucket.name, objectPath, token);
-
-    const generation = {
-      id: idemKey,
-      type: "image",
-      status: "succeeded",
-      uid,
-      prompt,
-      imageUrl: url,
-      costYen: PRICING.calcImageCostYen(),
-      finishedAt: Date.now(),
-    };
-
-    await docRef.set(generation, { merge: true });
-
-    // ✅ UI互換：url を返す（b64も欲しければ返せるが、まずURL安定を優先）
-    return NextResponse.json({ ok: true, reused: false, url, generation });
-  } catch (e: any) {
-    await docRef.set(
-      { status: "failed", error: String(e?.message ?? e), finishedAt: Date.now() },
-      { merge: true }
-    );
-    return NextResponse.json({ ok: false, error: String(e?.message ?? e), id: idemKey }, { status: 500 });
-  }
-}===== app/api/generate-bg/route.ts =====
-// /app/api/config/generate-bg/route.ts
-
-import { NextResponse } from "next/server";
-import { getAdminAuth, getAdminDb } from "@/firebaseAdmin";
-import { getStorage } from "firebase-admin/storage";
-import crypto from "crypto";
-
-export const runtime = "nodejs";
-
-/* ========= auth ========= */
-function bearerToken(req: Request) {
-  const h = req.headers.get("authorization") || "";
-  const m = h.match(/^Bearer\s+(.+)$/i);
-  return m?.[1] ?? null;
-}
-
-async function requireUid(req: Request): Promise<string> {
-  const token = bearerToken(req);
-  if (!token) throw new Error("missing token");
-  const decoded = await getAdminAuth().verifyIdToken(token);
-  if (!decoded?.uid) throw new Error("invalid token");
-  return decoded.uid;
-}
-
-/* ========= helpers ========= */
-function stableHash(input: unknown): string {
-  return crypto
-    .createHash("sha256")
-    .update(JSON.stringify(input))
-    .digest("hex")
-    .slice(0, 32);
-}
-
-function buildDownloadUrl(bucket: string, path: string, token: string) {
-  return `https://firebasestorage.googleapis.com/v0/b/${bucket}/o/${encodeURIComponent(
-    path
-  )}?alt=media&token=${token}`;
-}
-
-async function fetchAsImage(url: string): Promise<File> {
-  const r = await fetch(url);
-  if (!r.ok) throw new Error("failed to fetch source image");
-  const ct = r.headers.get("content-type") || "image/png";
-  const ab = await r.arrayBuffer();
-  return new File([ab], "source.png", { type: ct });
-}
-
-function compactKeywords(keys: unknown): string {
-  if (!Array.isArray(keys)) return "";
-  return keys.map(String).slice(0, 12).join(", ");
-}
-
-function compactVoiceText(v: unknown): string {
-  const s = String(v ?? "")
-    .replace(/\r?\n/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  if (!s) return "";
-  const MAX = 220;
-  return s.length <= MAX ? s : s.slice(0, MAX) + "…";
-}
-
-async function loadBrand(uid: string, brandId: string) {
-  const db = getAdminDb();
-  const ref = db.doc(`users/${uid}/brands/${brandId}`);
-  const snap = await ref.get();
-  if (!snap.exists) return null;
-  return snap.data() as any;
-}
-
-/* ========= main ========= */
-export async function POST(req: Request) {
-  try {
-    const uid = await requireUid(req);
-    const body = await req.json().catch(() => ({} as any));
-
-    const brandId = typeof body.brandId === "string" ? body.brandId : "vento";
-    const vision = typeof body.vision === "string" ? body.vision : "";
-    const keywords = compactKeywords(body.keywords);
-
-    // 互換：referenceImageUrl / sourceImageUrl
-    const referenceImageUrl =
-      typeof body.referenceImageUrl === "string"
-        ? body.referenceImageUrl
-        : typeof body.sourceImageUrl === "string"
-          ? body.sourceImageUrl
-          : "";
-
-    if (!vision.trim()) {
-      return NextResponse.json({ error: "vision is required" }, { status: 400 });
-    }
-    if (!referenceImageUrl) {
-      return NextResponse.json({ error: "referenceImageUrl is required" }, { status: 400 });
-    }
-
-    const brand = await loadBrand(uid, brandId);
-    if (!brand) {
-      return NextResponse.json(
-        { error: "brand not found. /flow/brands で作成・保存してください" },
-        { status: 400 }
-      );
-    }
-
-    const imagePolicy = brand.imagePolicy ?? {};
-    const styleText = String(imagePolicy.styleText ?? "");
-    const rules = Array.isArray(imagePolicy.rules) ? imagePolicy.rules.map(String) : [];
-
-    const captionPolicy = brand.captionPolicy ?? {};
-    const voiceText = compactVoiceText(captionPolicy.voiceText ?? "");
-
-    // ✅ 背景生成は「必ず正方形」固定（UIのsizeは完全に無視）
-    // 720x1280 を投げてもここでは使わない＝エラー＆課金事故が止まる
-    const OUTPUT_SIZE = "1024x1024";
-
-    const prompt = [
-      "You will receive a product photo.",
-      "Goal: Create a clean, attractive square background that matches the brand style.",
-      "IMPORTANT: Keep the main subject (product) unchanged and sharp. Do NOT distort the product.",
-      "If needed, extend / improve background, lighting, and composition.",
-      `Brand: ${String(brand.name ?? brandId)}`,
-      `Vision: ${vision}`,
-      keywords ? `Keywords: ${keywords}` : "",
-      voiceText ? `Brand Voice (short): ${voiceText}` : "",
-      styleText ? `Style: ${styleText}` : "",
-      rules.length ? `Rules: ${rules.join(" / ")}` : "",
-      "No text. No logos. No watermark.",
-      `Return a square image (${OUTPUT_SIZE}).`,
-    ]
-      .filter(Boolean)
-      .join("\n");
-
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) throw new Error("OPENAI_API_KEY missing");
-
-    // ✅ 同条件の連打で課金しない（同一key→同一保存先→再利用）
-    const key = stableHash({
-      uid,
-      brandId,
-      vision: vision.trim(),
-      keywords,
-      referenceImageUrl,
-      styleText,
-      rules,
-      voiceText,
-      OUTPUT_SIZE,
-    });
-
-    const bucket = getStorage().bucket();
-    const objectPath = `users/${uid}/drafts/_bg/${brandId}/${key}.png`;
-    const fileRef = bucket.file(objectPath);
-
-    // 既存があれば再利用（課金ゼロ）
-    const [exists] = await fileRef.exists();
-    if (exists) {
-      const [meta] = await fileRef.getMetadata().catch(() => [null as any]);
-      const existingToken =
-        meta?.metadata?.firebaseStorageDownloadTokens ||
-        meta?.metadata?.firebaseStorageDownloadToken ||
-        "";
-
-      const token =
-        typeof existingToken === "string" && existingToken
-          ? existingToken.split(",")[0].trim()
-          : crypto.randomUUID();
-
-      if (!existingToken) {
-        await fileRef.setMetadata({
-          metadata: { firebaseStorageDownloadTokens: token },
-          contentType: meta?.contentType || "image/png",
-        });
-      }
-
-      return NextResponse.json({
-        url: buildDownloadUrl(bucket.name, objectPath, token),
-        reused: true,
-      });
-    }
-
-    // OpenAI（背景生成）
-    const image = await fetchAsImage(referenceImageUrl);
-
-    const fd = new FormData();
-    fd.append("model", "gpt-image-1");
-    fd.append("prompt", prompt);
-    fd.append("size", OUTPUT_SIZE); // ★絶対固定
-    fd.append("image", image);
-
-    const r = await fetch("https://api.openai.com/v1/images/edits", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}` },
-      body: fd,
-    });
-
-    const j = await r.json();
-    if (!r.ok) throw new Error(j?.error?.message || "openai image edit error");
-
-    const b64 = j?.data?.[0]?.b64_json;
-    if (typeof b64 !== "string" || !b64) throw new Error("no image returned");
-
-    const buf = Buffer.from(b64, "base64");
-
-    // Storage保存（token付き）
-    const token = crypto.randomUUID();
-    await fileRef.save(buf, {
-      contentType: "image/png",
-      resumable: false,
-      metadata: {
-        metadata: { firebaseStorageDownloadTokens: token },
-      },
-    });
-
-    return NextResponse.json({
-      url: buildDownloadUrl(bucket.name, objectPath, token),
-    });
-  } catch (e: any) {
-    console.error(e);
-    return NextResponse.json({ error: e?.message || "error" }, { status: 500 });
-  }
-}===== app/api/generate-captions/route.ts =====
-// app/api/generate-captions/route.ts
-
-import { NextResponse } from "next/server";
-import OpenAI from "openai";
-import { getAdminAuth, getAdminDb } from "@/firebaseAdmin";
-
-export const runtime = "nodejs";
-
-function bearerToken(req: Request) {
-  const h = req.headers.get("authorization") || "";
-  const m = h.match(/^Bearer\s+(.+)$/i);
-  return m?.[1] ?? null;
-}
-
-async function requireUid(req: Request): Promise<string> {
-  const token = bearerToken(req);
-  if (!token) throw new Error("missing token");
-  const decoded = await getAdminAuth().verifyIdToken(token);
-  if (!decoded?.uid) throw new Error("invalid token");
-  return decoded.uid;
-}
-
-async function loadBrand(uid: string, brandId: string) {
-  const db = getAdminDb();
-  const ref = db.doc(`users/${uid}/brands/${brandId}`);
-  const snap = await ref.get();
-  if (!snap.exists) return null;
-  return snap.data() as any;
-}
-
-function compactKeywords(keys: unknown): string {
-  if (!Array.isArray(keys)) return "";
-  return keys.map(String).slice(0, 12).join(" / ");
-}
-
-export async function POST(req: Request) {
-  try {
-    const uid = await requireUid(req);
-    const body = await req.json();
-
-    const brandId = typeof body.brandId === "string" ? body.brandId : "vento";
-    const vision = typeof body.vision === "string" ? body.vision : "";
-    const keywords = compactKeywords(body.keywords);
-
-    if (!vision.trim()) return NextResponse.json({ error: "vision is required" }, { status: 400 });
-
-    const brand = await loadBrand(uid, brandId);
-    if (!brand) {
-      return NextResponse.json(
-        { error: "brand not found. /flow/brands で作成・保存してください" },
-        { status: 400 }
-      );
-    }
-
-    const captionPolicy = brand.captionPolicy ?? {};
-    const voiceText = String(captionPolicy.voiceText ?? "");
-    const igGoal = String(captionPolicy.igGoal ?? "");
-    const xGoal = String(captionPolicy.xGoal ?? "");
-    const must = Array.isArray(captionPolicy.must) ? captionPolicy.must.map(String) : [];
-    const ban = Array.isArray(captionPolicy.ban) ? captionPolicy.ban.map(String) : [];
-    const toneDefault = String(captionPolicy.toneDefault ?? "");
-
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) throw new Error("OPENAI_API_KEY missing");
-
-    const client = new OpenAI({ apiKey });
-
-    const sys = [
-      "あなたはSNS投稿の文章作成者。",
-      "広告臭を消し、誠実で読みやすい日本語にする。",
-      "出力は必ずJSONスキーマに一致させる。",
-    ].join("\n");
-
-    const userPrompt = [
-      "【ブランド設定】",
-      `name: ${String(brand.name ?? brandId)}`,
-      `voiceText: ${voiceText}`,
-      `igGoal: ${igGoal}`,
-      `xGoal: ${xGoal}`,
-      `must: ${must.join(" / ")}`,
-      `ban: ${ban.join(" / ")}`,
-      `toneDefault: ${toneDefault}`,
-      "",
-      "【今回入力】",
-      `vision: ${vision}`,
-      `keywords: ${keywords}`,
-      "",
-      "【制約】",
-      "- instagram は投稿できる本文（長すぎない）",
-      "- x は短く、広告臭なし",
-      "- ig3 は別案3つ（本文を上書きする用途ではない）",
-    ].join("\n");
-
-    // ✅ Responses API：text.format に json_schema を指定（旧 response_format を廃止）
-    const resp = await client.responses.create({
-      model: "gpt-4o-mini",
-      input: [
-        { role: "system", content: sys },
-        { role: "user", content: userPrompt },
-      ],
-      text: {
-        format: {
-          type: "json_schema",
-          name: "caption_payload",
-          strict: true,
-          schema: {
-            type: "object",
-            additionalProperties: false,
-            properties: {
-              instagram: { type: "string" },
-              x: { type: "string" },
-              ig3: {
-                type: "array",
-                items: { type: "string" },
-                minItems: 3,
-                maxItems: 3,
-              },
-            },
-            required: ["instagram", "x", "ig3"],
-          },
-        },
-      },
-    });
-
-    const raw = resp.output_text || "{}";
-    const out = JSON.parse(raw);
-
-    return NextResponse.json({
-      instagram: String(out.instagram ?? ""),
-      x: String(out.x ?? ""),
-      ig3: Array.isArray(out.ig3) ? out.ig3.map(String).slice(0, 3) : ["", "", ""],
-    });
-  } catch (e: any) {
-    console.error(e);
-    return NextResponse.json({ error: e?.message || "error" }, { status: 500 });
-  }
-}===== app/api/_firebase/admin.ts =====
-// app/api/_firebase/admin.ts
-// ✅ サーバー側で「uid」を確実に取る（なりすまし防止）
-// ✅ 冪等化キー（uid + clientRequestId）をFirestoreに保存するために使う
-
-import admin from "firebase-admin";
-
-function getServiceAccount() {
-  // Vercel/Cloud環境向け：JSONを文字列で持つ方式
-  // FIREBASE_SERVICE_ACCOUNT_KEY='{"type":"service_account",...}'
-  const raw = process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
-  if (!raw) return null;
-
-  try {
-    return JSON.parse(raw);
-  } catch {
-    throw new Error("FIREBASE_SERVICE_ACCOUNT_KEY is not valid JSON.");
-  }
-}
-
-export function getAdminApp() {
-  if (admin.apps.length) return admin.app();
-
-  const serviceAccount = getServiceAccount();
-  if (!serviceAccount) {
-    throw new Error(
-      "Missing FIREBASE_SERVICE_ACCOUNT_KEY. Set it in environment variables as JSON string."
-    );
-  }
-
-  return admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount as admin.ServiceAccount),
-  });
-}
-
-export function getAdminAuth() {
-  getAdminApp();
-  return admin.auth();
-}
-
-export function getAdminDb() {
-  getAdminApp();
-  return admin.firestore();
-}
-
-// Authorization: Bearer <Firebase ID Token>
-export async function requireUserFromAuthHeader(req: Request) {
-  const authHeader = req.headers.get("authorization") || "";
-  const [type, token] = authHeader.split(" ");
-
-  if (type !== "Bearer" || !token) {
-    throw new Error("Missing Authorization Bearer token.");
-  }
-
-  const auth = getAdminAuth();
-  const decoded = await auth.verifyIdToken(token);
-  return {
-    uid: decoded.uid,
-    email: decoded.email ?? null,
-    name: (decoded.name as string | undefined) ?? null,
-  };
-}===== lib/server/firebaseAdmin.ts =====
-// /aoi-flow/lib/server/firebaseAdmin.ts
-import admin from "firebase-admin";
-
-function getAdmin() {
-  if (admin.apps.length) return admin.app();
-
-  const projectId = process.env.FIREBASE_PROJECT_ID;
-  const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
-
-  if (!projectId) throw new Error("Missing FIREBASE_PROJECT_ID");
-  if (!serviceAccountJson) throw new Error("Missing FIREBASE_SERVICE_ACCOUNT_KEY");
-
-  admin.initializeApp({
-    credential: admin.credential.cert(JSON.parse(serviceAccountJson)),
-    projectId,
-  });
-
-  return admin.app();
-}
-
-export function getDb() {
-  return getAdmin().firestore();
-}===== lib/server/pricing.ts =====
-// /lib/server/pricing.ts
-import "server-only";
-
-export type VideoSeconds = 5 | 10;
-export type VideoQuality = "standard" | "high";
-
-export const PRICING_VERSION = "2026-01-18";
-
-// ✅ 追加：外部から参照できる通貨定義（ラッパー互換）
-export const CURRENCY = "JPY" as const;
-
-// UI で許可する最大文字数（必要ならここだけ変える）
-export const MAX_PROMPT_CHARS = 800;
-
-const RUNWAY_VIDEO_YEN_PER_SEC: Record<VideoQuality, number> = {
-  standard: 36,
-  high: 72,
-};
-
-// OpenAI はこのアプリ内で「文章/画像/背景」に使う想定の“目安”
-const OPENAI_ESTIMATE_YEN = {
-  captions: 20,
-  image: 120,
-  background: 120,
-};
-
-function normalizeSeconds(input: any): VideoSeconds {
-  const n = Number(input);
-  return n === 10 ? 10 : 5;
-}
-function normalizeQuality(input: any): VideoQuality {
-  return input === "high" ? "high" : "standard";
-}
-
-export const PRICING = {
-  VERSION: PRICING_VERSION,
-  CURRENCY,
-  MAX_PROMPT_CHARS,
-
-  normalizeVideoSeconds(input: any): VideoSeconds {
-    return normalizeSeconds(input);
-  },
-
-  normalizeVideoQuality(input: any): VideoQuality {
-    return normalizeQuality(input);
-  },
-
-  calcVideoCostYen(seconds: number, quality: VideoQuality) {
-    const q: VideoQuality = normalizeQuality(quality);
-    const sec: VideoSeconds = normalizeSeconds(seconds);
-    return sec * RUNWAY_VIDEO_YEN_PER_SEC[q];
-  },
-
-  // 画像/背景 価格目安（UI表示用）
-  calcImageCostYen(kind: "image" | "background" = "image") {
-    return kind === "background" ? OPENAI_ESTIMATE_YEN.background : OPENAI_ESTIMATE_YEN.image;
-  },
-
-  public() {
-    const video = {
-      standard: {
-        5: PRICING.calcVideoCostYen(5, "standard"),
-        10: PRICING.calcVideoCostYen(10, "standard"),
-      },
-      high: {
-        5: PRICING.calcVideoCostYen(5, "high"),
-        10: PRICING.calcVideoCostYen(10, "high"),
-      },
-    } as const;
-
-    return {
-      currency: CURRENCY,
-      version: PRICING_VERSION,
-      video,
-
-      runway: {
-        videoYenPerSecond: { ...RUNWAY_VIDEO_YEN_PER_SEC },
-        allowedSeconds: [5, 10] as const,
-        quality: ["standard", "high"] as const,
-      },
-
-      openai: {
-        estimateYen: { ...OPENAI_ESTIMATE_YEN },
-      },
-    };
-  },
-};===== lib/server/idempotency.ts =====
-// /lib/server/idempotency.ts
-import crypto from "crypto";
-
-/**
- * 深い安定 stringify（順序ゆれを完全に潰す）
- * - Object の key はソート
- * - Array は順序保持
- * - undefined は null に寄せる（安定）
- */
-function stableNormalize(v: any): any {
-  if (v === undefined) return null;
-  if (v === null) return null;
-
-  const t = typeof v;
-  if (t === "string" || t === "number" || t === "boolean") return v;
-
-  if (Array.isArray(v)) return v.map(stableNormalize);
-
-  if (t === "object") {
-    const out: any = {};
-    const keys = Object.keys(v).sort();
-    for (const k of keys) out[k] = stableNormalize(v[k]);
-    return out;
-  }
-
-  // function/symbol/bigint 等は string 化（安定が最優先）
-  return String(v);
-}
-
-export function stableHash(obj: unknown) {
-  const norm = stableNormalize(obj as any);
-  const json = JSON.stringify(norm);
-  return crypto.createHash("sha256").update(json).digest("hex");
-}
-
-/**
- * 冪等キーの決定ルール
- * 1) リクエストヘッダの Idempotency-Key（最優先）
- * 2) body.requestId / body.idempotencyKey
- * 3) 正規化済み payload の stableHash
- */
-export function getIdempotencyKey(req: Request, payload: any) {
-  const h =
-    req.headers.get("Idempotency-Key") ||
-    req.headers.get("idempotency-key") ||
-    req.headers.get("x-idempotency-key") ||
-    "";
-
-  const key = h || payload?.requestId || payload?.idempotencyKey || stableHash(payload);
-
-  return String(key).replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 120);
-}===== lib/server/runway.ts =====
-// lib/server/runway.ts
-/**
- * Runway SDK ラッパー
- *
- * ✅ 動画（image → video）
- * - sync: generateVideoWithRunway() ＝ 完了まで待って videoUrl を返す（既存互換）
- * - async: startVideoTaskWithRunway() ＝ taskId を返す（polling前提）
- * - check: checkVideoTaskWithRunway() ＝ task状態とURLを返す（/api/check-video-task 用）
- *
- * ✅ それ以外（背景生成/合成/移行/推薦）は “型と関数export” を用意してTSを通す
- */
-
-import "server-only";
-import RunwayML from "@runwayml/sdk";
-
-/* =====================================================
-   ENV
-===================================================== */
-
-export const RUNWAY_VERSION = process.env.RUNWAY_VERSION || "2024-11-06";
-
-function requireRunwayKey() {
-  // ✅ あなたの既存ENV名に合わせる
-  const key = process.env.RUNWAYML_API_SECRET;
-  if (!key) throw new Error("RUNWAYML_API_SECRET is missing");
-  return key;
-}
-
-function createClient() {
-  const apiKey = requireRunwayKey();
-
-  return new RunwayML({
-    apiKey,
-    runwayVersion: RUNWAY_VERSION,
-    defaultHeaders: {
-      "X-Runway-Version": RUNWAY_VERSION,
-    },
-  } as any);
-}
-
-/* =====================================================
-   1) 動画生成（image → video）
-===================================================== */
-
-export type RunwayVideoParams = {
-  model: string; // "gen4_turbo" 等
-  promptImage: string; // URL or data URI
-  promptText: string;
-  seconds: 5 | 10; // UI都合
-  ratio: string; // "1280:720" 等
-  quality: "standard" | "high"; // UI都合（Runway側に渡せない場合あり）
-};
-
-export type RunwayVideoResult = {
-  taskId: string;
-  videoUrl: string;
-  model: string;
-  seconds: number;
-  ratio: string;
-  quality: string;
-};
-
-export type RunwayTaskStatus = "queued" | "running" | "succeeded" | "failed";
-
-export type RunwayTaskCheckResult = {
-  taskId: string;
-  status: RunwayTaskStatus;
-  videoUrl?: string; // succeeded のときだけ入る
-  // デバッグ用
-  rawStatus?: string;
-};
-
-function pickVideoUrl(anyOutput: any): string | null {
-  if (!anyOutput) return null;
-
-  // 直URL系
-  if (typeof anyOutput.videoUrl === "string") return anyOutput.videoUrl;
-  if (typeof anyOutput.url === "string") return anyOutput.url;
-  if (typeof anyOutput.outputUrl === "string") return anyOutput.outputUrl;
-
-  // { output: ... }
-  if (anyOutput.output) {
-    const v = pickVideoUrl(anyOutput.output);
-    if (v) return v;
-  }
-
-  // 配列 output
-  if (Array.isArray(anyOutput)) {
-    for (const it of anyOutput) {
-      const v = pickVideoUrl(it);
-      if (v) return v;
-    }
-  }
-
-  // よくある { artifacts:[{url}]} 的な揺れ
-  if (Array.isArray(anyOutput.artifacts)) {
-    for (const it of anyOutput.artifacts) {
-      if (it && typeof it.url === "string") return it.url;
-    }
-  }
-
-  return null;
-}
-
-function normalizeStatus(raw: any): RunwayTaskStatus {
-  const s = String(raw || "").toLowerCase();
-
-  // SDK/サーバ側の表現揺れを吸収
-  if (s.includes("queue")) return "queued";
-  if (s.includes("pend")) return "queued";
-  if (s.includes("run")) return "running";
-  if (s.includes("process")) return "running";
-  if (s.includes("succ") || s.includes("done") || s.includes("complete")) return "succeeded";
-  if (s.includes("fail") || s.includes("error")) return "failed";
-
-  // 不明は running 扱い（UIを落とさない）
-  return "running";
-}
-
-function buildImageToVideoPayload(params: RunwayVideoParams) {
-  // docs では duration を使う（seconds → duration）
-  return {
-    model: params.model,
-    promptImage: params.promptImage,
-    promptText: params.promptText,
-    ratio: params.ratio,
-    duration: params.seconds,
-  } as any;
-}
-
-/**
- * ✅ 同期（既存互換）
- * - 完了まで待って videoUrl を返す
- */
-export async function generateVideoWithRunway(
-  params: RunwayVideoParams,
-  opts: { idempotencyKey: string }
-): Promise<RunwayVideoResult> {
-  const client = createClient();
-  const payload = buildImageToVideoPayload(params);
-
-  let task: any;
-  try {
-    task = await (client as any).imageToVideo
-      .create(payload, { idempotencyKey: opts.idempotencyKey })
-      .waitForTaskOutput();
-  } catch {
-    task = await (client as any).imageToVideo.create(payload).waitForTaskOutput();
-  }
-
-  const videoUrl = pickVideoUrl(task?.output) || pickVideoUrl(task);
-  if (!videoUrl) throw new Error("Runway succeeded but video URL missing");
-
-  return {
-    taskId: String(task?.id ?? task?.taskId ?? ""),
-    videoUrl,
-    model: params.model,
-    seconds: params.seconds,
-    ratio: params.ratio,
-    quality: params.quality,
-  };
-}
-
-/**
- * ✅ 非同期開始（polling前提）
- * - taskId を返す（ここでは待たない）
- */
-export async function startVideoTaskWithRunway(
-  params: RunwayVideoParams,
-  opts: { idempotencyKey: string }
-): Promise<{ taskId: string; model: string; seconds: number; ratio: string; quality: string }> {
-  const client = createClient();
-  const payload = buildImageToVideoPayload(params);
-
-  let task: any;
-  try {
-    task = await (client as any).imageToVideo.create(payload, { idempotencyKey: opts.idempotencyKey });
-  } catch {
-    task = await (client as any).imageToVideo.create(payload);
-  }
-
-  const taskId = String(task?.id ?? task?.taskId ?? "");
-  if (!taskId) throw new Error("Runway taskId is missing");
-
-  return {
-    taskId,
-    model: params.model,
-    seconds: params.seconds,
-    ratio: params.ratio,
-    quality: params.quality,
-  };
-}
-
-/**
- * ✅ task状態確認（/api/check-video-task 用）
- */
-export async function checkVideoTaskWithRunway(
-  taskId: string
-): Promise<RunwayTaskCheckResult> {
-  const client = createClient();
-
-  // まず retrieve で状態を見る（軽い）
-  let task: any;
-  try {
-    task = await (client as any).tasks.retrieve(taskId);
-  } catch (e: any) {
-    throw new Error(e?.message || "failed to retrieve task");
-  }
-
-  const rawStatus = task?.status ?? task?.state ?? task?.data?.status ?? task?.data?.state ?? "";
-  const status = normalizeStatus(rawStatus);
-
-  // 成功済みなら output からURLを拾う
-  if (status === "succeeded") {
-    const videoUrl = pickVideoUrl(task?.output) || pickVideoUrl(task);
-    if (videoUrl) {
-      return { taskId, status, videoUrl, rawStatus: String(rawStatus) };
-    }
-
-    // “成功だけど output が遅れてる” 揺れに備えて wait を一度だけ試す
-    try {
-      const waited = await (client as any).tasks.waitForTaskOutput(taskId);
-      const waitedUrl = pickVideoUrl(waited?.output) || pickVideoUrl(waited);
-      if (waitedUrl) return { taskId, status, videoUrl: waitedUrl, rawStatus: String(rawStatus) };
-    } catch {
-      // ここで落とさない（次のpollで拾えるかもしれない）
-    }
-
-    return { taskId, status, rawStatus: String(rawStatus) };
-  }
-
-  if (status === "failed") {
-    return { taskId, status, rawStatus: String(rawStatus) };
-  }
-
-  // queued / running
-  return { taskId, status, rawStatus: String(rawStatus) };
-}
-
-/* =====================================================
-   2) “他APIが import している型/関数” を用意（TSを通す）
-===================================================== */
-
-// 背景画像生成
-export type BackgroundGenParams = {
-  prompt: string;
-  ratio: string; // "1280:720"
-  style?: string; // "clean" 等
-};
-export async function generateBackgroundImage(
-  _params: BackgroundGenParams,
-  _opts: { idempotencyKey: string }
-): Promise<{ imageUrl: string; prompt: string; ratio: string }> {
-  throw new Error(
-    "generateBackgroundImage is not implemented (USE_BACKGROUND_MOCK=true で運用してください)"
-  );
-}
-
-// 背景合成
-export type ReplaceBackgroundParams = {
-  foregroundImage: string;
-  backgroundImage: string;
-  ratio: string;
-  fit?: "contain" | "cover";
-};
-export async function replaceBackgroundImage(
-  _params: ReplaceBackgroundParams,
-  _opts: { idempotencyKey: string }
-): Promise<{ imageUrl: string; ratio: string }> {
-  throw new Error(
-    "replaceBackgroundImage is not implemented (USE_REPLACE_BG_MOCK=true で運用してください)"
-  );
-}
-
-// 動画移行
-export type MigrateVideoParams = {
-  sourceVideoUrl: string;
-  model?: string;
-};
-export async function migrateVideoToRunway(
-  params: MigrateVideoParams,
-  _opts: { idempotencyKey: string }
-): Promise<{ videoUrl: string; model: string }> {
-  return { videoUrl: params.sourceVideoUrl, model: params.model ?? "gen4_turbo" };
-}
-
-// テンプレ推薦
-export type RecommendVideoTemplateParams = {
-  hasImage: boolean;
-  purpose?: "product" | "service" | "brand" | string;
-  seconds?: 5 | 10;
-  quality?: "standard" | "high";
-  platform?: "instagram" | "tiktok" | "youtube" | string;
-};
-export async function recommendVideoTemplate(
-  params: RecommendVideoTemplateParams,
-  _opts: { idempotencyKey: string }
-): Promise<{
-  model: string;
-  ratio: string;
-  seconds: 5 | 10;
-  quality: "standard" | "high";
-  reason: string;
-}> {
-  const seconds = params.seconds ?? 10;
-  const quality = params.quality ?? "standard";
-
-  return {
-    model: "gen4_turbo",
-    ratio: params.platform === "tiktok" ? "720:1280" : "1280:720",
-    seconds,
-    quality,
-    reason: "安定優先の固定テンプレ（必要になったらロジックを強化）",
-  };
-}

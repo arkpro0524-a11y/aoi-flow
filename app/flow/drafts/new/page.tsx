@@ -1375,6 +1375,11 @@ const ig3 = Array.isArray(j.ig3) ? j.ig3.map(String).slice(0, 3) : [];
   imageIdeaUrl: url,
 }));
 await saveDraft({ imageIdeaUrl: url, phase: "draft" });
+
+// ✅ 生成直後は「どこに出た？」事故防止：右カラムへ誘導
+setRightTab("image");
+setPreviewReason("イメージ画像を生成しました（③に表示されます）");
+showMsg("イメージ画像を保存しました（③に表示）");
     } catch (e: any) {
       console.error(e);
       showMsg(`画像生成に失敗しました\n\n原因: ${e?.message || "不明"}`);
@@ -1525,8 +1530,12 @@ async function applyIg3ToOverlayOnly(text: string) {
   setPreviewReason("");
   setPreviewMode("base");
 
-  // ③ 画面内メッセージ（alert禁止）
-  showMsg("文字表示に反映しました（投稿用プレビューに表示）");
+  // ③ Firestoreへ「文字だけ」即保存（本文は絶対に触らない）
+  //    ※ saveDraft は dRef を使うので、この時点の最新stateと合成される
+  await saveDraft({ overlayText: t, phase: "draft" });
+
+  // ④ 画面内メッセージ（alert禁止）
+  showMsg("文字表示に反映しました（保存済み・本文は未変更）");
 }
 
   const secondsKey: UiSeconds = (d.videoSeconds ?? 5) === 10 ? 10 : 5;
@@ -2223,17 +2232,62 @@ async function generateVideo() {
 
             <div className="flex items-center gap-2 flex-wrap">
               <Btn
-                variant={d.brand === "vento" ? "primary" : "secondary"}
-                onClick={() => setD((p) => ({ ...p, brand: "vento" }))}
-              >
-                VENTO
-              </Btn>
-              <Btn
-                variant={d.brand === "riva" ? "primary" : "secondary"}
-                onClick={() => setD((p) => ({ ...p, brand: "riva" }))}
-              >
-                RIVA
-              </Btn>
+  variant={d.brand === "vento" ? "primary" : "secondary"}
+  onClick={() => {
+    // ✅ ブランド切替事故防止：表示残留を消す（課金ゼロ）
+    stopVideoPolling();
+    setSelectedVideoUrl(null);
+    setVideoPreviewUrl(null);
+    setVideoHistory([]);
+    setBgImageUrl(null);
+    setPreviewReason("");
+    setUiMsg("");
+
+    setD((p) => ({
+      ...p,
+      brand: "vento",
+      // ✅ ブランドが変わったら「素材」を一旦クリア（混入事故防止）
+      bgImageUrl: undefined,
+      bgImageUrls: [],
+      aiImageUrl: undefined,
+      videoUrl: undefined,
+      videoUrls: [],
+      videoTaskId: undefined,
+      videoStatus: "idle",
+    }));
+  }}
+>
+  VENTO
+</Btn>
+
+<Btn
+  variant={d.brand === "riva" ? "primary" : "secondary"}
+  onClick={() => {
+    // ✅ ブランド切替事故防止：表示残留を消す（課金ゼロ）
+    stopVideoPolling();
+    setSelectedVideoUrl(null);
+    setVideoPreviewUrl(null);
+    setVideoHistory([]);
+    setBgImageUrl(null);
+    setPreviewReason("");
+    setUiMsg("");
+
+    setD((p) => ({
+      ...p,
+      brand: "riva",
+      // ✅ ブランドが変わったら「素材」を一旦クリア（混入事故防止）
+      bgImageUrl: undefined,
+      bgImageUrls: [],
+      aiImageUrl: undefined,
+      videoUrl: undefined,
+      videoUrls: [],
+      videoTaskId: undefined,
+      videoStatus: "idle",
+    }));
+  }}
+>
+  RIVA
+</Btn>
               <Chip>
                 {brandLabel} / {phaseLabel}
               </Chip>

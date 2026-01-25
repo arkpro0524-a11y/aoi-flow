@@ -5,6 +5,9 @@ import { checkVideoTaskWithRunway } from "@/lib/server/runway";
 import admin from "firebase-admin";
 import crypto from "crypto";
 
+// ✅ firebase-admin / Buffer / crypto を使うので Node 固定（Edge 回避）
+export const runtime = "nodejs";
+
 async function requireUser(req: Request) {
   const authz = req.headers.get("authorization") || "";
   const m = authz.match(/^Bearer (.+)$/i);
@@ -24,11 +27,41 @@ function toUiStatus(runwayStatus: string): "queued" | "running" | "done" | "erro
   return "running";
 }
 
+// ✅ Runwayの戻り値が揺れても拾えるように「動画URL候補」を吸収
+function pickVideoUrl(res: any): string | null {
+  const cands: any[] = [
+    res?.videoUrl,
+    res?.url,
+    res?.outputUrl,
+    res?.output_url,
+    res?.result?.url,
+    res?.result?.videoUrl,
+    res?.data?.url,
+    res?.data?.videoUrl,
+    // よくある配列パターンも拾う（存在すれば）
+    ...(Array.isArray(res?.assets) ? res.assets.map((a: any) => a?.url) : []),
+    ...(Array.isArray(res?.outputs) ? res.outputs.map((o: any) => o?.url) : []),
+  ];
+
+  for (const v of cands) {
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return null;
+}
+
 async function fetchAsBuffer(url: string): Promise<Buffer> {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`failed to download video: ${res.status}`);
-  const ab = await res.arrayBuffer();
-  return Buffer.from(ab);
+  // ✅ タイムアウト（無限待ち防止）
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 60_000);
+
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    if (!res.ok) throw new Error(`failed to download video: ${res.status}`);
+    const ab = await res.arrayBuffer();
+    return Buffer.from(ab);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function storageDownloadUrl(bucketName: string, filePath: string, token: string) {
@@ -56,13 +89,19 @@ export async function POST(req: Request) {
     const snap = await ref.get();
     if (!snap.exists) return NextResponse.json({ error: "draft not found" }, { status: 404 });
     const data = snap.data() as any;
+
     if (String(data?.userId || "") !== user.uid) {
       return NextResponse.json({ error: "forbidden" }, { status: 403 });
     }
 
     // ✅ task確認
     const res = await checkVideoTaskWithRunway(taskId);
-    const uiStatus = toUiStatus(String(res.status || ""));
+
+    // status は checkVideoTaskWithRunway が整形してる想定だが、念のため raw も拾う
+    const uiStatus = toUiStatus(String(res?.status || res?.rawStatus || ""));
+
+    // ✅ Runwayの動画URL揺れを吸収
+    const runwayVideoUrl = pickVideoUrl(res);
 
     // ✅ 返すURL（UIが拾うキーは url / videoUrl / outputUrl を吸収するが、UI側は url が最も確実）
     let finalUrl: string | null = null;
@@ -70,21 +109,22 @@ export async function POST(req: Request) {
     // =========================
     // ✅ succeeded → Firebase Storage に mp4 を保存してURLを確定
     // =========================
-    if (uiStatus === "done" && res.videoUrl) {
+    if (uiStatus === "done" && runwayVideoUrl) {
       // すでに Storage URL が入っているなら再アップロードしない（無限増殖防止）
       const already = String(data?.videoUrl || "");
       if (already.includes("firebasestorage.googleapis.com")) {
         finalUrl = already;
       } else {
-        const bucketName =
-          String((admin.app().options as any)?.storageBucket || "").trim();
-        if (!bucketName) throw new Error("storageBucket is not configured in firebase admin");
+        // ✅ admin.app().options 前提を捨てる：bucket() の default を使い、name から bucketName を取る
+        // （これで admin.app 未初期化由来のクラッシュを避ける）
+        const bucket = admin.storage().bucket(); // default bucket
+        const bucketName = String(bucket?.name || "").trim();
+        if (!bucketName) throw new Error("Firebase Storage bucket is not configured (bucket name empty)");
 
         const filePath = `users/${user.uid}/drafts/${draftId}/videos/${Date.now()}_${taskId}.mp4`;
-        const buf = await fetchAsBuffer(res.videoUrl);
+        const buf = await fetchAsBuffer(runwayVideoUrl);
 
         const token = crypto.randomUUID();
-        const bucket = admin.storage().bucket(bucketName);
         const file = bucket.file(filePath);
 
         // ✅ token をメタに入れると「downloadURL形式」で配れる
@@ -126,11 +166,11 @@ export async function POST(req: Request) {
 
       return NextResponse.json({
         ok: true,
-        taskId: res.taskId,
+        taskId: res?.taskId || taskId,
         status: "done",
-        url: finalUrl,          // ✅ UIが最も確実に拾う
-        videoUrl: finalUrl,     // 互換
-        rawStatus: res.rawStatus || null,
+        url: finalUrl, // ✅ UIが最も確実に拾う
+        videoUrl: finalUrl, // 互換
+        rawStatus: res?.rawStatus || null,
       });
     }
 
@@ -150,11 +190,11 @@ export async function POST(req: Request) {
 
       return NextResponse.json({
         ok: true,
-        taskId: res.taskId,
+        taskId: res?.taskId || taskId,
         status: "error",
         url: null,
         videoUrl: null,
-        rawStatus: res.rawStatus || null,
+        rawStatus: res?.rawStatus || null,
       });
     }
 
@@ -172,13 +212,16 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       ok: true,
-      taskId: res.taskId,
+      taskId: res?.taskId || taskId,
       status: uiStatus, // queued | running
       url: null,
       videoUrl: null,
-      rawStatus: res.rawStatus || null,
+      rawStatus: res?.rawStatus || null,
     });
   } catch (e: any) {
-    return NextResponse.json({ error: e?.message || "check-video-task failed" }, { status: 500 });
+    return NextResponse.json(
+      { error: e?.message || "check-video-task failed" },
+      { status: 500 }
+    );
   }
 }
