@@ -1,3 +1,5 @@
+// /app/api/config/generate-bg/route.ts
+
 import { NextResponse } from "next/server";
 import { getAdminAuth, getAdminDb } from "@/firebaseAdmin";
 import { getStorage } from "firebase-admin/storage";

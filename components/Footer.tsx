@@ -1,7 +1,7 @@
+// /components/Footer.tsx
 "use client";
 
-/**
- * components/Footer.tsx
+/** 
  * ─────────────────────────────────────────────
  * 目的：
  * - ログイン画面で「横に走る帯（border-top）」が出るのを完全に消す

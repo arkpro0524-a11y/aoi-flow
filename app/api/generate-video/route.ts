@@ -1,133 +1,143 @@
-// app/api/generate-video/route.ts
-/**
- * app/api/generate-video/route.ts
- * ─────────────────────────────────────────────
- * 役割：
- * - UI からの動画生成リクエストを受ける
- * - mock → 実Runway を ENV で切替
- *
- * ✅ 今回の修正（互換のみ）
- * - UI が j.url を参照しているため、必ず url を返す
- * - 将来整理用に videoUrl も残す（同じ値）
- *
- * 切替方法：
- * - USE_RUNWAY_MOCK=true  → mock JSON を返す
- * - USE_RUNWAY_MOCK=false → 実 Runway SDK を呼ぶ
- */
-
+// /app/api/generate-video/route.ts
 import { NextResponse } from "next/server";
-import { PRICING } from "@/lib/server/pricing";
+import { getDb } from "@/lib/server/firebaseAdmin";
 import { getIdempotencyKey } from "@/lib/server/idempotency";
-import { generateVideoWithRunway, type RunwayVideoParams } from "@/lib/server/runway";
+import { PRICING } from "@/lib/server/pricing";
+import { startVideoTaskWithRunway, type RunwayVideoParams } from "@/lib/server/runway";
+import admin from "firebase-admin";
 
-/* =========================================================
-   ENV 切替
-========================================================= */
-
-const USE_MOCK = process.env.USE_RUNWAY_MOCK === "true";
-
-/* =========================================================
-   Mock 実装（UI 接続確認用）
-========================================================= */
-
-function mockGenerateVideo(params: RunwayVideoParams) {
-  const yen = PRICING.calcVideoCostYen(params.seconds, params.quality);
-
-  const mockUrl = "https://example.com/mock-video.mp4";
-
-  return {
-    ok: true,
-    mock: true,
-
-    // ✅ UI互換：必ず url
-    url: mockUrl,
-    // ✅ 将来整理用：videoUrl も残す
-    videoUrl: mockUrl,
-
-    model: params.model,
-    seconds: params.seconds,
-    quality: params.quality,
-    ratio: params.ratio,
-    yen,
-  };
+async function requireUser(req: Request) {
+  const authz = req.headers.get("authorization") || "";
+  const m = authz.match(/^Bearer (.+)$/i);
+  const token = m?.[1];
+  if (!token) throw new Error("Missing Authorization Bearer token");
+  const decoded = await admin.auth().verifyIdToken(token);
+  return { uid: decoded.uid };
 }
 
-/* =========================================================
-   POST Handler
-========================================================= */
+function ratioFromSize(size: string) {
+  // UI: 1024x1792 / 720x1280 => 縦
+  if (size === "1024x1792" || size === "720x1280") return "720:1280";
+  return "1280:720";
+}
+
+function buildPromptText(payload: any) {
+  // UIの vision / keywords / templateId を Runway用の promptText にまとめる
+  const vision = String(payload?.vision ?? "").trim();
+  const templateId = String(payload?.templateId ?? "").trim();
+  const kws = Array.isArray(payload?.keywords)
+    ? payload.keywords.map((x: any) => String(x).trim()).filter(Boolean).slice(0, 12)
+    : [];
+
+  // 最低限の固定フォーマット（サーバ側の安定性重視）
+  const lines = [
+    vision ? `Vision: ${vision}` : "",
+    kws.length ? `Keywords: ${kws.join(", ")}` : "",
+    templateId ? `Motion: ${templateId}` : "",
+    "Rules: keep product identity, do not distort shape, no text overlay, natural lighting.",
+  ].filter(Boolean);
+
+  return lines.join("\n");
+}
 
 export async function POST(req: Request) {
   try {
-    const body = await req.json();
+    const payload = await req.json();
 
-    /* ---------------------------------------------
-       入力正規化（UI仕様は壊さない）
-    --------------------------------------------- */
+    // ✅ 必須：draftId（どの下書きに紐づく動画か）
+    const draftId = String(payload?.draftId || "");
+    if (!draftId) {
+      return NextResponse.json({ error: "draftId is required" }, { status: 400 });
+    }
 
-    const seconds = PRICING.normalizeVideoSeconds(body.seconds);
+    // ✅ 課金事故防止：未認証は不可
+    const user = await requireUser(req);
 
-    // quality の正規化
-    const quality = String(body.quality).toLowerCase() === "high" ? "high" : "standard";
+    // ✅ draft の所有者チェック
+    const db = getDb();
+    const ref = db.collection("drafts").doc(draftId);
+    const snap = await ref.get();
+    if (!snap.exists) {
+      return NextResponse.json({ error: "draft not found" }, { status: 404 });
+    }
+    const data = snap.data() as any;
+    if (String(data?.userId || "") !== user.uid) {
+      return NextResponse.json({ error: "forbidden" }, { status: 403 });
+    }
+
+    // =========================
+    // ✅ UI→API 互換吸収
+    // =========================
+    // UIは referenceImageUrl / bgImageUrl を持ってる
+    // Runwayには promptImage (参考画像) + promptText が必要
+    const promptImage =
+      String(payload?.promptImage || "").trim() ||
+      String(payload?.referenceImageUrl || "").trim(); // ✅ UI互換
+
+    if (!promptImage) {
+      return NextResponse.json({ error: "promptImage/referenceImageUrl is required" }, { status: 400 });
+    }
+
+    const promptText =
+      String(payload?.promptText || "").trim() || buildPromptText(payload); // ✅ UI互換
+
+    if (!promptText) {
+      return NextResponse.json({ error: "promptText/vision is required" }, { status: 400 });
+    }
+
+    // ✅ 価格・正規化（UI由来）
+    const seconds = PRICING.normalizeVideoSeconds(payload?.seconds);
+    const quality = PRICING.normalizeVideoQuality(payload?.quality);
+
+    const size = String(payload?.size || "").trim();
+    const ratio = String(payload?.ratio || "").trim() || ratioFromSize(size || "1280x720");
+
+    const model = String(payload?.model || "gen4_turbo").trim();
+
+    const idempotencyKey = getIdempotencyKey(req, payload);
 
     const params: RunwayVideoParams = {
-      model: body.model || "gen4_turbo",
-      promptImage: body.promptImage,
-      promptText: body.promptText,
+      model,
+      promptImage,
+      promptText,
       seconds,
-      ratio: body.ratio || "1280:720",
+      ratio,
       quality,
     };
 
-    if (!params.promptImage || !params.promptText) {
-      return NextResponse.json(
-        { ok: false, error: "promptImage と promptText は必須です" },
-        { status: 400 }
-      );
-    }
+    // ✅ 非同期開始（taskIdを返す）
+    const started = await startVideoTaskWithRunway(params, { idempotencyKey });
 
-    /* ---------------------------------------------
-       冪等キー
-    --------------------------------------------- */
-
-    // params だけで安定化（同条件の連打で課金事故を増やさない）
-    const idemKey = getIdempotencyKey(req, params);
-
-    /* ---------------------------------------------
-       Mock
-    --------------------------------------------- */
-
-    if (USE_MOCK) {
-      return NextResponse.json(mockGenerateVideo(params));
-    }
-
-    /* ---------------------------------------------
-       Real Runway
-    --------------------------------------------- */
-
-    const result = await generateVideoWithRunway(params, { idempotencyKey: idemKey });
-
-    const yen = PRICING.calcVideoCostYen(seconds, quality);
-
-    // ✅ UI互換：url を必ず返す（UIが j.url を見る）
-    // ✅ 将来整理：videoUrl も返す（同値）
-    return NextResponse.json({
-      ok: true,
-      mock: false,
-
-      url: result.videoUrl,
-      videoUrl: result.videoUrl,
-
-      model: result.model,
-      seconds: result.seconds,
-      quality: result.quality,
-      ratio: result.ratio,
-      yen,
-    });
-  } catch (err: any) {
-    console.error("[generate-video]", err);
-    return NextResponse.json(
-      { ok: false, error: err?.message || "動画生成に失敗しました" },
-      { status: 500 }
+    // ✅ task開始時点で draft に taskId を保存（UI語彙に合わせる）
+    await ref.set(
+      {
+        videoTaskId: started.taskId,
+        videoStatus: "queued", // ✅ UI語彙: queued/running/done/error/idle
+        videoModel: started.model,
+        videoSeconds: started.seconds,
+        videoRatio: started.ratio,
+        videoQuality: started.quality,
+        videoRequestedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true }
     );
+
+    // ✅ UIは status===202 または running:true を見て分岐できるので running:true を付ける
+    return NextResponse.json(
+      {
+        ok: true,
+        running: true,
+        taskId: started.taskId,
+        status: "queued",
+        seconds: started.seconds,
+        ratio: started.ratio,
+        quality: started.quality,
+        model: started.model,
+      },
+      { status: 202 }
+    );
+  } catch (e: any) {
+    return NextResponse.json({ error: e?.message || "generate-video failed" }, { status: 500 });
   }
 }

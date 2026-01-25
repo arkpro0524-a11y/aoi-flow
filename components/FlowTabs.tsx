@@ -1,4 +1,4 @@
-// components/FlowTabs.tsx
+// /components/FlowTabs.tsx
 // ✅ Mobile専用仕様：タブ切替式 [入力][AI案][編集]
 // ✅ タップ領域 44px以上（min-h）
 "use client";

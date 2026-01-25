@@ -59,11 +59,7 @@ type UiSeconds = 5 | 10;
 type UiVideoQuality = "standard" | "high";
 type UiVideoSize = "1024x1792" | "720x1280" | "1792x1024" | "1280x720";
 
-/**
- * 画像プレビュー切替（UI上の名称を確定）
- * - “AI”という単語は曖昧なので禁止
- */
-type PreviewMode = "base" | "idea" | "composite";
+
 
 type DraftDoc = {
   userId: string;
@@ -115,6 +111,12 @@ type DraftDoc = {
   videoTemplate?: UiTemplate;
   videoSize?: UiVideoSize;
 
+  // ★Runway task id（task方式）
+  videoTaskId?: string;
+
+  // ✅ C案：task方式に合わせて拡張（互換維持）
+  videoStatus?: "idle" | "queued" | "running" | "done" | "error"; 
+
   updatedAt?: any;
   createdAt?: any;
 
@@ -156,6 +158,9 @@ const DEFAULT: DraftDoc = {
   videoQuality: "standard",
   videoTemplate: "slowZoomFade",
   videoSize: "1024x1792",
+
+  videoTaskId: undefined,
+  videoStatus: "idle",
 
   bgImageUrls: [],
   videoUrls: [],
@@ -215,6 +220,13 @@ function splitKeywords(text: string) {
     .map((s) => s.trim())
     .filter(Boolean)
     .slice(0, 12);
+}
+
+// ✅ 文字入り描画の「描画元」を1箇所に集約（全員これを見る）
+// - 仕様：文字入り（投稿用）は「元画像（baseImageUrl）」にだけ乗せる
+// - 合成（動画用）は文字なし（aiImageUrl）として別管理する
+function getOverlaySourceUrlForPreview(d: DraftDoc) {
+  return d.baseImageUrl || "";
 }
 
 const formStyle: React.CSSProperties = {
@@ -281,6 +293,7 @@ function SelectBtn(props: {
   title?: string;
 }) {
   const selected = props.selected;
+
 
   return (
     <button
@@ -548,7 +561,6 @@ function normalizePricing(raw: ConfigResponseLike): PricingTable {
     },
   };
 }
-
 export default function NewDraftPage() {
   const router = useRouter();
   const sp = useSearchParams();
@@ -559,10 +571,24 @@ export default function NewDraftPage() {
   const [loadBusy, setLoadBusy] = useState(true);
 
   const [draftId, setDraftId] = useState<string | null>(id ?? null);
+    // ===========================
+  // ✅ stale draftId 対策：常に最新の draftId を参照する
+  // ===========================
+  const draftIdRef = useRef<string | null>(id ?? null);
+  useEffect(() => {
+    draftIdRef.current = draftId;
+  }, [draftId]);
   const [d, setD] = useState<DraftDoc>({ ...DEFAULT });
 
-  // ✅ プレビュー切替（保存用 imageSource とは別物）
-  const [previewMode, setPreviewMode] = useState<PreviewMode>("base");
+  // ===========================
+  // ✅ stale closure 対策：常に最新の d を参照する（1回だけ）
+  // ===========================
+  const dRef = useRef<DraftDoc>({ ...DEFAULT });
+  useEffect(() => {
+  dRef.current = d;
+  }, [d]);
+
+
   // ✅ 右カラムの表示タブ
   type RightTab = "image" | "video";
   const [rightTab, setRightTab] = useState<RightTab>("image");
@@ -570,8 +596,23 @@ export default function NewDraftPage() {
   // ✅ 文字入り「一時プレビュー」用（保存はしない）
   const [overlayPreviewDataUrl, setOverlayPreviewDataUrl] = useState<string | null>(null);
 
-  // ✅ 「押せない理由」表示（その場に1行）
+    // ✅ プレビュー表示モード（UI用：Firestore互換の imageSource とは分離）
+  type PreviewMode = "base" | "idea" | "composite";
+
+  // base = 元画像（+文字プレビュー可）
+  // idea = イメージ画像（世界観）
+  // composite = 合成（動画用・文字なし = aiImageUrl）
+  const [previewMode, setPreviewMode] = useState<PreviewMode>("base");
+
+  // ✅ 押せない/表示できない時の「その場に1行理由」（モーダル/alert禁止）
   const [previewReason, setPreviewReason] = useState<string>("");
+
+  // ✅ 画面内メッセージ（alert/confirm禁止の置換先）
+  const [uiMsg, setUiMsg] = useState<string>("");
+
+  function showMsg(s: string) {
+    setUiMsg(s);
+  }
 
   // canvas
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -581,15 +622,33 @@ export default function NewDraftPage() {
   const [selectedVideoUrl, setSelectedVideoUrl] = useState<string | null>(null);
 
   const [bgImageUrl, setBgImageUrl] = useState<string | null>(null);
+
+   // ✅ 背景生成の busy ※重複宣言禁止
   const [bgBusy, setBgBusy] = useState(false);
 
+  // ✅ inFlight ※重複宣言禁止
   const inFlightRef = useRef<Record<string, boolean>>({});
+  // ===========================
+// ✅ polling タイマー管理（アンマウント/下書き切替で停止）
+// ===========================
+const pollTimerRef = useRef<number | null>(null);
 
-  const [pricing, setPricing] = useState<PricingTable>(FALLBACK_PRICING);
-  const [pricingBusy, setPricingBusy] = useState(false);
-  const [pricingError, setPricingError] = useState<string | null>(null);
-  const [pricingUpdatedAt, setPricingUpdatedAt] = useState<number | null>(null);
+// ✅ 現在poll中の taskKey を保持（stop時に inFlight を確実に解除する）
+const pollKeyRef = useRef<string | null>(null);
 
+function stopVideoPolling() {
+  if (pollTimerRef.current != null) {
+    window.clearInterval(pollTimerRef.current);
+    pollTimerRef.current = null;
+  }
+  // ✅ inFlight解除（これが無いと再開できない）
+  if (pollKeyRef.current) {
+    inFlightRef.current[pollKeyRef.current] = false;
+    pollKeyRef.current = null;
+  }
+}
+
+  // ↓↓ここから追加↓↓（貼り付け確定位置：inFlightRef の直下）
   // ===========================
   // OWNER 表示制御（制作者だけに見せる）
   // ===========================
@@ -597,15 +656,183 @@ export default function NewDraftPage() {
   // - 制作者以外は見えない（価格は見せてもOKだが、ここは要件通り“どのAIか”を隠す）
   const OWNER_UID = (process.env.NEXT_PUBLIC_OWNER_UID || "").trim();
   const isOwner = !!uid && !!OWNER_UID && uid === OWNER_UID;
+  // ↑↑ここまで追加↑↑
 
-  // ✅ C-2) プレビュー切替が押せない理由を判定（その場に1行表示する用）
-  function previewDisabledReason(mode: PreviewMode, d: DraftDoc): string {
-    if (mode === "base" && !d.baseImageUrl) return "先に元画像を保存してください";
-    if (mode === "idea" && !d.imageIdeaUrl) return "先にイメージ画像を生成してください";
-    if (mode === "composite" && !(d.compositeImageUrl || d.aiImageUrl))
-      return "先に合成画像を作成してください";
-    return "";
+    // ===========================
+  // ✅ missing functions（この3つが無いとTSが死ぬ）
+  // ===========================
+
+  // 1) 画像アップロード（baseImageUrl に保存して previewMode を base に寄せる）
+  async function onUploadImageFile(file: File) {
+    if (!uid) return;
+
+    if (inFlightRef.current["upload"]) return;
+    inFlightRef.current["upload"] = true;
+
+    setBusy(true);
+    try {
+      const ensuredDraftId = draftId ?? (await saveDraft());
+      if (!ensuredDraftId) throw new Error("failed to create draft");
+
+      const url = await uploadImageFileAsJpegToStorage(uid, ensuredDraftId, file);
+
+      // ✅ 元画像(base)を更新（投稿用）
+      setD((p) => ({
+        ...p,
+        baseImageUrl: url,
+        imageSource: "upload",
+      }));
+
+      // ✅ 空表示事故防止：元画像が入ったら必ず base に寄せる
+      setPreviewMode("base");
+      setPreviewReason("");
+
+      await saveDraft({
+        baseImageUrl: url,
+        imageSource: "upload",
+        phase: "draft",
+      });
+
+      showMsg("元画像を保存しました（JPEG変換）");
+    } catch (e: any) {
+      console.error(e);
+      showMsg(`画像アップロードに失敗しました：${e?.message || "不明"}`);
+    } finally {
+      setBusy(false);
+      inFlightRef.current["upload"] = false;
+    }
   }
+
+  // 2) task を1回だけ確認する（/api/check-video-task を叩く）
+  async function checkVideoTaskOnce(taskId: string, ensuredDraftId: string) {
+    if (!uid) return;
+    if (!taskId) return;
+
+    // ✅ 二重実行防止（task単位）
+    const key = `videoTask:${taskId}`;
+    if (inFlightRef.current[key]) return;
+    inFlightRef.current[key] = true;
+
+    try {
+      const token = await auth.currentUser?.getIdToken(true);
+      if (!token) throw new Error("no token");
+
+      // ✅ 想定：サーバ側に task 状態確認APIがある前提
+      //  - 無いなら UI に出して止める（課金事故防止）
+      const r = await fetch("/api/check-video-task", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ taskId, draftId: ensuredDraftId }),
+      });
+
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        throw new Error(j?.error || "check-video-task error（API未実装の可能性）");
+      }
+
+      const statusRaw = String(j?.status ?? j?.state ?? "");
+      const status: DraftDoc["videoStatus"] =
+        statusRaw === "queued" || statusRaw === "running" || statusRaw === "done" || statusRaw === "error"
+          ? (statusRaw as any)
+          : (j?.running ? "running" : j?.url ? "done" : "running");
+
+      // ✅ 完了URL（互換吸収）
+      const videoUrl =
+        typeof j?.url === "string"
+          ? j.url
+          : typeof j?.videoUrl === "string"
+            ? j.videoUrl
+            : typeof j?.outputUrl === "string"
+              ? j.outputUrl
+              : "";
+
+      // ✅ status反映
+      setD((p) => ({ ...p, videoStatus: status }));
+
+      // ✅ done なら保存して polling 停止
+      if (status === "done" && videoUrl) {
+        stopVideoPolling();
+        setRightTab("video");
+        setSelectedVideoUrl(videoUrl);
+        setVideoPreviewUrl(videoUrl);
+
+        const nextVideoUrls = (() => {
+          const cur = Array.isArray(dRef.current.videoUrls) ? dRef.current.videoUrls : [];
+          return [videoUrl, ...cur.filter((x) => x !== videoUrl)].slice(0, 10);
+        })();
+
+        setD((p) => ({
+          ...p,
+          videoUrl,
+          videoUrls: nextVideoUrls,
+          videoStatus: "done",
+        }));
+
+        await saveDraft({
+          videoUrl,
+          videoUrls: nextVideoUrls,
+          videoStatus: "done",
+        });
+
+        showMsg("動画が完成しました");
+        return;
+      }
+
+      if (status === "error") {
+        stopVideoPolling();
+        await saveDraft({ videoStatus: "error" });
+        showMsg("動画生成に失敗しました（task）");
+        return;
+      }
+
+      // queued/running は何もしない（poll継続）
+    } catch (e: any) {
+      console.error(e);
+      // ✅ APIが無い/落ちてる時は暴走させない
+      stopVideoPolling();
+      setD((p) => ({ ...p, videoStatus: "error" }));
+      void saveDraft({ videoStatus: "error" });
+      showMsg(`状態確認に失敗：${e?.message || "不明"}`);
+    } finally {
+      inFlightRef.current[key] = false;
+    }
+  }
+
+  // 3) polling 開始（stop で必ず inFlight 解除される設計）
+  function startVideoPolling(taskId: string, ensuredDraftId: string) {
+    if (!taskId) return;
+
+    // ✅ 既存pollを止める（残留事故防止）
+    stopVideoPolling();
+
+    const key = `videoTask:${taskId}`;
+    pollKeyRef.current = key;
+
+    // ✅ running表示へ
+    setD((p) => ({ ...p, videoTaskId: taskId, videoStatus: "running" }));
+
+    // ✅ まず1回即実行
+    void checkVideoTaskOnce(taskId, ensuredDraftId);
+
+    // ✅ 以降は interval
+    pollTimerRef.current = window.setInterval(() => {
+      void checkVideoTaskOnce(taskId, ensuredDraftId);
+    }, 2500);
+  }
+
+  const [pricing, setPricing] = useState<PricingTable>(FALLBACK_PRICING);
+  const [pricingBusy, setPricingBusy] = useState(false);
+  const [pricingError, setPricingError] = useState<string | null>(null);
+  const [pricingUpdatedAt, setPricingUpdatedAt] = useState<number | null>(null);
+
+
+
+
+
+
 
   async function fetchPricing() {
     setPricingBusy(true);
@@ -649,50 +876,59 @@ export default function NewDraftPage() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
   useEffect(() => {
-    let cancelled = false;
+  return () => {
+    stopVideoPolling();
+  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, []);
 
-    // ✅ プレビューで「文字入り」を見せたいのは base/composite のときだけ
-    if (previewMode === "idea") {
-      setOverlayPreviewDataUrl(null);
-      return;
-    }
+useEffect(() => {
+  let cancelled = false;
 
-    // 文字が空、またはoverlay無効ならプレビューは不要
-    const text = (d.overlayText || "").trim();
-    if (!d.overlayEnabled || !text) {
-      setOverlayPreviewDataUrl(null);
-      return;
-    }
+  // ✅ 文字がOFF、または空ならプレビューは不要
+  const text = (d.overlayText || "").trim();
+  if (!d.overlayEnabled || !text) {
+    setOverlayPreviewDataUrl(null);
+    return;
+  }
 
-    // 元画像（base）が無いと描けない（仕様：文字入りは必ず元画像）
-    if (!d.baseImageUrl) {
-      setOverlayPreviewDataUrl(null);
-      return;
-    }
+  // ✅ 文字入りは「元画像(baseImageUrl)」のみが描画元
+  const srcForOverlay = getOverlaySourceUrlForPreview(d);
+  if (!srcForOverlay) {
+    setOverlayPreviewDataUrl(null);
+    return;
+  }
 
-    // ✅ 打鍵のたびに重くならないよう、少し遅延
-    const t = setTimeout(async () => {
-      const out = await renderToCanvasAndGetDataUrlSilent();
-      if (!cancelled) setOverlayPreviewDataUrl(out);
-    }, 150);
+  // ✅ 打鍵のたびに重くならないよう、少し遅延
+  const t = setTimeout(async () => {
+    const out = await renderToCanvasAndGetDataUrlSilent();
+    if (!cancelled) setOverlayPreviewDataUrl(out);
+  }, 150);
 
-    return () => {
-      cancelled = true;
-      clearTimeout(t);
-    };
-  }, [
-    previewMode,
-    d.overlayEnabled,
-    d.overlayText,
-    d.overlayFontScale,
-    d.overlayY,
-    d.overlayBgOpacity,
-  ]);
+  return () => {
+    cancelled = true;
+    clearTimeout(t);
+  };
+}, [
+  d.overlayEnabled,
+  d.overlayText,
+  d.overlayFontScale,
+  d.overlayY,
+  d.overlayBgOpacity,
+  d.baseImageUrl,
+]);
 
   useEffect(() => {
     if (!uid) return;
+
+    stopVideoPolling(); // ✅ 下書き切替の残留pollingを止める
+        // ✅ 下書き切替時：右側の「動画表示残留」を全消し（別下書きの動画が出る事故防止）
+    setSelectedVideoUrl(null);
+    setVideoPreviewUrl(null);
+    setVideoHistory([]);
+    setUiMsg("");
+    setPreviewReason("");
 
     (async () => {
       setLoadBusy(true);
@@ -738,21 +974,35 @@ export default function NewDraftPage() {
           typeof data.compositeImageUrl === "string" && data.compositeImageUrl
             ? data.compositeImageUrl
             : undefined;
+const imageIdeaUrl =
+  typeof data.imageIdeaUrl === "string" && data.imageIdeaUrl
+    ? data.imageIdeaUrl
+    : undefined;
 
-        const imageIdeaUrl =
-          typeof data.imageIdeaUrl === "string" && data.imageIdeaUrl ? data.imageIdeaUrl : undefined;
-
-        const bgImageUrlSingle =
-          typeof data.bgImageUrl === "string" && data.bgImageUrl ? data.bgImageUrl : undefined;
+const bgImageUrlSingle =
+  typeof data.bgImageUrl === "string" && data.bgImageUrl
+    ? data.bgImageUrl
+    : undefined;
 
         const bgImageUrls: string[] = Array.isArray(data.bgImageUrls)
           ? data.bgImageUrls.filter((v: any) => typeof v === "string").slice(0, 10)
           : [];
 
         const videoUrls: string[] = Array.isArray(data.videoUrls)
+        
           ? data.videoUrls.filter((v: any) => typeof v === "string").slice(0, 10)
           : [];
+        const videoTaskId =
+          typeof data.videoTaskId === "string" && data.videoTaskId ? data.videoTaskId : undefined;
 
+        const videoStatus: DraftDoc["videoStatus"] =
+          data.videoStatus === "queued" ||
+          data.videoStatus === "running" ||
+          data.videoStatus === "done" ||
+          data.videoStatus === "error" ||
+          data.videoStatus === "idle"
+            ? data.videoStatus
+            : "idle";
         const overlayEnabled = typeof data.overlayEnabled === "boolean" ? data.overlayEnabled : true;
         const overlayText = typeof data.overlayText === "string" ? data.overlayText : ig || "";
         const overlayFontScale =
@@ -814,8 +1064,8 @@ export default function NewDraftPage() {
           compositeImageUrl,
           imageUrl: typeof data.imageUrl === "string" ? data.imageUrl : undefined,
           imageSource,
-          imageIdeaUrl,
-          bgImageUrl: bgImageUrlSingle,
+imageIdeaUrl,
+bgImageUrl: bgImageUrlSingle,
 
           bgImageUrls,
           videoUrls,
@@ -832,64 +1082,104 @@ export default function NewDraftPage() {
           videoTemplate,
           videoSize,
 
+          videoTaskId,
+          videoStatus,
+
           updatedAt: data.updatedAt,
           createdAt: data.createdAt,
         });
+// ✅ 初期プレビュー：空表示を絶対に作らない（仕様厳守）
+if (baseImageUrl) setPreviewMode("base");
+else if (imageIdeaUrl) setPreviewMode("idea");
+else if (aiImageUrl) setPreviewMode("composite");
+else setPreviewMode("base");
 
-        // ✅ 初期プレビュー：あるものを優先（迷い防止）
-        if (compositeImageUrl || aiImageUrl) setPreviewMode("composite");
-        else if (baseImageUrl) setPreviewMode("base");
-        else if (imageIdeaUrl) setPreviewMode("idea");
+// ✅ 背景プレビュー復元：Firestore単発(bgImageUrl)を最優先 → 無ければ履歴1件目
+const initialBg = bgImageUrlSingle ?? (bgImageUrls.length ? bgImageUrls[0] : null);
 
-        // ✅ 背景プレビュー復元：Firestore単発(bgImageUrl)を最優先 → 無ければ履歴1件目
-        const initialBg = bgImageUrlSingle ?? (bgImageUrls.length ? bgImageUrls[0] : null);
-
-        // ✅ 別下書きへ切替時に「前のstate」が残ると事故るので、必ず上書きする
-        setBgImageUrl(initialBg);
-
-        if (videoUrls.length && !videoPreviewUrl) setVideoPreviewUrl(videoUrls[0]);
+// ✅ 別下書きへ切替時に「前のstate」が残ると事故るので、必ず上書きする
+setBgImageUrl(initialBg);
+        // ✅ 復元は “常に先頭” を採用（stale closure で復元しない事故防止）
+        if (videoUrls.length) setVideoPreviewUrl(videoUrls[0]);
       } finally {
         setLoadBusy(false);
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [uid, id]);
+    // ✅ previewMode が成立しているかを常に監視して、成立しないなら安全側へ落とす
+  // 目的：プレビューが空になる事故を潰す（仕様「空表示を絶対に作らない」）
+  useEffect(() => {
+    // composite が選ばれているのに aiImageUrl が無い → base/idea に戻す
+    if (previewMode === "composite" && !d.aiImageUrl) {
+      if (d.baseImageUrl) {
+        setPreviewMode("base");
+        setPreviewReason("合成（動画用）が未作成のため、元画像に戻しました");
+      } else if (d.imageIdeaUrl) {
+        setPreviewMode("idea");
+        setPreviewReason("合成（動画用）が未作成のため、イメージに戻しました");
+      } else {
+        setPreviewMode("base");
+        setPreviewReason("表示できる画像がありません（先に元画像を保存してください）");
+      }
+      return;
+    }
+
+    // idea が選ばれているのに imageIdeaUrl が無い → base に戻す
+    if (previewMode === "idea" && !d.imageIdeaUrl) {
+      if (d.baseImageUrl) {
+        setPreviewMode("base");
+        setPreviewReason("イメージ画像が未作成のため、元画像に戻しました");
+      } else {
+        setPreviewMode("base");
+        setPreviewReason("表示できる画像がありません（先に元画像を保存してください）");
+      }
+      return;
+    }
+
+    // base が選ばれているのに baseImageUrl が無いが、idea はある → idea に逃がす（空表示回避）
+    if (previewMode === "base" && !d.baseImageUrl && d.imageIdeaUrl) {
+      setPreviewMode("idea");
+      setPreviewReason("元画像が無いため、イメージ表示に切り替えました");
+      return;
+    }
+  }, [previewMode, d.aiImageUrl, d.baseImageUrl, d.imageIdeaUrl]);
+  // ✅ previewMode が成立している時だけ、理由表示を自動で消す（render中setState禁止）
+useEffect(() => {
+  const ok =
+    (previewMode === "base" && !!d.baseImageUrl) ||
+    (previewMode === "idea" && !!d.imageIdeaUrl) ||
+    (previewMode === "composite" && !!d.aiImageUrl);
+
+  if (ok && previewReason) setPreviewReason("");
+}, [previewMode, d.baseImageUrl, d.imageIdeaUrl, d.aiImageUrl, previewReason]);
 
   const brandLabel = d.brand === "vento" ? "VENTO" : "RIVA";
   const phaseLabel = d.phase === "draft" ? "下書き" : d.phase === "ready" ? "投稿待ち" : "投稿済み";
   const canGenerate = d.vision.trim().length > 0 && !busy;
 
+  
   const baseForEditUrl = useMemo(() => {
     if (d.imageSource === "ai") return d.aiImageUrl || d.baseImageUrl || "";
     if (d.imageSource === "upload") return d.baseImageUrl || d.aiImageUrl || "";
     return d.baseImageUrl || d.aiImageUrl || "";
   }, [d.imageSource, d.baseImageUrl, d.aiImageUrl]);
 
-  const displayImageUrl = useMemo(() => {
+    const displayImageUrl = useMemo(() => {
     // ✅ プレビューは previewMode で決める（保存互換の imageSource は見ない）
+    // ✅ 仕様確定：composite = 合成（動画用）なので aiImageUrl のみ表示（文字入りは出さない）
     if (previewMode === "composite") {
-      return (
-        overlayPreviewDataUrl ||
-        d.compositeImageUrl || // ← 文字入り保存（PNG）
-        d.aiImageUrl || // ← 背景合成（動画用）
-        d.baseImageUrl || // ← 最後の保険
-        ""
-      );
+      return d.aiImageUrl || "";
     }
+
     if (previewMode === "idea") {
       // イメージ＝世界観用（未実装なら空になる）
       return d.imageIdeaUrl || "";
     }
-    // base（元画像）
-    return d.baseImageUrl || "";
-  }, [
-    previewMode,
-    overlayPreviewDataUrl,
-    d.compositeImageUrl,
-    d.aiImageUrl,
-    d.baseImageUrl,
-    d.imageIdeaUrl,
-  ]);
+
+    // base（元画像）: 文字入りプレビューがあればそれを優先
+    return overlayPreviewDataUrl || d.baseImageUrl || "";
+  }, [previewMode, overlayPreviewDataUrl, d.aiImageUrl, d.baseImageUrl, d.imageIdeaUrl]);
 
   const displayVideoUrl = useMemo(() => {
     const u =
@@ -901,17 +1191,31 @@ export default function NewDraftPage() {
 
     if (!u) return undefined;
 
-    const sep = u.includes("?") ? "&" : "?";
-    return `${u}${sep}v=${Date.now()}`;
+    // ✅ 重要：署名付きURLに「?v=」を足すと壊れるので “絶対に足さない”
+    // リロードは <video key=...> の差し替えで担保する
+    return u;
   }, [selectedVideoUrl, videoPreviewUrl, d.videoUrl, videoHistory, d.videoUrls]);
-  async function saveDraft(partial?: Partial<DraftDoc>): Promise<string | null> {
+  // ✅ 背景の表示は state 優先 → Firestore(d.bgImageUrl) にフォールバック
+  const bgDisplayUrl = bgImageUrl || d.bgImageUrl || "";
+    async function saveDraft(partial?: Partial<DraftDoc>): Promise<string | null> {
     if (!uid) return null;
+
+    // ✅ saveDraft は「最新 state」を必ず参照（stale closure防止）
+    const base = dRef.current;
 
     const includeVideoUrls = !!partial && Object.prototype.hasOwnProperty.call(partial, "videoUrls");
     const includeBgImageUrls = !!partial && Object.prototype.hasOwnProperty.call(partial, "bgImageUrls");
 
-    const next: DraftDoc = { ...d, ...(partial ?? {}), userId: uid };
-    const representativeUrl = next.compositeImageUrl || next.baseImageUrl || next.aiImageUrl || null;
+    const next: DraftDoc = { ...base, ...(partial ?? {}), userId: uid };
+
+    const representativeUrl =
+      (partial && Object.prototype.hasOwnProperty.call(partial, "imageUrl")
+        ? (partial as any).imageUrl
+        : null) ||
+      next.aiImageUrl ||
+      next.baseImageUrl ||
+      next.compositeImageUrl ||
+      null;
 
     const payload: any = {
       userId: uid,
@@ -948,6 +1252,9 @@ export default function NewDraftPage() {
       videoTemplate: next.videoTemplate ?? "slowZoomFade",
       videoSize: next.videoSize ?? "1024x1792",
 
+      videoTaskId: next.videoTaskId ?? null,
+      videoStatus: next.videoStatus ?? "idle",
+
       updatedAt: serverTimestamp(),
     };
 
@@ -958,27 +1265,34 @@ export default function NewDraftPage() {
       payload.videoUrls = Array.isArray(next.videoUrls) ? next.videoUrls.slice(0, 10) : [];
     }
 
-    if (!draftId) {
+    // ✅ draftId も ref から取る（stale防止）
+    const currentDraftId = draftIdRef.current;
+
+    if (!currentDraftId) {
       payload.createdAt = serverTimestamp();
       payload.bgImageUrls = Array.isArray(next.bgImageUrls) ? next.bgImageUrls.slice(0, 10) : [];
       payload.videoUrls = Array.isArray(next.videoUrls) ? next.videoUrls.slice(0, 10) : [];
 
       const refDoc = await addDoc(collection(db, "drafts"), payload);
+
+      // ✅ state + ref を同時更新（事故防止）
+      draftIdRef.current = refDoc.id;
       setDraftId(refDoc.id);
       router.replace(`/flow/drafts/new?id=${encodeURIComponent(refDoc.id)}`);
+
       setD(next);
       return refDoc.id;
     } else {
-      await updateDoc(doc(db, "drafts", draftId), payload);
+      await updateDoc(doc(db, "drafts", currentDraftId), payload);
       setD(next);
-      return draftId;
+      return currentDraftId;
     }
   }
 
   async function generateCaptions() {
     if (!uid) return;
     const vision = d.vision.trim();
-    if (!vision) return alert("Vision（必須）を入力してください");
+    
 
     if (inFlightRef.current["captions"]) return;
     inFlightRef.current["captions"] = true;
@@ -991,17 +1305,17 @@ export default function NewDraftPage() {
       const body = { brandId: d.brand, vision, keywords: splitKeywords(d.keywordsText), tone: "" };
 
       const r = await fetch("/api/generate-captions", {
-        method: "POST",
-        headers: { "content-type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify(body),
-      });
+  method: "POST",
+  headers: { "content-type": "application/json", Authorization: `Bearer ${token}` },
+  body: JSON.stringify(body),
+});
 
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(j?.error || "caption error");
+const j = await r.json().catch(() => ({}));
+if (!r.ok) throw new Error(j?.error || "caption error");
 
-      const ig = typeof j.instagram === "string" ? j.instagram : "";
-      const x = typeof j.x === "string" ? j.x : "";
-      const ig3 = Array.isArray(j.ig3) ? j.ig3.map(String).slice(0, 3) : [];
+const ig = typeof j.instagram === "string" ? j.instagram : "";
+const x = typeof j.x === "string" ? j.x : "";
+const ig3 = Array.isArray(j.ig3) ? j.ig3.map(String).slice(0, 3) : [];
 
       const nextOverlay = (d.overlayText || "").trim() ? d.overlayText : ig;
 
@@ -1015,9 +1329,9 @@ export default function NewDraftPage() {
 
       await saveDraft({ ig, x, ig3, phase: "draft", overlayText: nextOverlay });
     } catch (e: any) {
-      console.error(e);
-      alert(`文章生成に失敗しました\n\n原因: ${e?.message || "不明"}`);
-    } finally {
+  console.error(e);
+  showMsg(`文章生成に失敗しました：${e?.message || "不明"}`);
+} finally {
       setBusy(false);
       inFlightRef.current["captions"] = false;
     }
@@ -1026,7 +1340,7 @@ export default function NewDraftPage() {
   async function generateAiImage() {
     if (!uid) return;
     const vision = d.vision.trim();
-    if (!vision) return alert("Vision（必須）を入力してください");
+    if (!vision) { showMsg("Vision（必須）を入力してください"); return; }
 
     if (inFlightRef.current["image"]) return;
     inFlightRef.current["image"] = true;
@@ -1057,110 +1371,111 @@ export default function NewDraftPage() {
       const url = await uploadDataUrlToStorage(uid, ensuredDraftId, dataUrl);
 
       setD((prev) => ({
-        ...prev,
-        imageIdeaUrl: url,
-      }));
-      await saveDraft({ imageIdeaUrl: url, phase: "draft" });
+  ...prev,
+  imageIdeaUrl: url,
+}));
+await saveDraft({ imageIdeaUrl: url, phase: "draft" });
     } catch (e: any) {
       console.error(e);
-      alert(`画像生成に失敗しました\n\n原因: ${e?.message || "不明"}`);
+      showMsg(`画像生成に失敗しました\n\n原因: ${e?.message || "不明"}`);
     } finally {
       setBusy(false);
       inFlightRef.current["image"] = false;
     }
   }
 
-  async function renderToCanvasAndGetDataUrlSilent(): Promise<string | null> {
-    const canvas = canvasRef.current;
-    if (!canvas) return null;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return null;
+async function renderToCanvasAndGetDataUrlSilent(): Promise<string | null> {
+  const canvas = canvasRef.current;
+  if (!canvas) return null;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null;
 
-    const SIZE = 1024;
-    canvas.width = SIZE;
-    canvas.height = SIZE;
+  const SIZE = 1024;
+  canvas.width = SIZE;
+  canvas.height = SIZE;
 
     ctx.clearRect(0, 0, SIZE, SIZE);
-    ctx.fillStyle = "#0b0f18";
-    ctx.fillRect(0, 0, SIZE, SIZE);
+  ctx.fillStyle = "#0b0f18";
+  ctx.fillRect(0, 0, SIZE, SIZE);
 
-    // ✅ 仕様：文字入りは「必ず元画像(base)」に入れる
-    const src = d.baseImageUrl || "";
-    if (!src) return null;
+  // ✅ 仕様確定：文字入りは「投稿用の静止画」
+  // ✅ 描画元を1箇所に集約（全員これを見る）
+  const src = getOverlaySourceUrlForPreview(d);
+  if (!src) return null;
 
-    const loaded = await loadImageAsObjectUrl(src);
-    if (!loaded) return null;
+  const loaded = await loadImageAsObjectUrl(src);
+  if (!loaded) return null;
 
-    try {
-      const img = new Image();
-      img.src = loaded.objectUrl;
+  try {
+    const img = new Image();
+    img.src = loaded.objectUrl;
 
-      const ok = await new Promise<boolean>((res) => {
-        img.onload = () => res(true);
-        img.onerror = () => res(false);
-      });
-      if (!ok) return null;
+    const ok = await new Promise<boolean>((res) => {
+      img.onload = () => res(true);
+      img.onerror = () => res(false);
+    });
+    if (!ok) return null;
 
-      const iw = img.naturalWidth || SIZE;
-      const ih = img.naturalHeight || SIZE;
-      const scale = Math.min(SIZE / iw, SIZE / ih);
-      const w = iw * scale;
-      const h = ih * scale;
-      const x = (SIZE - w) / 2;
-      const y = (SIZE - h) / 2;
-      ctx.drawImage(img, x, y, w, h);
-    } finally {
-      loaded.revoke();
-    }
-
-    const overlayText = (d.overlayText || "").trim();
-    if (d.overlayEnabled && overlayText) {
-      const fontScale = clamp(d.overlayFontScale, 0.6, 1.6);
-      const fontPx = Math.round(UI.FONT.overlayCanvasBasePx * fontScale);
-
-      ctx.font = `900 ${fontPx}px system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif`;
-      ctx.textBaseline = "top";
-
-      const maxWidth = Math.floor(SIZE * 0.86);
-
-      const fixedLines: string[] = [];
-      let buf = "";
-      for (const ch of overlayText) {
-        const t = buf + ch;
-        if (ctx.measureText(t).width <= maxWidth) buf = t;
-        else {
-          if (buf) fixedLines.push(buf);
-          buf = ch;
-        }
-      }
-      if (buf) fixedLines.push(buf);
-
-      const lineH = Math.round(fontPx * 1.25);
-      const blockH = fixedLines.length * lineH;
-
-      const yPct = clamp(d.overlayY, 0, 100) / 100;
-      const topY = Math.round((SIZE - blockH) * yPct);
-
-      const pad = Math.round(SIZE * 0.035);
-      const bgAlpha = clamp(d.overlayBgOpacity, 0, 0.85);
-
-      ctx.fillStyle = `rgba(0,0,0,${bgAlpha})`;
-      const rectY = Math.max(0, topY - Math.round(pad * 0.6));
-      const rectH = Math.min(SIZE - rectY, blockH + Math.round(pad * 1.2));
-      ctx.fillRect(0, rectY, SIZE, rectH);
-
-      ctx.fillStyle = "rgba(255,255,255,0.95)";
-      for (let i = 0; i < fixedLines.length; i++) {
-        const ln = fixedLines[i];
-        const textW = ctx.measureText(ln).width;
-        const tx = Math.round((SIZE - textW) / 2);
-        const ty = topY + i * lineH;
-        ctx.fillText(ln, tx, ty);
-      }
-    }
-
-    return canvas.toDataURL("image/png");
+    const iw = img.naturalWidth || SIZE;
+    const ih = img.naturalHeight || SIZE;
+    const scale = Math.min(SIZE / iw, SIZE / ih);
+    const w = iw * scale;
+    const h = ih * scale;
+    const x = (SIZE - w) / 2;
+    const y = (SIZE - h) / 2;
+    ctx.drawImage(img, x, y, w, h);
+  } finally {
+    loaded.revoke();
   }
+
+  const overlayText = (d.overlayText || "").trim();
+  if (d.overlayEnabled && overlayText) {
+    const fontScale = clamp(d.overlayFontScale, 0.6, 1.6);
+    const fontPx = Math.round(UI.FONT.overlayCanvasBasePx * fontScale);
+
+    ctx.font = `900 ${fontPx}px system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif`;
+    ctx.textBaseline = "top";
+
+    const maxWidth = Math.floor(SIZE * 0.86);
+
+    const fixedLines: string[] = [];
+    let buf = "";
+    for (const ch of overlayText) {
+      const t = buf + ch;
+      if (ctx.measureText(t).width <= maxWidth) buf = t;
+      else {
+        if (buf) fixedLines.push(buf);
+        buf = ch;
+      }
+    }
+    if (buf) fixedLines.push(buf);
+
+    const lineH = Math.round(fontPx * 1.25);
+    const blockH = fixedLines.length * lineH;
+
+    const yPct = clamp(d.overlayY, 0, 100) / 100;
+    const topY = Math.round((SIZE - blockH) * yPct);
+
+    const pad = Math.round(SIZE * 0.035);
+    const bgAlpha = clamp(d.overlayBgOpacity, 0, 0.85);
+
+    ctx.fillStyle = `rgba(0,0,0,${bgAlpha})`;
+    const rectY = Math.max(0, topY - Math.round(pad * 0.6));
+    const rectH = Math.min(SIZE - rectY, blockH + Math.round(pad * 1.2));
+    ctx.fillRect(0, rectY, SIZE, rectH);
+
+    ctx.fillStyle = "rgba(255,255,255,0.95)";
+    for (let i = 0; i < fixedLines.length; i++) {
+      const ln = fixedLines[i];
+      const textW = ctx.measureText(ln).width;
+      const tx = Math.round((SIZE - textW) / 2);
+      const ty = topY + i * lineH;
+      ctx.fillText(ln, tx, ty);
+    }
+  }
+
+  return canvas.toDataURL("image/png");
+}
 
   async function saveCompositeAsImageUrl() {
     if (!uid) return;
@@ -1181,10 +1496,12 @@ export default function NewDraftPage() {
       setD((prev) => ({ ...prev, compositeImageUrl: url, imageSource: "composite" }));
       await saveDraft({ compositeImageUrl: url, imageSource: "composite" });
 
-      alert("文字入りプレビューを保存しました");
+      // alert("文字入りプレビューを保存しました");
+     showMsg("文字入り画像を保存しました（投稿用）");
+
     } catch (e: any) {
       console.error(e);
-      alert(`保存に失敗しました\n\n原因: ${e?.message || "不明"}`);
+      showMsg(`❌ 保存に失敗：${e?.message || "不明"}`);
     } finally {
       setBusy(false);
       inFlightRef.current["composite"] = false;
@@ -1197,20 +1514,20 @@ export default function NewDraftPage() {
     if (next === "posted") router.replace("/flow/drafts");
   }
 
-  async function applyIg3ToOverlayOnly(text: string) {
-    const t = (text ?? "").trim();
-    if (!t) return;
+async function applyIg3ToOverlayOnly(text: string) {
+  const t = (text ?? "").trim();
+  if (!t) return;
 
-    // ① テキストだけ更新
-    setD((p) => ({ ...p, overlayText: t }));
+  // ① テキストだけ更新（本文は触らない）
+  setD((p) => ({ ...p, overlayText: t }));
 
-    // ② プレビュー用に一時レンダリング（保存しない）
-    const dataUrl = await renderToCanvasAndGetDataUrlSilent();
-    if (dataUrl) {
-      setOverlayPreviewDataUrl(dataUrl);
-      setPreviewMode("composite");
-    }
-  }
+  // ② 事故防止：投稿用の表示は base に寄せる（compositeへ飛ばさない）
+  setPreviewReason("");
+  setPreviewMode("base");
+
+  // ③ 画面内メッセージ（alert禁止）
+  showMsg("文字表示に反映しました（投稿用プレビューに表示）");
+}
 
   const secondsKey: UiSeconds = (d.videoSeconds ?? 5) === 10 ? 10 : 5;
   const costStandard = pricing.standard[secondsKey];
@@ -1262,31 +1579,32 @@ export default function NewDraftPage() {
       const ensuredDraftId = draftId ?? (await saveDraft());
       if (!ensuredDraftId) throw new Error("failed to create draft");
 
-      // ✅ 前景（商品）＝「文字入り保存(composite)」があれば最優先
-      // そうでなければ「元画像(base)」
-      // ※ これで「合成画像(aiImageUrl)も文字入り」になる
-      const fg = d.compositeImageUrl || d.baseImageUrl || "";
+// ✅ 仕様確定：背景合成の前景は baseImageUrl（文字なし）限定
+const fg = d.baseImageUrl || "";
+if (!fg) {
+  showMsg("先に元画像を保存してください（背景合成は元画像のみが前景です）");
+  return;
+}
 
-      if (!fg) {
-        alert("先に元画像を保存してください（合成の前景がありません）");
-        return;
-      }
+// ✅ 注意：文字入り(composite)は静止画専用。背景合成や動画素材には使わない。
 
-      // 文字入りを使いたいのにまだ無い場合は、迷わないように明示
-      if (!d.compositeImageUrl && d.overlayEnabled && (d.overlayText || "").trim()) {
-        alert("文字を入れて合成したい場合は、先に「文字入り画像を保存」を押してください");
-        // ここで return するかは運用次第。確実に迷いゼロにするなら return 推奨。
-        return;
-      }
 
-      // 背景：無ければ生成して使う
+
+           // 背景：無ければ生成して使う
       const bg = bgImageUrl ? bgImageUrl : await generateBackgroundImage(fg);
 
       const ratio = ratioFromVideoSize(d.videoSize ?? "1024x1792");
 
+      // ✅ 認証（他APIと同じ）
+      const token = await auth.currentUser?.getIdToken(true);
+      if (!token) throw new Error("no token");
+
       const r = await fetch("/api/replace-background", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify({
           foregroundImage: fg,
           backgroundImage: bg,
@@ -1318,19 +1636,49 @@ export default function NewDraftPage() {
 
       // ✅ 保存先：今回は schema を増やさず aiImageUrl に保存する
       // （= “合成結果をAI側の代表画像として扱う”）
-      setD((p) => ({ ...p, aiImageUrl: outUrl, imageSource: "ai" }));
-      await saveDraft({ aiImageUrl: outUrl, imageSource: "ai", phase: "draft" });
+// ✅ 背景プレビュー用 state も必ず更新する
+setBgImageUrl(bg);
 
-      alert("切り抜き＋背景合成を保存しました（AI画像として扱います）");
+// ✅ 合成結果を「最終代表画像」として state / Firestore 両方に反映
+setD((p) => ({
+  ...p,
+  aiImageUrl: outUrl,
+  imageUrl: outUrl,        // ★ 一覧・プレビューの本体
+  imageSource: "ai",
+}));
+
+await saveDraft({
+  aiImageUrl: outUrl,
+  imageUrl: outUrl,        // ★ これが無いと一覧・再読込で消える
+  imageSource: "ai",
+  phase: "draft",
+});
+
+      showMsg("切り抜き＋背景合成を保存しました（AI画像として扱います）");
     } catch (e: any) {
       console.error(e);
-      alert(`背景合成に失敗しました\n\n原因: ${e?.message || "不明"}`);
+      showMsg(`背景合成に失敗しました\n\n原因: ${e?.message || "不明"}`);
     } finally {
       setBusy(false);
       inFlightRef.current["replaceBg"] = false;
     }
   }
+async function clearBgHistory() {
+  if (!uid) return;
+  if (!draftId) {
+    showMsg("この下書きはまだ作成されていません");
+    return;
+  }
 
+  // ✅ confirmは禁止。ここでは実処理だけにする。
+  // ✅ 確定背景(bgImageUrl)は残す。候補(bgImageUrls)だけ空にする。
+  setD((p) => ({ ...p, bgImageUrls: [] }));
+
+  // ✅ saveDraft は partial に bgImageUrls が含まれていれば確実に保存される（1回でOK）
+  await saveDraft({ bgImageUrls: [] });
+
+  showMsg("背景履歴をクリアしました（候補のみ）");
+}
   async function generateBackgroundImage(referenceImageUrl: string): Promise<string> {
     if (!uid) throw new Error("no uid");
 
@@ -1365,31 +1713,146 @@ export default function NewDraftPage() {
       const url = typeof j?.url === "string" ? j.url : "";
       if (!url) throw new Error("no bg url");
 
-      setBgImageUrl(url);
+setBgImageUrl(url);
 
-      const nextBgUrls = [url, ...d.bgImageUrls.filter((x) => x !== url)].slice(0, 10);
+const curBg = Array.isArray(dRef.current.bgImageUrls) ? dRef.current.bgImageUrls : [];
+const nextBgUrls = [url, ...curBg.filter((x) => x !== url)].slice(0, 10);
 
-      // ✅ d.bgImageUrl（単発）も更新しておく（ロード復元の主役）
-      setD((prev) => ({ ...prev, bgImageUrl: url, bgImageUrls: nextBgUrls }));
+// ✅ d.bgImageUrl（単発）も更新しておく（ロード復元の主役）
+setD((prev) => ({ ...prev, bgImageUrl: url, bgImageUrls: nextBgUrls }));
 
-      const ensuredDraftId = draftId ?? (await saveDraft());
-      if (!ensuredDraftId) throw new Error("failed to create draft");
+const ensuredDraftId = draftId ?? (await saveDraft());
+if (!ensuredDraftId) throw new Error("failed to create draft");
 
-      // ✅ Firestoreへも「単発(bgImageUrl) + 履歴(bgImageUrls)」を両方保存
-      await saveDraft({ bgImageUrl: url, bgImageUrls: nextBgUrls });
+// ✅ Firestoreへも「単発(bgImageUrl) + 履歴(bgImageUrls)」を両方保存
+await saveDraft({ bgImageUrl: url, bgImageUrls: nextBgUrls });
 
-      return url;
+return url;
     } finally {
       setBgBusy(false);
     }
   }
+async function syncBgImagesFromStorage() {
+  if (!uid) return;
 
+  // 下書きIDが無くても「共通背景」同期はできるが、
+  // ついでに下書きIDを確定させて Firestore へ保存できるようにする
+  const ensuredDraftId = draftId ?? (await saveDraft());
+  if (!ensuredDraftId) {
+    showMsg("下書きIDの確定に失敗しました");
+    return;
+  }
+
+  if (inFlightRef.current["syncBgs"]) return;
+  inFlightRef.current["syncBgs"] = true;
+
+  setBusy(true);
+  try {
+    // ✅ 実際の保存場所に合わせる（あなたが提示したパス）
+    // 例: users/{uid}/drafts/_bg/vento/xxxx.png
+    const primaryFolder = `users/${uid}/drafts/_bg/${d.brand}`;
+
+    // ⚠️ これは背景以外も混ざる可能性あり（使うなら“補助”）
+    const secondaryFolder = `users/${uid}/generations/images`;
+
+    const found: { url: string; t: number }[] = [];
+
+    async function scanFolder(path: string) {
+      const folderRef = ref(storage, path);
+      const listed = await listAll(folderRef);
+
+      for (const itemRef of listed.items) {
+        const name = itemRef.name.toLowerCase();
+
+        // 画像だけ
+        if (
+          !(
+            name.endsWith(".png") ||
+            name.endsWith(".jpg") ||
+            name.endsWith(".jpeg") ||
+            name.endsWith(".webp")
+          )
+        ) continue;
+
+        try {
+          const meta = await getMetadata(itemRef);
+          const t = meta?.timeCreated ? new Date(meta.timeCreated).getTime() : 0;
+          const url = await getDownloadURL(itemRef);
+          found.push({ url, t });
+        } catch {
+          // skip
+        }
+      }
+    }
+
+    // 1) ✅ 正：共通背景フォルダ（brand別）
+    try {
+      await scanFolder(primaryFolder);
+    } catch {
+      // ignore
+    }
+
+    // 2) 補助：generations/images（混入注意）
+    //    _bg が0件のときだけ見る（事故防止）
+    if (found.length === 0) {
+      try {
+        await scanFolder(secondaryFolder);
+      } catch {
+        // ignore
+      }
+    }
+
+    if (found.length === 0) {
+      showMsg("背景候補が見つかりませんでした（保存先や権限を確認してください）");
+      return;
+    }
+
+    // 新しい順（timeCreated）
+    found.sort((a, b) => (b.t || 0) - (a.t || 0));
+    const urls = found.map((x) => x.url);
+
+    // ✅ 既知の画像（元/文字入り/合成/イメージ）は背景候補から除外（混入事故防止）
+    const known = new Set(
+      [
+        d.baseImageUrl,
+        d.compositeImageUrl,
+        d.aiImageUrl,
+        d.imageIdeaUrl,
+      ].filter(Boolean) as string[]
+    );
+
+    const bgOnly = urls.filter((u) => !known.has(u));
+    const finalBgUrls = (bgOnly.length ? bgOnly : urls).slice(0, 10);
+
+    const head = finalBgUrls[0] || undefined;
+
+    // ✅ UIへ即反映（プレビュー）
+    setBgImageUrl(head ?? null);
+    setD((prev) => ({
+      ...prev,
+      bgImageUrl: head,          // ★ string | undefined に統一（null禁止）
+      bgImageUrls: finalBgUrls,
+    }));
+
+    // ✅ Firestoreへ保存（単発 + 履歴）
+    // saveDraft 側が undefined→null へ落とすので、ここは undefined でOK
+    await saveDraft({ bgImageUrl: head, bgImageUrls: finalBgUrls });
+
+    showMsg(`背景を同期しました：${finalBgUrls.length}件（ブランド=${d.brand}）`);
+  } catch (e: any) {
+    console.error(e);
+    showMsg(`背景同期に失敗しました\n\n原因: ${e?.message || "不明"}`);
+  } finally {
+    setBusy(false);
+    inFlightRef.current["syncBgs"] = false;
+  }
+}
   async function syncVideosFromStorage() {
     if (!uid) return;
 
     const ensuredDraftId = draftId ?? (await saveDraft());
     if (!ensuredDraftId) {
-      alert("下書きIDの確定に失敗しました");
+      showMsg("下書きIDの確定に失敗しました");
       return;
     }
 
@@ -1419,7 +1882,7 @@ export default function NewDraftPage() {
       }
 
       if (found.length === 0) {
-        alert("この下書きの動画が見つかりませんでした（まだ生成が無い / 保存先不一致）");
+        showMsg("この下書きの動画が見つかりませんでした（まだ生成が無い / 保存先不一致）");
         return;
       }
 
@@ -1434,461 +1897,1112 @@ export default function NewDraftPage() {
       });
 
       setD((prev) => ({ ...prev, videoUrls: foundUrls }));
-      alert(`同期しました：${foundUrls.length}件（この下書きのみ）`);
+      showMsg(`同期しました：${foundUrls.length}件（この下書きのみ）`);
     } catch (e: any) {
       console.error(e);
-      alert(`同期に失敗しました\n\n原因: ${e?.message || "不明"}`);
+      showMsg(`同期に失敗しました\n\n原因: ${e?.message || "不明"}`);
     } finally {
       setBusy(false);
       inFlightRef.current["syncVideos"] = false;
     }
   }
 
-  async function generateVideo() {
-    if (!uid) return;
-    const vision = d.vision.trim();
-    if (!vision) return alert("Vision（必須）を入力してください");
+async function generateVideo() {
+  if (!uid) return;
 
-    if (inFlightRef.current["video"]) return;
-    inFlightRef.current["video"] = true;
+  const visionText = d.vision.trim();
+  if (!visionText) {
+    showMsg("Vision（必須）を入力してください");
+    return;
+  }
 
-    setBusy(true);
-    try {
-      const token = await auth.currentUser?.getIdToken(true);
-      if (!token) throw new Error("no token");
+  // ✅ 生成中 task があるなら「課金ゼロで復帰」
+  if (d.videoTaskId && (d.videoStatus === "running" || d.videoStatus === "queued")) {
+    const ensuredDraftId = draftId ?? (await saveDraft());
+    if (!ensuredDraftId) {
+      showMsg("下書きIDの確定に失敗しました");
+      return;
+    }
+    setRightTab("video");
+    showMsg("すでに生成中です。課金せずに状態確認を再開します。");
+    startVideoPolling(d.videoTaskId, ensuredDraftId);
+    return;
+  }
 
-      const ensuredDraftId = draftId ?? (await saveDraft());
-      if (!ensuredDraftId) throw new Error("failed to create draft");
+  // ✅ 新規生成時のみ
+  if (inFlightRef.current["video"]) return;
+  inFlightRef.current["video"] = true;
 
-      // ✅ 参照画像の優先順位：
-      // 1) 文字入り(composite) があれば最優先（意図通り）
-      // 2) 次に aiImageUrl（= 「切り抜き＋背景合成」の保存先）
-      // 3) 最後に baseImageUrl（アップロード画像）
-      const reference = d.compositeImageUrl || d.aiImageUrl || d.baseImageUrl || "";
-      if (!reference) {
-        alert(
-          "先に「画像をアップロード」または「AI画像生成」または「文字入り画像を保存」を行ってください（参照画像がありません）"
-        );
-        return;
+  setBusy(true);
+  try {
+    const token = await auth.currentUser?.getIdToken(true);
+    if (!token) throw new Error("no token");
+
+    const ensuredDraftId = draftId ?? (await saveDraft());
+    if (!ensuredDraftId) throw new Error("failed to create draft");
+
+    // ✅ 仕様確定：動画は aiImageUrl（背景合成・文字なし）限定
+    const reference = d.aiImageUrl || "";
+    if (!reference) {
+      showMsg(
+        "先に「製品画像＋背景を合成（保存）」で aiImageUrl を作ってください（動画は文字なし合成画像のみ）"
+      );
+      return;
+    }
+
+    const seconds = (d.videoSeconds ?? 5) === 10 ? 10 : 5;
+    const templateId = d.videoTemplate ?? "slowZoomFade";
+    const quality: UiVideoQuality = (d.videoQuality ?? "standard") === "high" ? "high" : "standard";
+    const size = d.videoSize ?? "1024x1792";
+
+    // 背景：無ければ生成
+    const ensuredBgUrl = bgImageUrl ? bgImageUrl : await generateBackgroundImage(reference);
+
+    const body = {
+      draftId: ensuredDraftId,
+      brandId: d.brand,
+      vision: visionText,
+      keywords: splitKeywords(d.keywordsText),
+      tone: "",
+      templateId,
+      seconds,
+      quality,
+      size,
+      referenceImageUrl: reference,
+      bgImageUrl: ensuredBgUrl,
+    };
+
+    const r = await fetch("/api/generate-video", {
+      method: "POST",
+      headers: { "content-type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify(body),
+    });
+
+    const j = await r.json().catch(() => ({}));
+
+    // ✅ 202/running は「失敗扱いで落とさない」
+    if (r.status === 202 || j?.running) {
+      const taskId =
+        typeof j?.taskId === "string"
+          ? j.taskId
+          : typeof j?.id === "string"
+            ? j.id
+            : "";
+
+      if (taskId) {
+        setD((prev) => ({ ...prev, videoTaskId: taskId, videoStatus: "running" }));
+        await saveDraft({ videoTaskId: taskId, videoStatus: "running" });
+        setRightTab("video");
+        showMsg("生成中です（taskId を保存しました）。自動で確認します。");
+        startVideoPolling(taskId, ensuredDraftId);
+      } else {
+        showMsg("すでに生成中です。少し待ってから「状態を確認」を押してください。");
       }
+      return;
+    }
 
-      const seconds = d.videoSeconds ?? 5;
-      const templateId = d.videoTemplate ?? "slowZoomFade";
-      const quality = (d.videoQuality ?? "standard") === "high" ? "high" : "standard";
-      const size = d.videoSize ?? "1024x1792";
+    if (!r.ok) throw new Error(j?.error || "video error");
 
-      const ensuredBgUrl = bgImageUrl ? bgImageUrl : await generateBackgroundImage(reference);
+    // ✅ 互換吸収（url / videoUrl / outputUrl など）
+    const videoUrl =
+      typeof j?.url === "string"
+        ? j.url
+        : typeof j?.videoUrl === "string"
+          ? j.videoUrl
+          : typeof j?.outputUrl === "string"
+            ? j.outputUrl
+            : "";
 
-      const body = {
-        brandId: d.brand,
-        vision,
-        keywords: splitKeywords(d.keywordsText),
-        tone: "",
-        templateId,
-        seconds,
-        quality,
-        size,
-        referenceImageUrl: reference,
-        bgImageUrl: ensuredBgUrl,
-      };
+    // ✅ taskId も拾う（C案）
+    const taskId =
+      typeof j?.taskId === "string"
+        ? j.taskId
+        : typeof j?.id === "string"
+          ? j.id
+          : "";
 
-      const r = await fetch("/api/generate-video", {
-        method: "POST",
-        headers: { "content-type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify(body),
-      });
+    // ✅ 1) URLが返った → 即完了（互換）
+    if (videoUrl) {
+      setRightTab("video");
+      setSelectedVideoUrl(videoUrl);
+      setVideoPreviewUrl(videoUrl);
 
-      const j = await r.json().catch(() => ({}));
-
-      if (r.status === 202 || j?.running) {
-        alert(
-          "すでに生成中です（同条件の再実行はしません）。少し待ってから、もう一度ページを開いて確認してください。"
-        );
-        return;
-      }
-
-      if (!r.ok) throw new Error(j?.error || "video error");
-
-      const url = typeof j?.url === "string" ? j.url : "";
-      if (!url) throw new Error("no video url");
-
-      setVideoPreviewUrl(url);
-
-      setVideoHistory((prev) => {
-        const next = [url, ...prev.filter((x) => x !== url)];
-        return next.slice(0, 10);
-      });
-      setSelectedVideoUrl(url);
-
-      async function buildNextVideoUrls(ensuredId: string, newUrl: string): Promise<string[]> {
-        try {
-          const snap = await getDoc(doc(db, "drafts", ensuredId));
-          const cur =
-            snap.exists() && Array.isArray((snap.data() as any).videoUrls)
-              ? (snap.data() as any).videoUrls.filter((v: any) => typeof v === "string")
-              : [];
-          return [newUrl, ...cur.filter((x: string) => x !== newUrl)].slice(0, 10);
-        } catch {
-          return [newUrl, ...d.videoUrls.filter((x) => x !== newUrl)].slice(0, 10);
-        }
-      }
-
-      const nextVideoUrls = await buildNextVideoUrls(ensuredDraftId, url);
+      const nextVideoUrls = (() => {
+        const cur = Array.isArray(dRef.current.videoUrls) ? dRef.current.videoUrls : [];
+        return [videoUrl, ...cur.filter((x) => x !== videoUrl)].slice(0, 10);
+      })();
 
       setD((prev) => ({
         ...prev,
-        videoUrl: url,
+        videoUrl,
         videoSeconds: seconds,
         videoQuality: quality,
         videoTemplate: templateId,
         videoSize: size,
         videoUrls: nextVideoUrls,
+        videoTaskId: taskId || prev.videoTaskId,
+        videoStatus: "done",
       }));
 
       await saveDraft({
-        videoUrl: url,
+        videoUrl,
         videoSeconds: seconds,
         videoQuality: quality,
         videoTemplate: templateId,
         videoSize: size,
         videoUrls: nextVideoUrls,
+        videoTaskId: taskId || undefined,
+        videoStatus: "done",
       });
 
-      alert("動画を生成して保存しました");
-    } catch (e: any) {
-      console.error(e);
-      alert(`動画生成に失敗しました\n\n原因: ${e?.message || "不明"}`);
-    } finally {
-      setBusy(false);
-      inFlightRef.current["video"] = false;
+      showMsg("動画を生成して保存しました");
+      return;
     }
-  }
 
-  async function onUploadImageFile(file: File) {
-    if (!uid) return;
+    // ✅ 2) URLが無いが taskId がある → running として残す
+    if (taskId) {
+      setRightTab("video");
+      setD((prev) => ({
+        ...prev,
+        videoTaskId: taskId,
+        videoStatus: "running",
+        videoSeconds: seconds,
+        videoQuality: quality,
+        videoTemplate: templateId,
+        videoSize: size,
+      }));
 
-    if (inFlightRef.current["upload"]) return;
-    inFlightRef.current["upload"] = true;
+      await saveDraft({
+        videoTaskId: taskId,
+        videoStatus: "running",
+        videoSeconds: seconds,
+        videoQuality: quality,
+        videoTemplate: templateId,
+        videoSize: size,
+      });
 
-    setBusy(true);
-    try {
-      const ensuredDraftId = draftId ?? (await saveDraft());
-      if (!ensuredDraftId) throw new Error("failed to create draft");
-
-      const url = await uploadImageFileAsJpegToStorage(uid, ensuredDraftId, file);
-
-      setD((p) => ({ ...p, baseImageUrl: url, imageSource: "upload" }));
-
-      await saveDraft({ baseImageUrl: url, imageSource: "upload", phase: "draft" });
-
-      alert("アップロードしました（JPEGに変換して保存）");
-    } catch (e: any) {
-      console.error(e);
-      alert(`アップロードに失敗しました\n\n原因: ${e?.message || "不明"}`);
-    } finally {
-      setBusy(false);
-      inFlightRef.current["upload"] = false;
+      showMsg("動画生成を開始しました（taskId を保存しました）。自動で確認します。");
+      startVideoPolling(taskId, ensuredDraftId);
+      return;
     }
+
+    // ✅ 3) URLもtaskIdも無い
+    showMsg("動画生成の応答に taskId / url がありません。サーバ側の返却形式を確認してください。");
+  } catch (e: any) {
+    console.error(e);
+    showMsg(`動画生成に失敗しました\n\n原因: ${e?.message || "不明"}`);
+  } finally {
+    setBusy(false);
+    inFlightRef.current["video"] = false;
   }
+}
+
 
   const previewOverlayText = (d.overlayText || "").trim();
 
-  // ===========================
-  // UI（PRART3）
-  // ===========================
-
-  if (loadBusy) {
-    return (
-      <div className="min-h-screen flex items-center justify-center text-white/80">
-        読み込み中…
-      </div>
-    );
+  return (
+    <>
+<style jsx>{`
+  .imgPair{
+    display: grid;
+    grid-template-columns: 1fr; /* ✅ スマホは縦 */
+    gap: 8px;
   }
 
-  return (
-    <div className="flowRoot">
-      <canvas ref={canvasRef} className="hidden" />
+  @media (min-width: 900px){
+    .imgPair{
+      grid-template-columns: 1fr 1fr; /* ✅ PCは横 */
+    }
+  }
 
-      {/* =======================
-          ヘッダー
-      ======================= */}
-      <div className="headerRow">
-        <div className="headerLeft">
-          <div className="brand">{brandLabel}</div>
-          <div className="phase">{phaseLabel}</div>
-        </div>
+  .pageWrap {
+    min-height: 100vh;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: ${UI.gap}px;
+  }
+  .leftCol,
+  .rightCol {
+    width: 100%;
+  }
 
-        <div className="headerRight">
-          <Btn
-            variant="secondary"
-            disabled={busy}
-            onClick={() => saveDraft()}
-            title="途中保存"
+  /* 置換：@media (min-width: 1024px) { ... } を丸ごとこれに */
+  @media (min-width: 900px) {
+    .pageWrap {
+      flex-direction: row;
+      align-items: flex-start;
+      flex-wrap: nowrap; /* ✅ 横並び固定 */
+    }
+    .leftCol {
+  width: 48%;
+}
+.rightCol {
+  width: 52%;
+  position: sticky;
+  top: ${UI.rightStickyTopPx}px;
+  height: calc(100vh - ${UI.rightStickyTopPx}px);
+}
+    .rightScroll {
+      height: 100%;
+      overflow: auto;
+    }
+  }
+
+  details > summary::-webkit-details-marker {
+    display: none;
+  }
+    .rightImageGrid{
+  display: grid;
+  grid-template-columns: 1fr; /* スマホ/狭い幅は縦 */
+  gap: 8px;
+}
+
+/* ✅ PCで2列にする：右カラムがある程度広い時だけ横並び */
+@media (min-width: 1100px){
+  .rightImageGrid{
+    grid-template-columns: 1fr 1fr; /* ①② / ③④ を横並び */
+  }
+}
+  /* ===============================
+   右カラム：画像プレビュー 1 | 234 レイアウト
+   =============================== */
+
+.rightImageLayout{
+  display: grid;
+  grid-template-columns: 1fr; /* 狭い時は縦 */
+  gap: 8px;
+}
+
+@media (min-width: 900px){
+  .rightImageLayout{
+    grid-template-columns: 1fr 1fr; /* 左=① / 右=②③④ */
+    align-items: start;
+  }
+
+  .area1{
+    grid-column: 1;
+    grid-row: 1 / span 3;
+  }
+
+  .area2{
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .area3{
+    grid-column: 2;
+    grid-row: 2;
+  }
+
+  .area4{
+    grid-column: 2;
+    grid-row: 3;
+  }
+}
+`}</style>
+
+      <div className="pageWrap">
+        <section className="leftCol min-h-0 flex flex-col gap-3">
+          <div className="shrink-0 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 flex-wrap" />
+            {UI.showLoadingText && loadBusy ? (
+              <div className="text-white/75" style={{ fontSize: UI.FONT.labelPx }}>
+                読み込み中...
+              </div>
+            ) : null}
+          </div>
+
+          <div
+            className="rounded-2xl border border-white/12 bg-black/25"
+            style={{ padding: UI.cardPadding }}
           >
-            保存
-          </Btn>
-
-          <Btn
-            variant="danger"
-            disabled={busy}
-            onClick={() => setPhase("ready")}
-            title="投稿待ちへ"
-          >
-            投稿準備完了
-          </Btn>
-        </div>
-      </div>
-
-      {/* =======================
-          3カラム
-      ======================= */}
-      <div className="columns">
-        {/* ===== 左 ===== */}
-        <div className="col left">
-          <div className="card">
-            <div className="label">Vision（必須）</div>
-            <textarea
-              value={d.vision}
-              onChange={(e) => setD({ ...d, vision: e.target.value })}
-              style={{ ...formStyle, height: UI.hVision }}
-            />
-          </div>
-
-          <div className="card">
-            <div className="label">キーワード</div>
-            <textarea
-              value={d.keywordsText}
-              onChange={(e) => setD({ ...d, keywordsText: e.target.value })}
-              style={{ ...formStyle, height: UI.hMemo }}
-            />
-          </div>
-
-          <div className="card">
-            <Btn disabled={!canGenerate} onClick={generateCaptions}>
-              文章生成
-            </Btn>
-          </div>
-
-          <div className="card">
-            <div className="label">Instagram</div>
-            <textarea
-              value={d.ig}
-              onChange={(e) => setD({ ...d, ig: e.target.value })}
-              style={{ ...formStyle, height: UI.hIG }}
-            />
-
-            <div className="label mt">X</div>
-            <textarea
-              value={d.x}
-              onChange={(e) => setD({ ...d, x: e.target.value })}
-              style={{ ...formStyle, height: UI.hX }}
-            />
-          </div>
-        </div>
-
-        {/* ===== 中央 ===== */}
-        <div className="col center">
-          <div className="card">
-            <div className="label">画像プレビュー</div>
-
-            {/* 切替ボタン */}
-            <div className="previewTabs">
-              {(["base", "idea", "composite"] as PreviewMode[]).map((m) => {
-                const reason = previewDisabledReason(m, d);
-                return (
-                  <SelectBtn
-                    key={m}
-                    selected={previewMode === m}
-                    label={
-                      m === "base"
-                        ? "元画像"
-                        : m === "idea"
-                        ? "イメージ"
-                        : "合成"
-                    }
-                    disabled={!!reason}
-                    title={reason || undefined}
-                    onClick={() => {
-                      if (reason) {
-                        setPreviewReason(reason);
-                        return;
-                      }
-                      setPreviewReason("");
-                      setPreviewMode(m);
-                    }}
-                  />
-                );
-              })}
+            <div className="text-white/80 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
+              Brand
             </div>
 
-            {previewReason && (
-              <div className="reasonText">{previewReason}</div>
-            )}
-
-            <div className="previewBox">
-              {displayImageUrl ? (
-                <img src={displayImageUrl} alt="" />
-              ) : (
-                <div className="previewEmpty">画像がありません</div>
-              )}
-            </div>
-          </div>
-
-          <div className="card">
-            <Btn disabled={busy} onClick={generateAiImage}>
-              イメージ画像生成
-            </Btn>
-            <Btn disabled={busy} onClick={saveCompositeAsImageUrl}>
-              文字入り画像を保存
-            </Btn>
-            <Btn disabled={busy} onClick={replaceBackgroundAndSaveToAiImage}>
-              背景合成
-            </Btn>
-          </div>
-        </div>
-
-        {/* ===== 右 ===== */}
-        <div className="col right">
-          <div className="card sticky">
-            <div className="tabs">
-              <SelectBtn
-                selected={rightTab === "image"}
-                label="画像"
-                onClick={() => setRightTab("image")}
-              />
-              <SelectBtn
-                selected={rightTab === "video"}
-                label="動画"
-                onClick={() => setRightTab("video")}
-              />
+            <div className="flex items-center gap-2 flex-wrap">
+              <Btn
+                variant={d.brand === "vento" ? "primary" : "secondary"}
+                onClick={() => setD((p) => ({ ...p, brand: "vento" }))}
+              >
+                VENTO
+              </Btn>
+              <Btn
+                variant={d.brand === "riva" ? "primary" : "secondary"}
+                onClick={() => setD((p) => ({ ...p, brand: "riva" }))}
+              >
+                RIVA
+              </Btn>
+              <Chip>
+                {brandLabel} / {phaseLabel}
+              </Chip>
             </div>
 
-            {rightTab === "image" && (
-              <>
-                <div className="label">画像アップロード</div>
+
+{uiMsg ? (
+  <div className="mt-2 text-white/70 font-bold" style={{ fontSize: UI.FONT.labelPx }}>
+    {uiMsg}
+  </div>
+) : null}
+            <div className="mt-3 flex flex-wrap gap-2 items-center">
+              <label className="inline-flex items-center gap-2">
                 <input
                   type="file"
                   accept="image/*"
-                  onChange={(e) => {
+                  disabled={!uid || busy}
+                  onChange={async (e) => {
                     const f = e.target.files?.[0];
-                    if (f) void onUploadImageFile(f);
+                    e.currentTarget.value = "";
+                    if (!f) return;
+                    await onUploadImageFile(f);
                   }}
                 />
-              </>
-            )}
+              </label>
 
-            {rightTab === "video" && (
-              <>
-                <div className="label">動画生成</div>
+              <Btn
+                variant="secondary"
+                disabled={!canGenerate}
+                onClick={generateAiImage}
+                title="AI画像は base を上書きしません（aiImageUrlへ保存）"
+              >
+                イメージ画像を生成（世界観・雰囲気）
+                
+              </Btn>
+<div className="text-white/55 mt-2" style={{ fontSize: UI.FONT.labelPx, lineHeight: 1.5 }}>
+  ※ イメージ画像は、合成や動画の素材には使用されません。
+</div>
+              <Btn variant="ghost" disabled={!uid || busy} onClick={() => saveDraft()}>
+                保存
+              </Btn>
+            </div>
 
-                <div className="cost">
-                  目安：{yen(shownCost)}
-                  <div className="costMeta">{pricingMetaText}</div>
-                </div>
+            <div
+              className="text-white/55 mt-2"
+              style={{ fontSize: UI.FONT.labelPx, lineHeight: 1.5 }}
+            >
+              ※ アップロード画像は内部でJPEGに変換して保存します。
+              <br />
+              ※ AI画像は aiImageUrl に保存され、アップロード画像（base）は上書きされません。
+            </div>
 
-                <Btn disabled={busy} onClick={generateVideo}>
-                  動画生成
-                </Btn>
+            <PhotoSubmissionGuide />
 
-                {displayVideoUrl && (
-                  <video
-                    src={displayVideoUrl}
-                    controls
-                    className="videoPreview"
-                  />
-                )}
-              </>
-            )}
+            <div className="text-white/80 mt-4 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
+              Vision（必須）
+            </div>
+            <textarea
+              value={d.vision}
+              onChange={(e) => setD((p) => ({ ...p, vision: e.target.value }))}
+              className="w-full rounded-xl border p-3 outline-none"
+              style={{ ...formStyle, minHeight: UI.hVision }}
+              placeholder="例：流行や価格ではなく、時間が残した佇まいを見る。"
+            />
+
+            <div className="text-white/80 mt-4 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
+              Keywords（任意）
+            </div>
+            <input
+              value={d.keywordsText}
+              onChange={(e) => setD((p) => ({ ...p, keywordsText: e.target.value }))}
+              className="w-full rounded-xl border p-3 outline-none"
+              style={formStyle}
+              placeholder="例：ビンテージ, 静けさ, 選別, 余白"
+            />
+
+            <div className="mt-4 flex flex-wrap gap-2">
+              <Btn variant="primary" disabled={!canGenerate} onClick={generateCaptions}>
+                文章を生成（IG＋X）
+              </Btn>
+            </div>
           </div>
+
+          <div
+            className="rounded-2xl border border-white/12 bg-black/25"
+            style={{ padding: UI.cardPadding }}
+          >
+            <div className="text-white/80 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
+              Instagram 本文（編集可）
+            </div>
+            <textarea
+              value={d.ig}
+              onChange={(e) => setD((p) => ({ ...p, ig: e.target.value }))}
+              className="w-full rounded-xl border p-3 outline-none"
+              style={{ ...formStyle, minHeight: UI.hIG }}
+              placeholder="IG本文"
+            />
+
+            <div className="text-white/80 mt-4 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
+              X 投稿文（編集可）
+            </div>
+            <textarea
+              value={d.x}
+              onChange={(e) => setD((p) => ({ ...p, x: e.target.value }))}
+              className="w-full rounded-xl border p-3 outline-none"
+              style={{ ...formStyle, minHeight: UI.hX }}
+              placeholder="X投稿文"
+            />
+
+            <div className="text-white/80 mt-4 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
+              IG短文候補（ig3）※本文は上書きしない
+            </div>
+
+            <div className="grid grid-cols-1 gap-2">
+              {(d.ig3 ?? []).length === 0 ? (
+                <div
+                  className="rounded-xl border border-white/10 bg-black/20 p-3 text-white/55"
+                  style={{ fontSize: 13 }}
+                >
+                  まだ候補がありません（文章生成を実行すると入ります）
+                </div>
+              ) : null}
+
+              {(d.ig3 ?? []).map((t, idx) => (
+                <div
+                  key={`${idx}-${t.slice(0, 12)}`}
+                  className="rounded-xl border border-white/10 bg-black/20 p-3"
+                >
+                  <div
+                    className="text-white/90"
+                    style={{ fontSize: 14, lineHeight: 1.35, fontWeight: 800 }}
+                  >
+                    {t}
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <Btn
+                      variant="secondary"
+                      disabled={busy}
+                      onClick={() => {
+                        applyIg3ToOverlayOnly(t);
+                      }}
+                      title="本文は上書きしない（文字表示だけに使う）"
+                    >
+                      文字表示に使う
+                    </Btn>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-4 flex flex-wrap gap-2">
+              <Btn variant="ghost" disabled={!uid || busy} onClick={() => saveDraft()}>
+                保存
+              </Btn>
+
+              <Btn
+                variant="secondary"
+                disabled={!uid || busy}
+                onClick={async () => {
+                  if (!draftId) {
+                    await saveDraft();
+                    showMsg("先に下書きを作成しました");
+                  } else {
+                    showMsg("この下書きはすでに作成済みです");
+                  }
+                }}
+              >
+                下書きIDを確定
+              </Btn>
+            </div>
+          </div>
+        </section>
+
+<section className="rightCol min-h-0">
+  <div className="rightScroll flex flex-col gap-3">
+    {/* =========================
+        右：プレビュー（画像 / 動画）
+    ========================== */}
+    <div
+      className="rounded-2xl border border-white/12 bg-black/25"
+      style={{ padding: UI.cardPadding }}
+    >
+      {/* ヘッダー（内部表示 + タブ） */}
+<div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          {isOwner ? (
+            <Chip>
+              内部表示：画像=OpenAI / 背景=OpenAI / 合成=Sharp / 動画=Runway
+              {` ｜状態：元=${d.baseImageUrl ? "✓" : "—"} / 背景=${bgDisplayUrl ? "✓" : "—"} / 合成=${d.aiImageUrl ? "✓" : "—"} / 動画=${d.videoUrl ? "✓" : "—"}`}
+            </Chip>
+          ) : null}
+        </div>
+
+<div className="flex items-center gap-2 whitespace-nowrap">
+          <SelectBtn
+            selected={rightTab === "image"}
+            label="元画像｜背景(合成・動画用)"
+            onClick={() => setRightTab("image")}
+            disabled={busy}
+          />
+          <SelectBtn
+            selected={rightTab === "video"}
+            label="動画"
+            onClick={() => setRightTab("video")}
+            disabled={busy}
+          />
         </div>
       </div>
 
-      <style jsx>{`
-        .flowRoot {
-          padding: 16px;
-          color: white;
-        }
-        .headerRow {
-          display: flex;
-          justify-content: space-between;
-          margin-bottom: 16px;
-        }
-        .brand {
-          font-weight: 900;
-        }
-        .columns {
-          display: grid;
-          grid-template-columns: 1fr 1.2fr 1fr;
-          gap: 12px;
-        }
-        .col {
-          display: flex;
-          flex-direction: column;
-          gap: 12px;
-        }
-        .card {
-          background: rgba(0, 0, 0, 0.45);
-          border: 1px solid rgba(255, 255, 255, 0.18);
-          border-radius: 14px;
-          padding: 12px;
-        }
-        .label {
-          font-size: 12px;
-          font-weight: 700;
-          margin-bottom: 6px;
-        }
-        .previewTabs {
-          display: flex;
-          gap: 6px;
-          margin-bottom: 8px;
-          flex-wrap: wrap;
-        }
-        .previewBox {
-          width: 100%;
-          aspect-ratio: 1 / 1;
-          background: black;
-          border-radius: 12px;
-          overflow: hidden;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-        }
-        .previewBox img {
-          max-width: 100%;
-          max-height: 100%;
-        }
-        .previewEmpty {
-          color: rgba(255, 255, 255, 0.5);
-          font-size: 12px;
-        }
-        .reasonText {
-          font-size: 11px;
-          color: #ffcc66;
-          margin-bottom: 6px;
-        }
-        .tabs {
-          display: flex;
-          gap: 6px;
-          margin-bottom: 10px;
-        }
-        .sticky {
-          position: sticky;
-          top: ${UI.rightStickyTopPx}px;
-        }
-        .videoPreview {
-          width: 100%;
-          margin-top: 8px;
-          border-radius: 10px;
-        }
-        .cost {
-          font-size: 13px;
-          margin-bottom: 8px;
-        }
-        .costMeta {
-          font-size: 11px;
-          opacity: 0.7;
-        }
-      `}</style>
+      {/* =========================
+          画像タブ
+      ========================== */}
+      {rightTab === "image" ? (
+        <div className="mt-3 rightImageLayout">
+          {/* =========================
+              ① 元画像 + 文字レイヤー（投稿用）
+              - 文字編集UIをこの枠に内包（重要）
+          ========================== */}
+          <details open className="area1 rounded-2xl border border-white/10 bg-black/20">
+            <summary className="cursor-pointer select-none p-3">
+              <div className="text-white/70" style={{ fontSize: 12 }}>
+                ① 元画像 + 文字（投稿用）
+              </div>
+            </summary>
+
+            <div className="p-3 pt-0">
+              {d.baseImageUrl ? (
+                <img
+                  src={overlayPreviewDataUrl || d.baseImageUrl || ""}
+                  alt="base"
+                  className="w-full rounded-xl border border-white/10"
+                  style={{
+                    height: 240,
+                    objectFit: "contain",
+                    background: "rgba(0,0,0,0.25)",
+                  }}
+                />
+              ) : (
+                <div
+                  className="w-full rounded-xl border border-white/10 bg-black/30 flex items-center justify-center text-white/55"
+                  style={{ aspectRatio: "1 / 1", fontSize: 13 }}
+                >
+                  元画像がありません（アップロード→保存）
+                </div>
+              )}
+
+              {/* 文字編集UI（ここが重要） */}
+              <div className="mt-3 rounded-2xl border border-white/10 bg-black/15 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-white/80 font-bold" style={{ fontSize: 12 }}>
+                    文字表示（投稿用）
+                  </div>
+
+                  <label className="inline-flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={d.overlayEnabled}
+                      onChange={(e) =>
+                        setD((p) => ({ ...p, overlayEnabled: e.target.checked }))
+                      }
+                    />
+                    <span className="text-white/85" style={{ fontSize: 12 }}>
+                      {d.overlayEnabled ? "ON" : "OFF"}
+                    </span>
+                  </label>
+                </div>
+
+                <div className="text-white/70 mt-2" style={{ fontSize: 12, lineHeight: 1.6 }}>
+                  ※ 文字は「元画像」にだけ乗ります（合成・動画には使われません）。
+                </div>
+
+                {/* ✅ 直接編集（復活） */}
+                <div className="mt-3">
+                  <div className="text-white/70 mb-2" style={{ fontSize: 12 }}>
+                    テキスト（直接編集）
+                  </div>
+
+                  <textarea
+                    value={d.overlayText}
+                    onChange={(e) =>
+                      setD((p) => ({ ...p, overlayText: e.target.value }))
+                    }
+                    className="w-full rounded-xl border p-3 outline-none"
+                    style={{ ...formStyle, minHeight: UI.hOverlayText }}
+                    placeholder="例：静かな存在感を、あなたに。"
+                    disabled={busy}
+                  />
+
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <Btn
+                      variant="secondary"
+                      disabled={busy}
+                      onClick={() => {
+                        setD((p) => ({ ...p, overlayText: "" }));
+                        showMsg("文字をクリアしました（投稿用）");
+                      }}
+                    >
+                      文字を消す
+                    </Btn>
+
+                    <Btn
+                      variant="secondary"
+                      disabled={!uid || busy}
+                      onClick={saveCompositeAsImageUrl}
+                    >
+                      文字入り画像を保存（PNG）
+                    </Btn>
+
+                    <Btn variant="ghost" disabled={!uid || busy} onClick={() => saveDraft()}>
+                      保存
+                    </Btn>
+                  </div>
+                </div>
+
+                <div className="mt-3 grid grid-cols-1 gap-3">
+                  <RangeControl
+                    label="文字サイズ"
+                    value={d.overlayFontScale}
+                    min={0.6}
+                    max={1.6}
+                    step={0.05}
+                    format={(v) => `${Math.round(v * 100)}%`}
+                    onChange={(v) => setD((p) => ({ ...p, overlayFontScale: v }))}
+                  />
+                  <RangeControl
+                    label="文字の上下位置"
+                    value={d.overlayY}
+                    min={0}
+                    max={100}
+                    step={1}
+                    format={(v) => `${v}%`}
+                    onChange={(v) => setD((p) => ({ ...p, overlayY: v }))}
+                  />
+                  <RangeControl
+                    label="文字背景の濃さ"
+                    value={d.overlayBgOpacity}
+                    min={0}
+                    max={0.85}
+                    step={0.05}
+                    format={(v) => `${Math.round(v * 100)}%`}
+                    onChange={(v) => setD((p) => ({ ...p, overlayBgOpacity: v }))}
+                  />
+                </div>
+              </div>
+            </div>
+          </details>
+
+          {/* =========================
+              ② 背景のみ（合成・動画用）
+          ========================== */}
+          <details className="area2 rounded-2xl border border-white/10 bg-black/20">
+            <summary className="cursor-pointer select-none p-3">
+              <div className="text-white/70" style={{ fontSize: 12 }}>
+                ② 背景のみ（合成・動画用）
+              </div>
+            </summary>
+
+            <div className="p-3 pt-0">
+              {bgDisplayUrl ? (
+                <img
+                  src={bgDisplayUrl}
+                  alt="bg"
+                  className="w-full rounded-xl border border-white/10"
+                  style={{
+                    height: 240,
+                    objectFit: "contain",
+                    background: "rgba(0,0,0,0.25)",
+                  }}
+                />
+              ) : (
+                <div
+                  className="w-full rounded-xl border border-white/10 bg-black/30 flex items-center justify-center text-white/55"
+                  style={{ aspectRatio: "1 / 1", fontSize: 13 }}
+                >
+                  背景がありません（背景生成）
+                </div>
+              )}
+
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Btn
+                  variant="secondary"
+                  disabled={!uid || busy}
+                  onClick={async () => {
+                    const base = d.baseImageUrl || "";
+                    if (!base) {
+                      showMsg("先に元画像を保存してください");
+                      return;
+                    }
+                    await generateBackgroundImage(base);
+                  }}
+                >
+                  背景画像を生成（合成・動画用）
+                </Btn>
+
+                <Btn
+                  variant="secondary"
+                  disabled={!uid || busy}
+                  onClick={replaceBackgroundAndSaveToAiImage}
+                >
+                  製品画像＋背景を合成（保存）
+                </Btn>
+
+                <Btn
+                  variant="secondary"
+                  disabled={!uid || busy}
+                  onClick={syncBgImagesFromStorage}
+                >
+                  背景を同期（Storage→Firestore）
+                </Btn>
+              </div>
+
+              <div className="text-white/55 mt-2" style={{ fontSize: 12, lineHeight: 1.5 }}>
+                ※ この背景が「合成」と「動画」に使われます。
+              </div>
+
+              {(d.bgImageUrls?.length ?? 0) > 0 ? (
+                <div className="mt-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="text-white/70" style={{ fontSize: 12 }}>
+                      背景履歴（クリックで表示｜課金なし）
+                    </div>
+
+                    <Btn
+                      variant="danger"
+                      disabled={!uid || busy || (d.bgImageUrls?.length ?? 0) === 0}
+                      onClick={clearBgHistory}
+                      title="この下書きの候補リストだけ消します（Storageの画像は消えません）"
+                    >
+                      履歴クリア
+                    </Btn>
+                  </div>
+
+                  <div className="flex flex-col gap-2">
+                    {d.bgImageUrls.slice(0, 6).map((u: string) => (
+                      <button
+                        key={u}
+                        type="button"
+                        onClick={async () => {
+                          setBgImageUrl(u);
+                          setD((p) => ({ ...p, bgImageUrl: u }));
+                          void saveDraft({ bgImageUrl: u });
+                        }}
+                        className="text-left rounded-xl border px-3 py-2 transition"
+                        style={{
+                          borderColor: "rgba(255,255,255,0.10)",
+                          background: "rgba(0,0,0,0.15)",
+                          color: "rgba(255,255,255,0.78)",
+                          fontSize: 12,
+                        }}
+                      >
+                        {u.slice(0, 60)}
+                        {u.length > 60 ? "…" : ""}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          </details>
+
+          {/* =========================
+              ③ イメージ画像（世界観・雰囲気）
+              - 合成/動画には使用しない（表示専用）
+          ========================== */}
+          <details className="area3 rounded-2xl border border-white/10 bg-black/20">
+            <summary className="cursor-pointer select-none p-3">
+              <div className="text-white/70" style={{ fontSize: 12 }}>
+                ③ イメージ画像（世界観・雰囲気）
+              </div>
+            </summary>
+
+            <div className="p-3 pt-0">
+              {d.imageIdeaUrl ? (
+                <img
+                  src={d.imageIdeaUrl}
+                  alt="idea"
+                  className="w-full rounded-xl border border-white/10"
+                  style={{
+                    height: 240,
+                    objectFit: "contain",
+                    background: "rgba(0,0,0,0.25)",
+                  }}
+                />
+              ) : (
+                <div
+                  className="w-full rounded-xl border border-white/10 bg-black/30 flex items-center justify-center text-white/55"
+                  style={{ aspectRatio: "1 / 1", fontSize: 13 }}
+                >
+                  イメージ画像がありません（左で生成）
+                </div>
+              )}
+
+              <div className="text-white/55 mt-2" style={{ fontSize: 12, lineHeight: 1.5 }}>
+                ※ イメージ画像は、合成や動画の素材には使用されません。
+              </div>
+            </div>
+          </details>
+
+          {/* =========================
+              ④ 合成（動画用・文字なし）
+          ========================== */}
+          <details className="area4 rounded-2xl border border-white/10 bg-black/20">
+            <summary className="cursor-pointer select-none p-3">
+              <div className="text-white/70" style={{ fontSize: 12 }}>
+                ④ 合成（動画用・文字なし）
+              </div>
+            </summary>
+
+            <div className="p-3 pt-0">
+              {d.aiImageUrl ? (
+                <img
+                  src={d.aiImageUrl}
+                  alt="composite"
+                  className="w-full rounded-xl border border-white/10"
+                  style={{
+                    height: 240,
+                    objectFit: "contain",
+                    background: "rgba(0,0,0,0.25)",
+                  }}
+                />
+              ) : (
+                <div
+                  className="w-full rounded-xl border border-white/10 bg-black/30 flex items-center justify-center text-white/55"
+                  style={{ aspectRatio: "1 / 1", fontSize: 13 }}
+                >
+                  合成画像がありません（製品画像＋背景を合成）
+                </div>
+              )}
+
+              <div className="text-white/55 mt-2" style={{ fontSize: 12, lineHeight: 1.5 }}>
+                ※ この画像が「動画」に使われます（文字なし）。
+              </div>
+            </div>
+          </details>
+        </div>
+      ) : null}
+
+      {/* =========================
+          動画タブ
+      ========================== */}
+      {rightTab === "video" ? (
+        <div className="mt-3 grid grid-cols-1 gap-2">
+          {/* 動画プレビュー */}
+          <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
+            <div className="text-white/70" style={{ fontSize: 12, marginBottom: 8 }}>
+              動画プレビュー
+            </div>
+
+            {displayVideoUrl ? (
+<video
+  key={displayVideoUrl}
+  src={displayVideoUrl}
+  controls
+  playsInline
+  className="w-full rounded-xl border border-white/10"
+  style={{
+    height: 260,              // ✅ 好きな高さに（例: 220〜320）
+    objectFit: "contain",
+    background: "rgba(0,0,0,0.25)",
+  }}
+/>
+            ) : (
+              <div
+                className="w-full rounded-xl border border-white/10 bg-black/30 flex items-center justify-center text-white/55"
+                style={{ aspectRatio: "16 / 9", fontSize: 13 }}
+              >
+                動画がありません（動画生成）
+              </div>
+            )}
+
+            {/* 動画履歴 */}
+            {d.videoUrls?.length ? (
+              <div className="mt-3">
+                <div className="text-white/70 mb-2" style={{ fontSize: 12 }}>
+                  生成履歴（クリックで切替）
+                </div>
+
+                <div className="flex flex-col gap-2">
+                  {d.videoUrls.slice(0, 6).map((u) => {
+                    const selected = selectedVideoUrl === u;
+                    return (
+                      <button
+                        key={u}
+                        type="button"
+                        onClick={() => setSelectedVideoUrl(u)}
+                        className="text-left rounded-xl border px-3 py-2 transition"
+                        style={{
+                          borderColor: selected ? "rgba(255,255,255,0.35)" : "rgba(255,255,255,0.10)",
+                          background: selected ? "rgba(255,255,255,0.10)" : "rgba(0,0,0,0.15)",
+                          color: selected ? "rgba(255,255,255,0.95)" : "rgba(255,255,255,0.75)",
+                          fontSize: 12,
+                        }}
+                      >
+                        {selected ? "✓ " : ""}
+                        {u.slice(0, 52)}
+                        {u.length > 52 ? "…" : ""}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
+
+            <div className="mt-3 flex flex-wrap gap-2">
+  <Btn variant="primary" disabled={!uid || busy || !canGenerate} onClick={generateVideo}>
+    動画を生成（合成画像があれば使用）
+  </Btn>
+
+  {/* ✅ C案：task方式の保険（running の時だけ） */}
+  <Btn
+    variant="secondary"
+    disabled={!uid || busy || !d.videoTaskId || (d.videoStatus !== "running" && d.videoStatus !== "queued")}
+    onClick={async () => {
+      const ensuredDraftId = draftId ?? (await saveDraft());
+      if (!ensuredDraftId) {
+        showMsg("下書きIDの確定に失敗しました");
+        return;
+      }
+      if (!d.videoTaskId) {
+        showMsg("taskId がありません（先に動画生成を開始してください）");
+        return;
+      }
+      setRightTab("video");
+      showMsg("状態を確認しています…");
+      await checkVideoTaskOnce(d.videoTaskId, ensuredDraftId);
+    }}
+  >
+    状態を確認（task）
+  </Btn>
+
+  {/* 互換：Storage同期は残しても良いが、C案では基本不要。
+      残すなら「旧方式の復旧用」として意味を明示した方が事故らない */}
+  <Btn variant="secondary" disabled={!uid || busy} onClick={syncVideosFromStorage}>
+    動画を同期（Storage→Firestore）
+  </Btn>
+
+  <Btn variant="ghost" disabled={!uid || busy} onClick={() => saveDraft()}>
+    保存
+  </Btn>
+</div>
+          </div>
+
+          {/* 動画設定 */}
+          <div className="rounded-2xl border border-white/12 bg-black/25" style={{ padding: UI.cardPadding }}>
+            <div className="text-white/85 mb-2" style={{ fontSize: UI.FONT.labelPx, fontWeight: 800 }}>
+              動画設定
+            </div>
+
+            <div className="grid grid-cols-1 gap-3">
+              <div>
+                <div className="text-white/70 mb-2" style={{ fontSize: 12 }}>
+                  動き（テンプレ）
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  {templateItems.map((t) => (
+                    <SelectBtn
+                      key={t.id}
+                      selected={d.videoTemplate === t.id}
+                      label={t.label}
+                      onClick={() => setD((p) => ({ ...p, videoTemplate: t.id }))}
+                      disabled={busy}
+                    />
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <div className="text-white/70 mb-2" style={{ fontSize: 12 }}>
+                  尺（秒）
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  <SelectBtn
+                    selected={(d.videoSeconds ?? 5) === 5}
+                    label="5秒"
+                    onClick={() => setD((p) => ({ ...p, videoSeconds: 5 }))}
+                    disabled={busy}
+                  />
+                  <SelectBtn
+                    selected={(d.videoSeconds ?? 5) === 10}
+                    label="10秒"
+                    onClick={() => setD((p) => ({ ...p, videoSeconds: 10 }))}
+                    disabled={busy}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <div className="text-white/70 mb-2" style={{ fontSize: 12 }}>
+                  品質
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  <SelectBtn
+                    selected={(d.videoQuality ?? "standard") === "standard"}
+                    label={`標準（約 ${costStandard.toLocaleString()}円 / ${secondsKey}s）`}
+                    onClick={() => setD((p) => ({ ...p, videoQuality: "standard" }))}
+                    disabled={busy}
+                  />
+                  <SelectBtn
+                    selected={(d.videoQuality ?? "standard") === "high"}
+                    label={`高品質（約 ${costHigh.toLocaleString()}円 / ${secondsKey}s）`}
+                    onClick={() => setD((p) => ({ ...p, videoQuality: "high" }))}
+                    disabled={busy}
+                  />
+                </div>
+
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <Chip>{pricingMetaText}</Chip>
+                  <Chip>
+                    目安: {shownCost.toLocaleString()}円 / {secondsKey}s（{d.videoQuality ?? "standard"}）
+                  </Chip>
+                </div>
+              </div>
+
+              <div>
+                <div className="text-white/70 mb-2" style={{ fontSize: 12 }}>
+                  サイズ（用途）
+                </div>
+
+                <div className="grid grid-cols-1 gap-2">
+                  {sizePresets.map((s) => {
+                    const selected = d.videoSize === s.id;
+                    return (
+                      <button
+                        key={s.id}
+                        type="button"
+                        onClick={() => setD((p) => ({ ...p, videoSize: s.id }))}
+                        disabled={busy}
+                        className="text-left rounded-xl border px-3 py-2 transition"
+                        style={{
+                          borderColor: selected ? "rgba(255,255,255,0.35)" : "rgba(255,255,255,0.10)",
+                          background: selected ? "rgba(255,255,255,0.10)" : "rgba(0,0,0,0.15)",
+                          color: selected ? "rgba(255,255,255,0.95)" : "rgba(255,255,255,0.78)",
+                        }}
+                      >
+                        <div style={{ fontSize: 13, fontWeight: 800 }}>
+                          {selected ? `✓ ${s.label}` : s.label}
+                        </div>
+                        <div style={{ fontSize: 12, opacity: 0.75 }}>{s.sub}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <Btn variant="ghost" disabled={!uid || busy} onClick={() => saveDraft()}>
+                  動画設定を保存
+                </Btn>
+                <Btn variant="secondary" disabled={!uid || busy} onClick={() => setPhase("ready")}>
+                  投稿待ちへ
+                </Btn>
+                <Btn variant="secondary" disabled={!uid || busy} onClick={() => setPhase("posted")}>
+                  投稿済みへ
+                </Btn>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
+
+    {/* canvas（文字入り画像生成用：画面には出さない） */}
+    <canvas ref={canvasRef} style={{ display: "none" }} />
+  </div>
+</section>
+      </div>
+    </>
   );
 }

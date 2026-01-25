@@ -1,3 +1,5 @@
+// app/api/generate-captions/route.ts
+
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
 import { getAdminAuth, getAdminDb } from "@/firebaseAdmin";

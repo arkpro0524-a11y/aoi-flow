@@ -1,4 +1,4 @@
-// components/AuthGate.tsx
+// /components/AuthGate.tsx
 "use client";
 
 /**

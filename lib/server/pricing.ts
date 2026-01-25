@@ -1,3 +1,4 @@
+// /lib/server/pricing.ts
 import "server-only";
 
 export type VideoSeconds = 5 | 10;
