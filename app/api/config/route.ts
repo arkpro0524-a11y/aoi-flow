@@ -1,242 +1,57 @@
-// /app/api/config/generate-bg/route.ts
+// /app/api/config/route.ts
 /**
- * 背景生成（Bルート完成版）
+ * /api/config（フロント互換の受け皿）
  * --------------------------------------------
- * 前提：
- * - referenceImageUrl は「extract-foreground で作った透過PNGのみ」
- * - OpenAI images/edits を使い、透過部分＝背景のみ生成
- * - 商品（前景）は絶対に再生成しない
+ * 目的：
+ * - フロントが GET /api/config を叩く前提を崩さずに 405 を消す
+ * - 返す中身は「壊れない最低限 + 将来拡張しやすい形」
  *
- * 重要：
- * - フロントは一切変更しない
- * - 課金事故防止のため完全冪等
+ * 方針：
+ * - GET: 200 で JSON を返す（キャッシュしない）
+ * - OPTIONS: CORS/プリフライト対策（必要な環境だけ）
  */
 
 import { NextResponse } from "next/server";
-import { getAdminAuth, getAdminDb } from "@/firebaseAdmin";
-import { getStorage } from "firebase-admin/storage";
-import crypto from "crypto";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-/* ========= auth ========= */
-function bearerToken(req: Request) {
-  const h = req.headers.get("authorization") || "";
-  const m = h.match(/^Bearer\s+(.+)$/i);
-  return m?.[1] ?? null;
+function boolEnv(v: string | undefined, fallback = false) {
+  if (v == null) return fallback;
+  return String(v).toLowerCase() === "true";
 }
 
-async function requireUid(req: Request): Promise<string> {
-  const token = bearerToken(req);
-  if (!token) throw new Error("missing token");
-  const decoded = await getAdminAuth().verifyIdToken(token);
-  if (!decoded?.uid) throw new Error("invalid token");
-  return decoded.uid;
-}
-
-/* ========= helpers ========= */
-function stableHash(input: unknown): string {
-  return crypto
-    .createHash("sha256")
-    .update(JSON.stringify(input))
-    .digest("hex")
-    .slice(0, 32);
-}
-
-function buildDownloadUrl(bucket: string, path: string, token: string) {
-  return `https://firebasestorage.googleapis.com/v0/b/${bucket}/o/${encodeURIComponent(
-    path
-  )}?alt=media&token=${token}`;
-}
-
-async function fetchAsImage(url: string): Promise<File> {
-  const r = await fetch(url);
-  if (!r.ok) throw new Error("failed to fetch reference image");
-  const ct = r.headers.get("content-type") || "image/png";
-  const ab = await r.arrayBuffer();
-  return new File([ab], "reference.png", { type: ct });
-}
-
-function compactKeywords(keys: unknown): string {
-  if (!Array.isArray(keys)) return "";
-  return keys.map(String).slice(0, 12).join(", ");
-}
-
-function compactVoiceText(v: unknown): string {
-  const s = String(v ?? "")
-    .replace(/\r?\n/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  if (!s) return "";
-  const MAX = 220;
-  return s.length <= MAX ? s : s.slice(0, MAX) + "…";
-}
-
-async function loadBrand(uid: string, brandId: string) {
-  const db = getAdminDb();
-  const ref = db.doc(`users/${uid}/brands/${brandId}`);
-  const snap = await ref.get();
-  if (!snap.exists) return null;
-  return snap.data() as any;
-}
-
-/* ========= main ========= */
-export async function POST(req: Request) {
-  try {
-    const uid = await requireUid(req);
-    const body = await req.json().catch(() => ({} as any));
-
-    const brandId = typeof body.brandId === "string" ? body.brandId : "vento";
-    const vision = typeof body.vision === "string" ? body.vision : "";
-    const keywords = compactKeywords(body.keywords);
-
-    // ★ 必須：extract-foreground の透過PNGのみ許可
-    const referenceImageUrl =
-      typeof body.referenceImageUrl === "string"
-        ? body.referenceImageUrl
-        : typeof body.sourceImageUrl === "string"
-          ? body.sourceImageUrl
-          : "";
-
-    if (!vision.trim()) {
-      return NextResponse.json({ error: "vision is required" }, { status: 400 });
-    }
-    if (!referenceImageUrl) {
-      return NextResponse.json(
-        { error: "referenceImageUrl (transparent PNG) is required" },
-        { status: 400 }
-      );
-    }
-
-    const brand = await loadBrand(uid, brandId);
-    if (!brand) {
-      return NextResponse.json(
-        { error: "brand not found. /flow/brands で作成・保存してください" },
-        { status: 400 }
-      );
-    }
-
-    const imagePolicy = brand.imagePolicy ?? {};
-    const styleText = String(imagePolicy.styleText ?? "");
-    const rules = Array.isArray(imagePolicy.rules)
-      ? imagePolicy.rules.map(String)
-      : [];
-
-    const captionPolicy = brand.captionPolicy ?? {};
-    const voiceText = compactVoiceText(captionPolicy.voiceText ?? "");
-
-    // 背景は正方形固定（UI値は無視）
-    const OUTPUT_SIZE = "1024x1024";
-
-    // ★ Bルート固定プロンプト
-    const prompt = [
-      "You are given a transparent PNG of a product (foreground only).",
-      "Generate ONLY the background to match the brand style.",
-      "The product itself must remain completely unchanged.",
-      "Do NOT redraw, recreate, or modify the product.",
-      "The transparent area represents where the background should be generated.",
-      "No text. No logos. No watermark.",
-      `Brand: ${String(brand.name ?? brandId)}`,
-      `Vision: ${vision}`,
-      keywords ? `Keywords: ${keywords}` : "",
-      voiceText ? `Brand Voice (short): ${voiceText}` : "",
-      styleText ? `Style: ${styleText}` : "",
-      rules.length ? `Rules: ${rules.join(" / ")}` : "",
-      `Return a square image (${OUTPUT_SIZE}).`,
-    ]
-      .filter(Boolean)
-      .join("\n");
-
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) throw new Error("OPENAI_API_KEY missing");
-
-    // 冪等キー（同条件＝再利用）
-    const key = stableHash({
-      uid,
-      brandId,
-      vision: vision.trim(),
-      keywords,
-      referenceImageUrl,
-      styleText,
-      rules,
-      voiceText,
-      OUTPUT_SIZE,
-      type: "background-b",
-    });
-
-    const bucket = getStorage().bucket();
-    const objectPath = `users/${uid}/drafts/_bg/${brandId}/${key}.png`;
-    const fileRef = bucket.file(objectPath);
-
-    // 既存があれば再利用（課金ゼロ）
-    const [exists] = await fileRef.exists();
-    if (exists) {
-      const [meta] = await fileRef.getMetadata().catch(() => [null as any]);
-      const existingToken =
-        meta?.metadata?.firebaseStorageDownloadTokens ||
-        meta?.metadata?.firebaseStorageDownloadToken ||
-        "";
-
-      const token =
-        typeof existingToken === "string" && existingToken
-          ? existingToken.split(",")[0].trim()
-          : crypto.randomUUID();
-
-      if (!existingToken) {
-        await fileRef.setMetadata({
-          metadata: { firebaseStorageDownloadTokens: token },
-          contentType: meta?.contentType || "image/png",
-        });
-      }
-
-      return NextResponse.json({
-        url: buildDownloadUrl(bucket.name, objectPath, token),
-        reused: true,
-      });
-    }
-
-    // OpenAI images/edits（マスク＝透過部）
-    const image = await fetchAsImage(referenceImageUrl);
-
-    const fd = new FormData();
-    fd.append("model", "gpt-image-1");
-    fd.append("prompt", prompt);
-    fd.append("size", OUTPUT_SIZE);
-    fd.append("image", image);
-
-    const r = await fetch("https://api.openai.com/v1/images/edits", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}` },
-      body: fd,
-    });
-
-    const j = await r.json();
-    if (!r.ok) throw new Error(j?.error?.message || "openai image edit error");
-
-    const b64 = j?.data?.[0]?.b64_json;
-    if (typeof b64 !== "string" || !b64) throw new Error("no image returned");
-
-    const buf = Buffer.from(b64, "base64");
-
-    // Storage保存
-    const token = crypto.randomUUID();
-    await fileRef.save(buf, {
-      contentType: "image/png",
-      resumable: false,
-      metadata: {
-        metadata: { firebaseStorageDownloadTokens: token },
+export async function GET() {
+  // ※「フロントを変えない」が最優先なので、ここは堅牢に “常に200” を返す
+  return NextResponse.json(
+    {
+      ok: true,
+      // ありがちなフロント期待値に寄せた “安全な形”
+      env: {
+        USE_REPLACE_BG_MOCK: boolEnv(process.env.USE_REPLACE_BG_MOCK, false),
+        USE_REPLACE_BG_MOCK_V2: boolEnv(process.env.USE_REPLACE_BG_MOCK_V2, false),
+        USE_REPLACE_BG_MOCK_V3: boolEnv(process.env.USE_REPLACE_BG_MOCK_V3, false),
       },
-    });
+      // 将来ここに pricing / featureFlags を足せる
+      featureFlags: {},
+    },
+    {
+      status: 200,
+      headers: {
+        "Cache-Control": "no-store",
+      },
+    }
+  );
+}
 
-    return NextResponse.json({
-      url: buildDownloadUrl(bucket.name, objectPath, token),
-      reused: false,
-    });
-  } catch (e: any) {
-    console.error("[generate-bg]", e);
-    return NextResponse.json(
-      { error: e?.message || "background generation failed" },
-      { status: 500 }
-    );
-  }
+// 必要な環境でプリフライトが飛ぶ場合があるので保険
+export async function OPTIONS() {
+  return new NextResponse(null, {
+    status: 204,
+    headers: {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    },
+  });
 }
