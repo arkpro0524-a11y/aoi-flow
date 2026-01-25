@@ -1,33 +1,30 @@
-// /app/api/check-video-task/route.ts
 import { NextResponse } from "next/server";
-import { getDb } from "@/lib/server/firebaseAdmin";
-import { checkVideoTaskWithRunway } from "@/lib/server/runway";
 import admin from "firebase-admin";
 import crypto from "crypto";
+import { checkVideoTaskWithRunway } from "@/lib/server/runway";
+import { getAdminAuth, getAdminDb, getAdminBucket } from "@/firebaseAdmin";
 
-// ✅ firebase-admin / Buffer / crypto を使うので Node 固定（Edge 回避）
 export const runtime = "nodejs";
 
 async function requireUser(req: Request) {
   const authz = req.headers.get("authorization") || "";
-  const m = authz.match(/^Bearer (.+)$/i);
+  const m = authz.match(/^Bearer\s+(.+)$/i);
   const token = m?.[1];
   if (!token) throw new Error("Missing Authorization Bearer token");
-  const decoded = await admin.auth().verifyIdToken(token);
+
+  const decoded = await getAdminAuth().verifyIdToken(token);
+  if (!decoded?.uid) throw new Error("Invalid token");
   return { uid: decoded.uid };
 }
 
 function toUiStatus(runwayStatus: string): "queued" | "running" | "done" | "error" {
-  // runway: queued/running/succeeded/failed/...
   if (runwayStatus === "queued") return "queued";
   if (runwayStatus === "running") return "running";
   if (runwayStatus === "succeeded") return "done";
   if (runwayStatus === "failed") return "error";
-  // 予期しない値は running 扱い（課金事故防止：勝手に失敗扱いしない）
   return "running";
 }
 
-// ✅ Runwayの戻り値が揺れても拾えるように「動画URL候補」を吸収
 function pickVideoUrl(res: any): string | null {
   const cands: any[] = [
     res?.videoUrl,
@@ -38,7 +35,6 @@ function pickVideoUrl(res: any): string | null {
     res?.result?.videoUrl,
     res?.data?.url,
     res?.data?.videoUrl,
-    // よくある配列パターンも拾う（存在すれば）
     ...(Array.isArray(res?.assets) ? res.assets.map((a: any) => a?.url) : []),
     ...(Array.isArray(res?.outputs) ? res.outputs.map((o: any) => o?.url) : []),
   ];
@@ -50,7 +46,6 @@ function pickVideoUrl(res: any): string | null {
 }
 
 async function fetchAsBuffer(url: string): Promise<Buffer> {
-  // ✅ タイムアウト（無限待ち防止）
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 60_000);
 
@@ -79,45 +74,32 @@ export async function POST(req: Request) {
     if (!draftId) return NextResponse.json({ error: "draftId is required" }, { status: 400 });
     if (!taskId) return NextResponse.json({ error: "taskId is required" }, { status: 400 });
 
-    // ✅ 未認証は不可
     const user = await requireUser(req);
 
-    const db = getDb();
+    const db = getAdminDb();
     const ref = db.collection("drafts").doc(draftId);
 
-    // ✅ 所有者チェック
     const snap = await ref.get();
     if (!snap.exists) return NextResponse.json({ error: "draft not found" }, { status: 404 });
-    const data = snap.data() as any;
 
+    const data = snap.data() as any;
     if (String(data?.userId || "") !== user.uid) {
       return NextResponse.json({ error: "forbidden" }, { status: 403 });
     }
 
-    // ✅ task確認
     const res = await checkVideoTaskWithRunway(taskId);
-
-    // status は checkVideoTaskWithRunway が整形してる想定だが、念のため raw も拾う
     const uiStatus = toUiStatus(String(res?.status || res?.rawStatus || ""));
-
-    // ✅ Runwayの動画URL揺れを吸収
     const runwayVideoUrl = pickVideoUrl(res);
 
-    // ✅ 返すURL（UIが拾うキーは url / videoUrl / outputUrl を吸収するが、UI側は url が最も確実）
     let finalUrl: string | null = null;
 
-    // =========================
-    // ✅ succeeded → Firebase Storage に mp4 を保存してURLを確定
-    // =========================
+    // ✅ succeeded → Firebase Storageへ保存してURL確定
     if (uiStatus === "done" && runwayVideoUrl) {
-      // すでに Storage URL が入っているなら再アップロードしない（無限増殖防止）
       const already = String(data?.videoUrl || "");
       if (already.includes("firebasestorage.googleapis.com")) {
         finalUrl = already;
       } else {
-        // ✅ admin.app().options 前提を捨てる：bucket() の default を使い、name から bucketName を取る
-        // （これで admin.app 未初期化由来のクラッシュを避ける）
-        const bucket = admin.storage().bucket(); // default bucket
+        const bucket = getAdminBucket();
         const bucketName = String(bucket?.name || "").trim();
         if (!bucketName) throw new Error("Firebase Storage bucket is not configured (bucket name empty)");
 
@@ -127,14 +109,11 @@ export async function POST(req: Request) {
         const token = crypto.randomUUID();
         const file = bucket.file(filePath);
 
-        // ✅ token をメタに入れると「downloadURL形式」で配れる
         await file.save(buf, {
           contentType: "video/mp4",
           resumable: false,
           metadata: {
-            metadata: {
-              firebaseStorageDownloadTokens: token,
-            },
+            metadata: { firebaseStorageDownloadTokens: token },
             cacheControl: "public,max-age=31536000",
           },
         });
@@ -142,8 +121,6 @@ export async function POST(req: Request) {
         finalUrl = storageDownloadUrl(bucketName, filePath, token);
       }
 
-      // ✅ Firestoreへ確定保存（UI語彙に統一）
-      // videoUrls 履歴も更新（最大10）
       const prev: string[] = Array.isArray(data?.videoUrls)
         ? data.videoUrls.filter((x: any) => typeof x === "string")
         : [];
@@ -168,15 +145,13 @@ export async function POST(req: Request) {
         ok: true,
         taskId: res?.taskId || taskId,
         status: "done",
-        url: finalUrl, // ✅ UIが最も確実に拾う
-        videoUrl: finalUrl, // 互換
+        url: finalUrl,
+        videoUrl: finalUrl,
         rawStatus: res?.rawStatus || null,
       });
     }
 
-    // =========================
     // ✅ failed → error
-    // =========================
     if (uiStatus === "error") {
       await ref.set(
         {
@@ -198,13 +173,11 @@ export async function POST(req: Request) {
       });
     }
 
-    // =========================
-    // ✅ queued/running
-    // =========================
+    // ✅ queued / running
     await ref.set(
       {
         videoTaskId: taskId,
-        videoStatus: uiStatus, // queued or running
+        videoStatus: uiStatus,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       },
       { merge: true }
@@ -213,15 +186,12 @@ export async function POST(req: Request) {
     return NextResponse.json({
       ok: true,
       taskId: res?.taskId || taskId,
-      status: uiStatus, // queued | running
+      status: uiStatus,
       url: null,
       videoUrl: null,
       rawStatus: res?.rawStatus || null,
     });
   } catch (e: any) {
-    return NextResponse.json(
-      { error: e?.message || "check-video-task failed" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: e?.message || "check-video-task failed" }, { status: 500 });
   }
 }

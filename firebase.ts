@@ -1,15 +1,9 @@
 // /firebase.ts
 import { initializeApp, getApp, getApps } from "firebase/app";
-import {
-  getAuth,
-  setPersistence,
-  browserLocalPersistence,
-} from "firebase/auth";
-import {
-  getFirestore,
-  enableIndexedDbPersistence,
-} from "firebase/firestore";
+import { getAuth, setPersistence, browserLocalPersistence } from "firebase/auth";
+import { initializeFirestore } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
+import { getFirestore, enableIndexedDbPersistence } from "firebase/firestore";
 
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY!,
@@ -23,12 +17,13 @@ const firebaseConfig = {
 const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 
 export const auth = getAuth(app);
-export const db = getFirestore(app);
-export const storage = getStorage(app);
 
-/* =========================
-   Persistence（loginが使う）
-   ========================= */
+// ✅ ここが重要：WebChannelが落ちる環境の回避
+export const db = initializeFirestore(app, {
+  experimentalForceLongPolling: true,
+});
+
+export const storage = getStorage(app);
 
 let authDone = false;
 export async function ensureAuthPersistence() {
@@ -44,6 +39,6 @@ export async function ensureFirestorePersistence() {
     await enableIndexedDbPersistence(db);
     firestoreDone = true;
   } catch {
-    // 失敗しても無視（複数タブ時など）
+    // 失敗しても無視（複数タブ/ブラウザ制限など）
   }
 }

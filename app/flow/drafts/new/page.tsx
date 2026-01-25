@@ -883,6 +883,101 @@ function stopVideoPolling() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
 }, []);
 
+async function renderToCanvasAndGetDataUrlSilent(): Promise<string | null> {
+  const cur = dRef.current;
+
+  const canvas = canvasRef.current;
+  if (!canvas) return null;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null;
+
+  const SIZE = 1024;
+  canvas.width = SIZE;
+  canvas.height = SIZE;
+
+  ctx.clearRect(0, 0, SIZE, SIZE);
+  ctx.fillStyle = "#0b0f18";
+  ctx.fillRect(0, 0, SIZE, SIZE);
+
+  // ✅ 仕様確定：文字入りは「投稿用の静止画」
+  // ✅ 描画元を1箇所に集約（全員これを見る）
+  const src = getOverlaySourceUrlForPreview(cur); // ★ d → cur
+  if (!src) return null;
+
+  const loaded = await loadImageAsObjectUrl(src);
+  if (!loaded) return null;
+
+  try {
+    const img = new Image();
+    img.src = loaded.objectUrl;
+
+    const ok = await new Promise<boolean>((res) => {
+      img.onload = () => res(true);
+      img.onerror = () => res(false);
+    });
+    if (!ok) return null;
+
+    const iw = img.naturalWidth || SIZE;
+    const ih = img.naturalHeight || SIZE;
+    const scale = Math.min(SIZE / iw, SIZE / ih);
+    const w = iw * scale;
+    const h = ih * scale;
+    const x = (SIZE - w) / 2;
+    const y = (SIZE - h) / 2;
+    ctx.drawImage(img, x, y, w, h);
+  } finally {
+    loaded.revoke();
+  }
+
+  const overlayText = (cur.overlayText || "").trim(); // ★ d → cur
+  if (cur.overlayEnabled && overlayText) { // ★ d → cur
+    const fontScale = clamp(cur.overlayFontScale, 0.6, 1.6); // ★
+    const fontPx = Math.round(UI.FONT.overlayCanvasBasePx * fontScale);
+
+    ctx.font = `900 ${fontPx}px system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif`;
+    ctx.textBaseline = "top";
+
+    const maxWidth = Math.floor(SIZE * 0.86);
+
+    const fixedLines: string[] = [];
+    let buf = "";
+    for (const ch of overlayText) {
+      const t = buf + ch;
+      if (ctx.measureText(t).width <= maxWidth) buf = t;
+      else {
+        if (buf) fixedLines.push(buf);
+        buf = ch;
+      }
+    }
+    if (buf) fixedLines.push(buf);
+
+    const lineH = Math.round(fontPx * 1.25);
+    const blockH = fixedLines.length * lineH;
+
+    const yPct = clamp(cur.overlayY, 0, 100) / 100; // ★
+    const topY = Math.round((SIZE - blockH) * yPct);
+
+    const pad = Math.round(SIZE * 0.035);
+    const bgAlpha = clamp(cur.overlayBgOpacity, 0, 0.85); // ★
+
+    ctx.fillStyle = `rgba(0,0,0,${bgAlpha})`;
+    const rectY = Math.max(0, topY - Math.round(pad * 0.6));
+    const rectH = Math.min(SIZE - rectY, blockH + Math.round(pad * 1.2));
+    ctx.fillRect(0, rectY, SIZE, rectH);
+
+    ctx.fillStyle = "rgba(255,255,255,0.95)";
+    for (let i = 0; i < fixedLines.length; i++) {
+      const ln = fixedLines[i];
+      const textW = ctx.measureText(ln).width;
+      const tx = Math.round((SIZE - textW) / 2);
+      const ty = topY + i * lineH;
+      ctx.fillText(ln, tx, ty);
+    }
+  }
+
+  return canvas.toDataURL("image/png");
+}
+
 useEffect(() => {
   let cancelled = false;
 
@@ -948,6 +1043,43 @@ useEffect(() => {
         }
 
         const data = snap.data() as any;
+        
+        function classifyUrl(u?: string) {
+  if (!u) return "none" as const;
+  if (u.includes("/users%2F") === false) return "other" as const;
+
+  // decode不要でも contains でだいたい判定できる
+  if (u.includes("/generations%2Fimages%2F")) return "idea" as const;
+  if (u.includes("/drafts%2F_bg%2F")) return "bg" as const;
+  if (u.includes("/drafts%2F") && u.includes("%2Fvideos%2F")) return "video" as const;
+  if (u.includes("/drafts%2F") && u.match(/\.jpg|\.jpeg/i)) return "base" as const;
+  if (u.includes("/drafts%2F") && u.match(/\.png/i)) return "draftPng" as const;
+  return "other" as const;
+}
+
+// ---- getDoc直後のdataから取り出した後に ----
+let baseImageUrl = typeof data.baseImageUrl === "string" ? data.baseImageUrl : undefined;
+let aiImageUrl   = typeof data.aiImageUrl === "string" ? data.aiImageUrl : undefined;
+let imageIdeaUrl = typeof data.imageIdeaUrl === "string" ? data.imageIdeaUrl : undefined;
+let bgImageUrlSingle = typeof data.bgImageUrl === "string" ? data.bgImageUrl : undefined;
+let compositeImageUrl = typeof data.compositeImageUrl === "string" ? data.compositeImageUrl : undefined;
+
+// 旧データ吸収：aiImageUrl が idea っぽいのに imageIdeaUrl が空 → 移す
+if (!imageIdeaUrl && classifyUrl(aiImageUrl) === "idea") {
+  imageIdeaUrl = aiImageUrl;
+  aiImageUrl = undefined; // ④を空にして事故を止める（必要なら別フィールドに退避でもOK）
+}
+
+// 旧データ吸収：imageUrl が背景っぽいのに bg が空 → 補完
+const imageUrl = typeof data.imageUrl === "string" ? data.imageUrl : undefined;
+if (!bgImageUrlSingle && classifyUrl(imageUrl) === "bg") {
+  bgImageUrlSingle = imageUrl;
+}
+
+// 旧データ吸収：base が無いのに imageUrl がjpg（下書き内） → base補完
+if (!baseImageUrl && classifyUrl(imageUrl) === "base") {
+  baseImageUrl = imageUrl;
+}
 
         const brand: Brand = data.brand === "riva" ? "riva" : "vento";
         const phase: Phase =
@@ -966,23 +1098,6 @@ useEffect(() => {
         const x = typeof data.x === "string" ? data.x : "";
         const ig3 = Array.isArray(data.ig3) ? data.ig3.map(String).slice(0, 3) : [];
 
-        const baseImageUrl =
-          typeof data.baseImageUrl === "string" && data.baseImageUrl ? data.baseImageUrl : undefined;
-        const aiImageUrl =
-          typeof data.aiImageUrl === "string" && data.aiImageUrl ? data.aiImageUrl : undefined;
-        const compositeImageUrl =
-          typeof data.compositeImageUrl === "string" && data.compositeImageUrl
-            ? data.compositeImageUrl
-            : undefined;
-const imageIdeaUrl =
-  typeof data.imageIdeaUrl === "string" && data.imageIdeaUrl
-    ? data.imageIdeaUrl
-    : undefined;
-
-const bgImageUrlSingle =
-  typeof data.bgImageUrl === "string" && data.bgImageUrl
-    ? data.bgImageUrl
-    : undefined;
 
         const bgImageUrls: string[] = Array.isArray(data.bgImageUrls)
           ? data.bgImageUrls.filter((v: any) => typeof v === "string").slice(0, 10)
@@ -1107,43 +1222,7 @@ setBgImageUrl(initialBg);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [uid, id]);
-    // ✅ previewMode が成立しているかを常に監視して、成立しないなら安全側へ落とす
-  // 目的：プレビューが空になる事故を潰す（仕様「空表示を絶対に作らない」）
-  useEffect(() => {
-    // composite が選ばれているのに aiImageUrl が無い → base/idea に戻す
-    if (previewMode === "composite" && !d.aiImageUrl) {
-      if (d.baseImageUrl) {
-        setPreviewMode("base");
-        setPreviewReason("合成（動画用）が未作成のため、元画像に戻しました");
-      } else if (d.imageIdeaUrl) {
-        setPreviewMode("idea");
-        setPreviewReason("合成（動画用）が未作成のため、イメージに戻しました");
-      } else {
-        setPreviewMode("base");
-        setPreviewReason("表示できる画像がありません（先に元画像を保存してください）");
-      }
-      return;
-    }
 
-    // idea が選ばれているのに imageIdeaUrl が無い → base に戻す
-    if (previewMode === "idea" && !d.imageIdeaUrl) {
-      if (d.baseImageUrl) {
-        setPreviewMode("base");
-        setPreviewReason("イメージ画像が未作成のため、元画像に戻しました");
-      } else {
-        setPreviewMode("base");
-        setPreviewReason("表示できる画像がありません（先に元画像を保存してください）");
-      }
-      return;
-    }
-
-    // base が選ばれているのに baseImageUrl が無いが、idea はある → idea に逃がす（空表示回避）
-    if (previewMode === "base" && !d.baseImageUrl && d.imageIdeaUrl) {
-      setPreviewMode("idea");
-      setPreviewReason("元画像が無いため、イメージ表示に切り替えました");
-      return;
-    }
-  }, [previewMode, d.aiImageUrl, d.baseImageUrl, d.imageIdeaUrl]);
   // ✅ previewMode が成立している時だけ、理由表示を自動で消す（render中setState禁止）
 useEffect(() => {
   const ok =
@@ -1166,20 +1245,14 @@ useEffect(() => {
   }, [d.imageSource, d.baseImageUrl, d.aiImageUrl]);
 
     const displayImageUrl = useMemo(() => {
-    // ✅ プレビューは previewMode で決める（保存互換の imageSource は見ない）
-    // ✅ 仕様確定：composite = 合成（動画用）なので aiImageUrl のみ表示（文字入りは出さない）
-    if (previewMode === "composite") {
-      return d.aiImageUrl || "";
-    }
-
-    if (previewMode === "idea") {
-      // イメージ＝世界観用（未実装なら空になる）
-      return d.imageIdeaUrl || "";
-    }
-
-    // base（元画像）: 文字入りプレビューがあればそれを優先
-    return overlayPreviewDataUrl || d.baseImageUrl || "";
-  }, [previewMode, overlayPreviewDataUrl, d.aiImageUrl, d.baseImageUrl, d.imageIdeaUrl]);
+  if (previewMode === "composite") {
+    return d.aiImageUrl || "";
+  }
+  if (previewMode === "idea") {
+    return d.imageIdeaUrl || "";
+  }
+  return overlayPreviewDataUrl || d.baseImageUrl || "";
+}, [previewMode, overlayPreviewDataUrl, d.aiImageUrl, d.baseImageUrl, d.imageIdeaUrl]);
 
   const displayVideoUrl = useMemo(() => {
     const u =
@@ -1198,96 +1271,109 @@ useEffect(() => {
   // ✅ 背景の表示は state 優先 → Firestore(d.bgImageUrl) にフォールバック
   const bgDisplayUrl = bgImageUrl || d.bgImageUrl || "";
     async function saveDraft(partial?: Partial<DraftDoc>): Promise<string | null> {
-    if (!uid) return null;
-
-    // ✅ saveDraft は「最新 state」を必ず参照（stale closure防止）
-    const base = dRef.current;
-
-    const includeVideoUrls = !!partial && Object.prototype.hasOwnProperty.call(partial, "videoUrls");
-    const includeBgImageUrls = !!partial && Object.prototype.hasOwnProperty.call(partial, "bgImageUrls");
-
-    const next: DraftDoc = { ...base, ...(partial ?? {}), userId: uid };
-
-    const representativeUrl =
-      (partial && Object.prototype.hasOwnProperty.call(partial, "imageUrl")
-        ? (partial as any).imageUrl
-        : null) ||
-      next.aiImageUrl ||
-      next.baseImageUrl ||
-      next.compositeImageUrl ||
-      null;
-
-    const payload: any = {
-      userId: uid,
-      brand: next.brand,
-      phase: next.phase,
-      vision: next.vision,
-      keywordsText: next.keywordsText,
-      memo: next.memo,
-      ig: next.ig,
-      x: next.x,
-      ig3: next.ig3,
-
-      baseImageUrl: next.baseImageUrl ?? null,
-      aiImageUrl: next.aiImageUrl ?? null,
-      compositeImageUrl: next.compositeImageUrl ?? null,
-
-      imageIdeaUrl: next.imageIdeaUrl ?? null,
-      bgImageUrl: next.bgImageUrl ?? null,
-
-      imageUrl: representativeUrl,
-      caption_final: next.ig,
-
-      imageSource: next.imageSource ?? "upload",
-
-      overlayEnabled: next.overlayEnabled,
-      overlayText: next.overlayText,
-      overlayFontScale: next.overlayFontScale,
-      overlayY: next.overlayY,
-      overlayBgOpacity: next.overlayBgOpacity,
-
-      videoUrl: next.videoUrl ?? null,
-      videoSeconds: next.videoSeconds ?? 5,
-      videoQuality: next.videoQuality ?? "standard",
-      videoTemplate: next.videoTemplate ?? "slowZoomFade",
-      videoSize: next.videoSize ?? "1024x1792",
-
-      videoTaskId: next.videoTaskId ?? null,
-      videoStatus: next.videoStatus ?? "idle",
-
-      updatedAt: serverTimestamp(),
-    };
-
-    if (includeBgImageUrls) {
-      payload.bgImageUrls = Array.isArray(next.bgImageUrls) ? next.bgImageUrls.slice(0, 10) : [];
-    }
-    if (includeVideoUrls) {
-      payload.videoUrls = Array.isArray(next.videoUrls) ? next.videoUrls.slice(0, 10) : [];
-    }
-
-    // ✅ draftId も ref から取る（stale防止）
-    const currentDraftId = draftIdRef.current;
-
-    if (!currentDraftId) {
-      payload.createdAt = serverTimestamp();
-      payload.bgImageUrls = Array.isArray(next.bgImageUrls) ? next.bgImageUrls.slice(0, 10) : [];
-      payload.videoUrls = Array.isArray(next.videoUrls) ? next.videoUrls.slice(0, 10) : [];
-
-      const refDoc = await addDoc(collection(db, "drafts"), payload);
-
-      // ✅ state + ref を同時更新（事故防止）
-      draftIdRef.current = refDoc.id;
-      setDraftId(refDoc.id);
-      router.replace(`/flow/drafts/new?id=${encodeURIComponent(refDoc.id)}`);
-
-      setD(next);
-      return refDoc.id;
-    } else {
-      await updateDoc(doc(db, "drafts", currentDraftId), payload);
-      setD(next);
-      return currentDraftId;
-    }
+  // ✅ 絶対条件：Auth確定前に Firestore write しない（ルールで弾かれる）
+  const u = auth.currentUser;
+  if (!u?.uid) {
+    showMsg("ログイン確認中です（保存できません）");
+    return null;
   }
+
+  // ✅ stateのuidより「Authのuid」を正とする（ズレ事故防止）
+  const realUid = u.uid;
+
+  // ✅ saveDraft は「最新 state」を必ず参照（stale closure防止）
+  const base = dRef.current;
+
+  const includeVideoUrls = !!partial && Object.prototype.hasOwnProperty.call(partial, "videoUrls");
+  const includeBgImageUrls = !!partial && Object.prototype.hasOwnProperty.call(partial, "bgImageUrls");
+
+  const next: DraftDoc = { ...base, ...(partial ?? {}), userId: realUid };
+
+  const representativeUrl =
+    (partial && Object.prototype.hasOwnProperty.call(partial, "imageUrl")
+      ? (partial as any).imageUrl
+      : null) ||
+    next.aiImageUrl ||
+    next.baseImageUrl ||
+    next.compositeImageUrl ||
+    null;
+
+  const payload: any = {
+    userId: realUid, // ✅ ここが最重要（ルール一致）
+    brand: next.brand,
+    phase: next.phase,
+    vision: next.vision,
+    keywordsText: next.keywordsText,
+    memo: next.memo,
+    ig: next.ig,
+    x: next.x,
+    ig3: next.ig3,
+
+    baseImageUrl: next.baseImageUrl ?? null,
+    aiImageUrl: next.aiImageUrl ?? null,
+    compositeImageUrl: next.compositeImageUrl ?? null,
+
+    imageIdeaUrl: next.imageIdeaUrl ?? null,
+    bgImageUrl: next.bgImageUrl ?? null,
+
+    imageUrl: representativeUrl,
+    caption_final: next.ig,
+
+    imageSource: next.imageSource ?? "upload",
+
+    overlayEnabled: next.overlayEnabled,
+    overlayText: next.overlayText,
+    overlayFontScale: next.overlayFontScale,
+    overlayY: next.overlayY,
+    overlayBgOpacity: next.overlayBgOpacity,
+
+    videoUrl: next.videoUrl ?? null,
+    videoSeconds: next.videoSeconds ?? 5,
+    videoQuality: next.videoQuality ?? "standard",
+    videoTemplate: next.videoTemplate ?? "slowZoomFade",
+    videoSize: next.videoSize ?? "1024x1792",
+
+    videoTaskId: next.videoTaskId ?? null,
+    videoStatus: next.videoStatus ?? "idle",
+
+    updatedAt: serverTimestamp(),
+  };
+
+  if (includeBgImageUrls) {
+    payload.bgImageUrls = Array.isArray(next.bgImageUrls) ? next.bgImageUrls.slice(0, 10) : [];
+  }
+  if (includeVideoUrls) {
+    payload.videoUrls = Array.isArray(next.videoUrls) ? next.videoUrls.slice(0, 10) : [];
+  }
+
+  const currentDraftId = draftIdRef.current;
+
+  if (!currentDraftId) {
+    payload.createdAt = serverTimestamp();
+    payload.bgImageUrls = Array.isArray(next.bgImageUrls) ? next.bgImageUrls.slice(0, 10) : [];
+    payload.videoUrls = Array.isArray(next.videoUrls) ? next.videoUrls.slice(0, 10) : [];
+
+    const refDoc = await addDoc(collection(db, "drafts"), payload);
+
+    draftIdRef.current = refDoc.id;
+    setDraftId(refDoc.id);
+    router.replace(`/flow/drafts/new?id=${encodeURIComponent(refDoc.id)}`);
+
+    setD(next);
+    return refDoc.id;
+  }
+
+  // ✅ 既存下書き更新
+  try {
+    await updateDoc(doc(db, "drafts", currentDraftId), payload);
+    setD(next);
+    return currentDraftId;
+  } catch (e: any) {
+    console.error("🔥 saveDraft updateDoc failed:", e);
+    showMsg(`🔥 Firestore保存失敗: ${e?.message || "不明"}`);
+    throw e;
+  }
+} // ← ✅ これが無いのが致命傷（saveDraft の閉じ）
 
   async function generateCaptions() {
     if (!uid) return;
@@ -1337,7 +1423,7 @@ const ig3 = Array.isArray(j.ig3) ? j.ig3.map(String).slice(0, 3) : [];
     }
   }
 
-  async function generateAiImage() {
+    async function generateAiImage() {
     if (!uid) return;
     const vision = d.vision.trim();
     if (!vision) { showMsg("Vision（必須）を入力してください"); return; }
@@ -1371,15 +1457,16 @@ const ig3 = Array.isArray(j.ig3) ? j.ig3.map(String).slice(0, 3) : [];
       const url = await uploadDataUrlToStorage(uid, ensuredDraftId, dataUrl);
 
       setD((prev) => ({
-  ...prev,
-  imageIdeaUrl: url,
-}));
-await saveDraft({ imageIdeaUrl: url, phase: "draft" });
+        ...prev,
+        imageIdeaUrl: url,
+      }));
+      await saveDraft({ imageIdeaUrl: url, phase: "draft" });
 
-// ✅ 生成直後は「どこに出た？」事故防止：右カラムへ誘導
-setRightTab("image");
-setPreviewReason("イメージ画像を生成しました（③に表示されます）");
-showMsg("イメージ画像を保存しました（③に表示）");
+      // ✅ 生成直後の事故防止：③へ“表示も意識も”寄せる
+      setRightTab("image");
+      setPreviewMode("idea"); // ★追加：生成後は③に寄せる
+      setPreviewReason("イメージ画像を生成しました（③に表示）");
+      showMsg("イメージ画像を保存しました（③に表示）");
     } catch (e: any) {
       console.error(e);
       showMsg(`画像生成に失敗しました\n\n原因: ${e?.message || "不明"}`);
@@ -1389,98 +1476,7 @@ showMsg("イメージ画像を保存しました（③に表示）");
     }
   }
 
-async function renderToCanvasAndGetDataUrlSilent(): Promise<string | null> {
-  const canvas = canvasRef.current;
-  if (!canvas) return null;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return null;
 
-  const SIZE = 1024;
-  canvas.width = SIZE;
-  canvas.height = SIZE;
-
-    ctx.clearRect(0, 0, SIZE, SIZE);
-  ctx.fillStyle = "#0b0f18";
-  ctx.fillRect(0, 0, SIZE, SIZE);
-
-  // ✅ 仕様確定：文字入りは「投稿用の静止画」
-  // ✅ 描画元を1箇所に集約（全員これを見る）
-  const src = getOverlaySourceUrlForPreview(d);
-  if (!src) return null;
-
-  const loaded = await loadImageAsObjectUrl(src);
-  if (!loaded) return null;
-
-  try {
-    const img = new Image();
-    img.src = loaded.objectUrl;
-
-    const ok = await new Promise<boolean>((res) => {
-      img.onload = () => res(true);
-      img.onerror = () => res(false);
-    });
-    if (!ok) return null;
-
-    const iw = img.naturalWidth || SIZE;
-    const ih = img.naturalHeight || SIZE;
-    const scale = Math.min(SIZE / iw, SIZE / ih);
-    const w = iw * scale;
-    const h = ih * scale;
-    const x = (SIZE - w) / 2;
-    const y = (SIZE - h) / 2;
-    ctx.drawImage(img, x, y, w, h);
-  } finally {
-    loaded.revoke();
-  }
-
-  const overlayText = (d.overlayText || "").trim();
-  if (d.overlayEnabled && overlayText) {
-    const fontScale = clamp(d.overlayFontScale, 0.6, 1.6);
-    const fontPx = Math.round(UI.FONT.overlayCanvasBasePx * fontScale);
-
-    ctx.font = `900 ${fontPx}px system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif`;
-    ctx.textBaseline = "top";
-
-    const maxWidth = Math.floor(SIZE * 0.86);
-
-    const fixedLines: string[] = [];
-    let buf = "";
-    for (const ch of overlayText) {
-      const t = buf + ch;
-      if (ctx.measureText(t).width <= maxWidth) buf = t;
-      else {
-        if (buf) fixedLines.push(buf);
-        buf = ch;
-      }
-    }
-    if (buf) fixedLines.push(buf);
-
-    const lineH = Math.round(fontPx * 1.25);
-    const blockH = fixedLines.length * lineH;
-
-    const yPct = clamp(d.overlayY, 0, 100) / 100;
-    const topY = Math.round((SIZE - blockH) * yPct);
-
-    const pad = Math.round(SIZE * 0.035);
-    const bgAlpha = clamp(d.overlayBgOpacity, 0, 0.85);
-
-    ctx.fillStyle = `rgba(0,0,0,${bgAlpha})`;
-    const rectY = Math.max(0, topY - Math.round(pad * 0.6));
-    const rectH = Math.min(SIZE - rectY, blockH + Math.round(pad * 1.2));
-    ctx.fillRect(0, rectY, SIZE, rectH);
-
-    ctx.fillStyle = "rgba(255,255,255,0.95)";
-    for (let i = 0; i < fixedLines.length; i++) {
-      const ln = fixedLines[i];
-      const textW = ctx.measureText(ln).width;
-      const tx = Math.round((SIZE - textW) / 2);
-      const ty = topY + i * lineH;
-      ctx.fillText(ln, tx, ty);
-    }
-  }
-
-  return canvas.toDataURL("image/png");
-}
 
   async function saveCompositeAsImageUrl() {
     if (!uid) return;
@@ -1576,102 +1572,154 @@ async function applyIg3ToOverlayOnly(text: string) {
     return "1280:720";
   }
 
-  async function replaceBackgroundAndSaveToAiImage() {
-    if (!uid) return;
+ async function replaceBackgroundAndSaveToAiImage() {
+  if (!uid) return;
 
-    if (inFlightRef.current["replaceBg"]) return;
-    inFlightRef.current["replaceBg"] = true;
+  if (inFlightRef.current["replaceBg"]) return;
+  inFlightRef.current["replaceBg"] = true;
 
-    setBusy(true);
-    try {
-      // 下書きIDを確定
-      const ensuredDraftId = draftId ?? (await saveDraft());
-      if (!ensuredDraftId) throw new Error("failed to create draft");
+  setBusy(true);
+  try {
+    // 下書きID確定
+    const ensuredDraftId = draftId ?? (await saveDraft());
+    if (!ensuredDraftId) throw new Error("failed to create draft");
 
-// ✅ 仕様確定：背景合成の前景は baseImageUrl（文字なし）限定
-const fg = d.baseImageUrl || "";
-if (!fg) {
-  showMsg("先に元画像を保存してください（背景合成は元画像のみが前景です）");
-  return;
-}
+    // 認証
+    const token = await auth.currentUser?.getIdToken(true);
+    if (!token) throw new Error("no token");
 
-// ✅ 注意：文字入り(composite)は静止画専用。背景合成や動画素材には使わない。
+    // ✅ 仕様確定：前景は baseImageUrl（文字なし）限定
+    const base = (d.baseImageUrl || "").trim();
+    if (!base) {
+      showMsg("先に元画像（アップロード→保存）を作ってください（前景は元画像のみ）");
+      return;
+    }
 
+    // ---------------------------
+    // ① 前景の透過抽出
+    // ---------------------------
+    const fgRes = await fetch("/api/extract-foreground", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        brandId: d.brand,
+        referenceImageUrl: base,
+      }),
+    });
 
+    const fgJson = await fgRes.json().catch(() => ({}));
+    if (!fgRes.ok) {
+      throw new Error(fgJson?.error || "extract-foreground error");
+    }
 
-           // 背景：無ければ生成して使う
-      const bg = bgImageUrl ? bgImageUrl : await generateBackgroundImage(fg);
+    // ✅ 返り値ゆれ吸収
+    const fg =
+      (typeof fgJson?.url === "string" && fgJson.url) ||
+      (typeof fgJson?.foregroundUrl === "string" && fgJson.foregroundUrl) ||
+      (typeof fgJson?.fgUrl === "string" && fgJson.fgUrl) ||
+      "";
 
-      const ratio = ratioFromVideoSize(d.videoSize ?? "1024x1792");
+    if (!fg) {
+      throw new Error("foreground url が取得できませんでした（サーバ返り値を確認）");
+    }
 
-      // ✅ 認証（他APIと同じ）
-      const token = await auth.currentUser?.getIdToken(true);
-      if (!token) throw new Error("no token");
+    // ---------------------------
+    // ② 背景（なければ生成）
+    // ---------------------------
+    const existingBg = (bgImageUrl || d.bgImageUrl || "").trim();
+    const bg = existingBg ? existingBg : await generateBackgroundImage(fg);
 
-      const r = await fetch("/api/replace-background", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          foregroundImage: fg,
-          backgroundImage: bg,
-          ratio,
-          fit: "contain",
-        }),
-      });
+    const ratio = ratioFromVideoSize(d.videoSize ?? "1024x1792");
 
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok) {
-        throw new Error(j?.error || "replace-background error");
-      }
+    // ---------------------------
+    // ③ 背景合成
+    // ---------------------------
+    const r = await fetch("/api/replace-background", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        foregroundImage: fg,
+        backgroundImage: bg,
+        ratio,
+        fit: "contain",
+      }),
+    });
 
-      // 返り値の取り回し（mock/実装差を吸収）
-      // - imageUrl がURLならそれを保存
-      // - dataUrl / b64 が来ても保存できるようにする
-      let outUrl = "";
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      throw new Error(j?.error || "replace-background error");
+    }
 
-      if (typeof j?.imageUrl === "string" && j.imageUrl.startsWith("http")) {
-        outUrl = j.imageUrl;
-      } else if (typeof j?.dataUrl === "string" && j.dataUrl.startsWith("data:image/")) {
-        outUrl = await uploadDataUrlToStorage(uid, ensuredDraftId, j.dataUrl);
-      } else if (typeof j?.b64 === "string" && j.b64) {
-        const dataUrl = `data:image/png;base64,${j.b64}`;
-        outUrl = await uploadDataUrlToStorage(uid, ensuredDraftId, dataUrl);
-      } else {
-        throw new Error("合成結果が取得できませんでした（imageUrl/dataUrl/b64が無い）");
-      }
+    // ✅ 返り値ゆれ吸収（ここが本丸）
+    let outUrl = "";
 
-      // ✅ 保存先：今回は schema を増やさず aiImageUrl に保存する
-      // （= “合成結果をAI側の代表画像として扱う”）
-// ✅ 背景プレビュー用 state も必ず更新する
+    // 1) URL系（imageUrl / url / outputUrl）
+    const urlLike =
+      (typeof j?.imageUrl === "string" && j.imageUrl) ||
+      (typeof j?.url === "string" && j.url) ||
+      (typeof j?.outputUrl === "string" && j.outputUrl) ||
+      "";
+
+    if (urlLike && /^https?:\/\//.test(urlLike)) {
+      outUrl = urlLike;
+    } else if (typeof j?.dataUrl === "string" && j.dataUrl.startsWith("data:image/")) {
+      outUrl = await uploadDataUrlToStorage(uid, ensuredDraftId, j.dataUrl);
+    } else if (typeof j?.b64 === "string" && j.b64) {
+      const dataUrl = `data:image/png;base64,${j.b64}`;
+      outUrl = await uploadDataUrlToStorage(uid, ensuredDraftId, dataUrl);
+    } else {
+      throw new Error("合成結果が取得できません（url/imageUrl/outputUrl/dataUrl/b64 が無い）");
+    }
+
+// ---------------------------
+// ④ UI state & Firestore 反映（表示事故を0にする）
+// ---------------------------
+setRightTab("image");
 setBgImageUrl(bg);
 
-// ✅ 合成結果を「最終代表画像」として state / Firestore 両方に反映
 setD((p) => ({
   ...p,
   aiImageUrl: outUrl,
-  imageUrl: outUrl,        // ★ 一覧・プレビューの本体
+  imageUrl: outUrl,
   imageSource: "ai",
 }));
 
-await saveDraft({
-  aiImageUrl: outUrl,
-  imageUrl: outUrl,        // ★ これが無いと一覧・再読込で消える
-  imageSource: "ai",
-  phase: "draft",
+console.log("AFTER COMPOSITE", {
+  outUrl,
+  bg,
+  hasAiImageUrl: !!outUrl,
+  beforePreviewMode: previewMode,
 });
 
-      showMsg("切り抜き＋背景合成を保存しました（AI画像として扱います）");
-    } catch (e: any) {
-      console.error(e);
-      showMsg(`背景合成に失敗しました\n\n原因: ${e?.message || "不明"}`);
-    } finally {
-      setBusy(false);
-      inFlightRef.current["replaceBg"] = false;
-    }
+setPreviewMode("composite");
+
+console.log("PREVIEW MODE SET TO COMPOSITE");
+
+setPreviewReason("");
+
+await saveDraft({
+  aiImageUrl: outUrl,
+  imageUrl: outUrl,
+  imageSource: "ai",
+  phase: "draft",
+  bgImageUrl: bg,
+});
+
+    showMsg("✅ 切り抜き＋背景合成 完了（④に表示）");
+  } catch (e: any) {
+    console.error(e);
+    showMsg(`背景合成に失敗：${e?.message || "不明"}`);
+  } finally {
+    setBusy(false);
+    inFlightRef.current["replaceBg"] = false;
   }
+}
 async function clearBgHistory() {
   if (!uid) return;
   if (!draftId) {
@@ -2679,7 +2727,7 @@ async function generateVideo() {
                     await generateBackgroundImage(base);
                   }}
                 >
-                  背景画像を生成（合成・動画用）
+                  背景画像を生成（背景のみ）
                 </Btn>
 
                 <Btn
@@ -2797,25 +2845,25 @@ async function generateVideo() {
             </summary>
 
             <div className="p-3 pt-0">
-              {d.aiImageUrl ? (
-                <img
-                  src={d.aiImageUrl}
-                  alt="composite"
-                  className="w-full rounded-xl border border-white/10"
-                  style={{
-                    height: 240,
-                    objectFit: "contain",
-                    background: "rgba(0,0,0,0.25)",
-                  }}
-                />
-              ) : (
-                <div
-                  className="w-full rounded-xl border border-white/10 bg-black/30 flex items-center justify-center text-white/55"
-                  style={{ aspectRatio: "1 / 1", fontSize: 13 }}
-                >
-                  合成画像がありません（製品画像＋背景を合成）
-                </div>
-              )}
+  {(previewMode === "composite" ? displayImageUrl : d.aiImageUrl || "") ? (
+  <img
+    src={previewMode === "composite" ? displayImageUrl : (d.aiImageUrl || "")}
+    alt="composite"
+    className="w-full rounded-xl border border-white/10"
+    style={{
+      height: 240,
+      objectFit: "contain",
+      background: "rgba(0,0,0,0.25)",
+    }}
+  />
+) : (
+  <div
+    className="w-full rounded-xl border border-white/10 bg-black/30 flex items-center justify-center text-white/55"
+    style={{ aspectRatio: "1 / 1", fontSize: 13 }}
+  >
+    合成画像がありません（製品画像＋背景を合成）
+  </div>
+)}
 
               <div className="text-white/55 mt-2" style={{ fontSize: 12, lineHeight: 1.5 }}>
                 ※ この画像が「動画」に使われます（文字なし）。

@@ -1,17 +1,4 @@
-// /app/api/config/generate-bg/route.ts
-/**
- * 背景生成（Bルート完成版）
- * --------------------------------------------
- * 前提：
- * - referenceImageUrl は「extract-foreground で作った透過PNGのみ」
- * - OpenAI images/edits を使い、透過部分＝背景のみ生成
- * - 商品（前景）は絶対に再生成しない
- *
- * 重要：
- * - フロントは一切変更しない
- * - 課金事故防止のため完全冪等
- */
-
+// /app/api/extract-foreground/route.ts
 import { NextResponse } from "next/server";
 import { getAdminAuth, getAdminDb } from "@/firebaseAdmin";
 import { getStorage } from "firebase-admin/storage";
@@ -51,25 +38,10 @@ function buildDownloadUrl(bucket: string, path: string, token: string) {
 
 async function fetchAsImage(url: string): Promise<File> {
   const r = await fetch(url);
-  if (!r.ok) throw new Error("failed to fetch reference image");
+  if (!r.ok) throw new Error("failed to fetch source image");
   const ct = r.headers.get("content-type") || "image/png";
   const ab = await r.arrayBuffer();
-  return new File([ab], "reference.png", { type: ct });
-}
-
-function compactKeywords(keys: unknown): string {
-  if (!Array.isArray(keys)) return "";
-  return keys.map(String).slice(0, 12).join(", ");
-}
-
-function compactVoiceText(v: unknown): string {
-  const s = String(v ?? "")
-    .replace(/\r?\n/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  if (!s) return "";
-  const MAX = 220;
-  return s.length <= MAX ? s : s.slice(0, MAX) + "…";
+  return new File([ab], "source.png", { type: ct });
 }
 
 async function loadBrand(uid: string, brandId: string) {
@@ -87,10 +59,6 @@ export async function POST(req: Request) {
     const body = await req.json().catch(() => ({} as any));
 
     const brandId = typeof body.brandId === "string" ? body.brandId : "vento";
-    const vision = typeof body.vision === "string" ? body.vision : "";
-    const keywords = compactKeywords(body.keywords);
-
-    // ★ 必須：extract-foreground の透過PNGのみ許可
     const referenceImageUrl =
       typeof body.referenceImageUrl === "string"
         ? body.referenceImageUrl
@@ -98,51 +66,23 @@ export async function POST(req: Request) {
           ? body.sourceImageUrl
           : "";
 
-    if (!vision.trim()) {
-      return NextResponse.json({ error: "vision is required" }, { status: 400 });
-    }
     if (!referenceImageUrl) {
-      return NextResponse.json(
-        { error: "referenceImageUrl (transparent PNG) is required" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "referenceImageUrl is required" }, { status: 400 });
     }
 
+    // brand は任意（styleText等を将来使える）
     const brand = await loadBrand(uid, brandId);
-    if (!brand) {
-      return NextResponse.json(
-        { error: "brand not found. /flow/brands で作成・保存してください" },
-        { status: 400 }
-      );
-    }
 
-    const imagePolicy = brand.imagePolicy ?? {};
-    const styleText = String(imagePolicy.styleText ?? "");
-    const rules = Array.isArray(imagePolicy.rules)
-      ? imagePolicy.rules.map(String)
-      : [];
-
-    const captionPolicy = brand.captionPolicy ?? {};
-    const voiceText = compactVoiceText(captionPolicy.voiceText ?? "");
-
-    // 背景は正方形固定（UI値は無視）
-    const OUTPUT_SIZE = "1024x1024";
-
-    // ★ Bルート固定プロンプト
+    // ✅ 透過前景PNGを作る
+    // - 背景を完全に削除
+    // - 商品の形は変えない
+    // - 透過PNGで返す
     const prompt = [
-      "You are given a transparent PNG of a product (foreground only).",
-      "Generate ONLY the background to match the brand style.",
-      "The product itself must remain completely unchanged.",
-      "Do NOT redraw, recreate, or modify the product.",
-      "The transparent area represents where the background should be generated.",
-      "No text. No logos. No watermark.",
-      `Brand: ${String(brand.name ?? brandId)}`,
-      `Vision: ${vision}`,
-      keywords ? `Keywords: ${keywords}` : "",
-      voiceText ? `Brand Voice (short): ${voiceText}` : "",
-      styleText ? `Style: ${styleText}` : "",
-      rules.length ? `Rules: ${rules.join(" / ")}` : "",
-      `Return a square image (${OUTPUT_SIZE}).`,
+      "Remove the background completely and return a transparent PNG (alpha).",
+      "Keep the product (main subject) unchanged and sharp. Do not distort shape.",
+      "No text. No logo. No watermark.",
+      brand?.name ? `Brand: ${String(brand.name)}` : "",
+      "Output: a clean cut-out of the product only, transparent background.",
     ]
       .filter(Boolean)
       .join("\n");
@@ -150,25 +90,21 @@ export async function POST(req: Request) {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) throw new Error("OPENAI_API_KEY missing");
 
-    // 冪等キー（同条件＝再利用）
+    // ✅ 同条件連打で再利用（課金事故防止）
     const key = stableHash({
       uid,
       brandId,
-      vision: vision.trim(),
-      keywords,
       referenceImageUrl,
-      styleText,
-      rules,
-      voiceText,
-      OUTPUT_SIZE,
-      type: "background-b",
+      prompt,
+      size: "1024x1024",
+      type: "extract-foreground",
     });
 
     const bucket = getStorage().bucket();
-    const objectPath = `users/${uid}/drafts/_bg/${brandId}/${key}.png`;
+    const objectPath = `users/${uid}/drafts/_fg/${brandId}/${key}.png`;
     const fileRef = bucket.file(objectPath);
 
-    // 既存があれば再利用（課金ゼロ）
+    // 既存があれば再利用
     const [exists] = await fileRef.exists();
     if (exists) {
       const [meta] = await fileRef.getMetadata().catch(() => [null as any]);
@@ -195,13 +131,13 @@ export async function POST(req: Request) {
       });
     }
 
-    // OpenAI images/edits（マスク＝透過部）
+    // OpenAI edits（透過切り抜き）
     const image = await fetchAsImage(referenceImageUrl);
 
     const fd = new FormData();
     fd.append("model", "gpt-image-1");
     fd.append("prompt", prompt);
-    fd.append("size", OUTPUT_SIZE);
+    fd.append("size", "1024x1024");
     fd.append("image", image);
 
     const r = await fetch("https://api.openai.com/v1/images/edits", {
@@ -218,7 +154,7 @@ export async function POST(req: Request) {
 
     const buf = Buffer.from(b64, "base64");
 
-    // Storage保存
+    // Storage保存（token付き）
     const token = crypto.randomUUID();
     await fileRef.save(buf, {
       contentType: "image/png",
@@ -233,10 +169,7 @@ export async function POST(req: Request) {
       reused: false,
     });
   } catch (e: any) {
-    console.error("[generate-bg]", e);
-    return NextResponse.json(
-      { error: e?.message || "background generation failed" },
-      { status: 500 }
-    );
+    console.error(e);
+    return NextResponse.json({ error: e?.message || "error" }, { status: 500 });
   }
 }

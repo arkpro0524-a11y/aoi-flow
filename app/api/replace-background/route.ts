@@ -1,50 +1,45 @@
 /**
  * app/api/replace-background/route.ts
  * ─────────────────────────────────────────────
- * 役割：
- * - 「商品（前景）＋ 背景画像」を合成して最終画像を生成
- * - mock → 実API を ENV で切替
+ * 【最終完成版 / Bルート前提（改）】
  *
- * 切替：
- * - USE_REPLACE_BG_MOCK=true  → mock JSON
- * - USE_REPLACE_BG_MOCK=false → sharp で実合成
- *
- * 注意：
- * - lib/server/runway.ts は「動画生成専用」なので、ここから import しない
+ * ✅ 返却に「b64」「suggestedFileName」「sha256」を追加
+ *   → UIが Storage に保存する時の “ファイル名が確定できる”
+ * ✅ dataUrl は従来通り返す（互換維持）
  */
 
 import { NextResponse } from "next/server";
+import sharp from "sharp";
+import crypto from "crypto";
 import { PRICING } from "@/lib/server/pricing";
 import { getIdempotencyKey } from "@/lib/server/idempotency";
-import sharp from "sharp";
 
 /* =========================================================
-   Next.js runtime（sharpはnode runtime必須）
+   Next.js runtime
 ========================================================= */
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /* =========================================================
-   型（このAPI内だけで完結 / UIは触らない）
+   型（このAPI内で完結）
 ========================================================= */
 export type ReplaceBackgroundParams = {
-  foregroundImage: string;
-  backgroundImage: string;
-  ratio: string; // "1280:720" 等
+  foregroundImage: string; // 透過PNG（URL or dataURL）
+  backgroundImage: string; // 背景画像（URL or dataURL）
+  ratio: string; // "1280:720" / "720:1280" / "1080:1080"
   fit: "contain" | "cover";
 };
 
 /* =========================================================
-   ENV 切替
+   ENV（Mock切替）
 ========================================================= */
-const USE_MOCK = process.env.USE_REPLACE_BG_MOCK === "true";
+const USE_MOCK = process.env.USE_REPLACE_BG_MOCK === "false";
 
 /* =========================================================
    Utils
 ========================================================= */
 
 function parseRatioToSize(ratio: string): { w: number; h: number } {
-  // ratio は "1280:720" のように "W:H" を想定
   const s = String(ratio || "").trim();
   const m = s.match(/^(\d{2,5})\s*:\s*(\d{2,5})$/);
   if (!m) return { w: 1280, h: 720 };
@@ -52,12 +47,13 @@ function parseRatioToSize(ratio: string): { w: number; h: number } {
   const w = Number(m[1]);
   const h = Number(m[2]);
 
-  // 安全策：極端な値は丸める（サーバ負荷防止）
-  const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
-  const ww = clamp(Number.isFinite(w) ? w : 1280, 256, 2048);
-  const hh = clamp(Number.isFinite(h) ? h : 720, 256, 2048);
+  const clamp = (n: number, min: number, max: number) =>
+    Math.max(min, Math.min(max, n));
 
-  return { w: ww, h: hh };
+  return {
+    w: clamp(Number.isFinite(w) ? w : 1280, 256, 2048),
+    h: clamp(Number.isFinite(h) ? h : 720, 256, 2048),
+  };
 }
 
 function isDataUrl(s: string) {
@@ -67,28 +63,23 @@ function isDataUrl(s: string) {
 function dataUrlToBuffer(dataUrl: string): Buffer {
   const idx = dataUrl.indexOf("base64,");
   if (idx < 0) throw new Error("Invalid data URL");
-  const b64 = dataUrl.slice(idx + "base64,".length);
-  return Buffer.from(b64, "base64");
+  return Buffer.from(dataUrl.slice(idx + 7), "base64");
 }
 
 async function fetchUrlToBuffer(url: string): Promise<Buffer> {
-  const res = await fetch(url, { method: "GET", cache: "no-store" as any });
+  const res = await fetch(url, { cache: "no-store" as any });
   if (!res.ok) throw new Error(`Failed to fetch image: ${res.status}`);
   const ab = await res.arrayBuffer();
   return Buffer.from(ab);
 }
 
-async function readImageInputToBuffer(input: string): Promise<Buffer> {
-  const s = String(input || "").trim();
-  if (!s) throw new Error("Empty image input");
-  if (isDataUrl(s)) return dataUrlToBuffer(s);
-  // URL想定
-  return await fetchUrlToBuffer(s);
+async function readImage(input: string): Promise<Buffer> {
+  if (!input) throw new Error("empty image input");
+  if (isDataUrl(input)) return dataUrlToBuffer(input);
+  return await fetchUrlToBuffer(input);
 }
 
-function pickYenEstimateForReplaceBackground(): number | null {
-  // あなたの pricing.ts の public() に openai.estimateYen.background がある前提
-  // なければ null（UI側は出せるなら出す、出せないなら無視できる）
+function pickYenEstimate(): number | null {
   try {
     const pub = PRICING.public?.();
     const n = pub?.openai?.estimateYen?.background;
@@ -99,62 +90,88 @@ function pickYenEstimateForReplaceBackground(): number | null {
   }
 }
 
+function sha256Hex(buf: Buffer): string {
+  return crypto.createHash("sha256").update(buf).digest("hex"); // 64桁
+}
+
 /* =========================================================
-   Mock 実装（UI接続確認用）
+   Mock（UI確認用）
+   ※「0byte保存」を誘発しないよう、最低限のダミーPNGを返す
 ========================================================= */
+function tiny1x1PngBase64(): string {
+  // 1x1 PNG（透明）のbase64
+  // これなら dataUrl / b64 としてアップロードしても 0byte にはならない
+  return "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMB/axm6o8AAAAASUVORK5CYII=";
+}
+
 function mockReplaceBackground(params: ReplaceBackgroundParams) {
-  const yen = pickYenEstimateForReplaceBackground();
+  const b64 = tiny1x1PngBase64();
+  const dataUrl = `data:image/png;base64,${b64}`;
+  const full = sha256Hex(Buffer.from(b64, "base64"));
+  const short = full.slice(0, 16);
 
   return {
     ok: true,
     mock: true,
-    // mock はURL返しのままでも良いが、UI側が dataUrl を期待するならここも dataUrl に合わせられる
-    imageUrl: "https://example.com/mock-composited.png",
+
+    // 互換
+    dataUrl,
+
+    // 追加（保存用）
+    b64,
+    sha256: full, // ✅ フル64桁
+    sha256Short: short, // ✅ ファイル名用
+    suggestedFileName: `composite_${short}.png`,
+
     foregroundUrl: params.foregroundImage,
     backgroundUrl: params.backgroundImage,
     ratio: params.ratio,
     fit: params.fit,
-    yen,
+    yen: pickYenEstimate(),
   };
 }
 
 /* =========================================================
-   Real 合成（sharp）
+   Real compose（sharp）
 ========================================================= */
-
 async function composeWithSharp(params: ReplaceBackgroundParams) {
   const { w, h } = parseRatioToSize(params.ratio);
 
-  const fgBuf = await readImageInputToBuffer(params.foregroundImage);
-  const bgBuf = await readImageInputToBuffer(params.backgroundImage);
+  const fgBuf = await readImage(params.foregroundImage);
+  const bgBuf = await readImage(params.backgroundImage);
 
-  // 背景は常に canvas 全面（cover）
-  const bg = await sharp(bgBuf)
-    .resize(w, h, { fit: "cover" })
-    .png()
-    .toBuffer();
+  // 背景：常に全面 cover（PNG化して安定）
+  const bg = await sharp(bgBuf).resize(w, h, { fit: "cover" }).png().toBuffer();
 
-  // 前景は contain / cover を選択
-  // - contain: 全体が入る（上下左右に余白が出ることがある）
-  // - cover: 余白が出ない（はみ出しは切れる）
+  // 前景：contain / cover を選択（透過維持）
   const fgFit = params.fit === "cover" ? "cover" : "contain";
-
-  // 前景のリサイズ結果をpng化
   const fg = await sharp(fgBuf)
-    .resize(w, h, { fit: fgFit, position: "center" })
+    .resize(w, h, {
+      fit: fgFit,
+      position: "center",
+      background: { r: 0, g: 0, b: 0, alpha: 0 },
+    })
     .png()
     .toBuffer();
 
-  // 背景に前景を重ねる
-  const out = await sharp(bg)
+  const outBuf = await sharp(bg)
     .composite([{ input: fg, top: 0, left: 0 }])
     .png()
     .toBuffer();
 
-  const b64 = out.toString("base64");
-  const dataUrl = `data:image/png;base64,${b64}`;
+  const b64 = outBuf.toString("base64");
+  const full = sha256Hex(outBuf); // 64桁
+  const short = full.slice(0, 16);
 
-  return { w, h, dataUrl };
+  return {
+    w,
+    h,
+    b64,
+    sha256: full,
+    sha256Short: short,
+    suggestedFileName: `composite_${short}.png`,
+    dataUrl: `data:image/png;base64,${b64}`,
+  };
 }
 
 /* =========================================================
@@ -173,14 +190,14 @@ export async function POST(req: Request) {
 
     if (!params.foregroundImage || !params.backgroundImage) {
       return NextResponse.json(
-        { ok: false, error: "foregroundImage と backgroundImage は必須です" },
+        { ok: false, error: "foregroundImage / backgroundImage is required" },
         { status: 400 }
       );
     }
 
     const idemKey = getIdempotencyKey(req, params);
 
-    // STEP4-A：Mock
+    // Mock
     if (USE_MOCK) {
       return NextResponse.json({
         ...mockReplaceBackground(params),
@@ -188,9 +205,8 @@ export async function POST(req: Request) {
       });
     }
 
-    // STEP4-B：実合成
+    // Real compose
     const out = await composeWithSharp(params);
-    const yen = pickYenEstimateForReplaceBackground();
 
     return NextResponse.json({
       ok: true,
@@ -198,14 +214,23 @@ export async function POST(req: Request) {
       ratio: params.ratio,
       fit: params.fit,
       size: { w: out.w, h: out.h },
-      dataUrl: out.dataUrl, // ✅ UI側でそのまま Storage 保存できる
-      yen, // 目安（出せるなら）
+
+      // ✅ 互換維持：UIは dataUrl で従来通り upload できる
+      dataUrl: out.dataUrl,
+
+      // ✅ 追加：UI側が “確定名” で Storage に保存できる
+      b64: out.b64,
+      sha256: out.sha256, // ✅ フル
+      sha256Short: out.sha256Short, // ✅ ファイル名用
+      suggestedFileName: out.suggestedFileName,
+
+      yen: pickYenEstimate(),
       idemKey,
     });
   } catch (err: any) {
     console.error("[replace-background]", err);
     return NextResponse.json(
-      { ok: false, error: err?.message || "背景合成に失敗しました" },
+      { ok: false, error: err?.message || "replace background failed" },
       { status: 500 }
     );
   }
