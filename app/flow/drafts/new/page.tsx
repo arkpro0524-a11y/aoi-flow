@@ -671,7 +671,8 @@ function stopVideoPolling() {
 
     setBusy(true);
     try {
-      const ensuredDraftId = draftId ?? (await saveDraft());
+      // ✅ state(draftId) は遅れることがあるので ref を正にする
+      const ensuredDraftId = draftIdRef.current ?? (await saveDraft()) ?? draftIdRef.current;
       if (!ensuredDraftId) throw new Error("failed to create draft");
 
       const url = await uploadImageFileAsJpegToStorage(uid, ensuredDraftId, file);
@@ -1436,7 +1437,8 @@ const ig3 = Array.isArray(j.ig3) ? j.ig3.map(String).slice(0, 3) : [];
       const token = await auth.currentUser?.getIdToken(true);
       if (!token) throw new Error("no token");
 
-      const ensuredDraftId = draftId ?? (await saveDraft());
+            // ✅ state(draftId) は遅れることがあるので ref を正にする
+      const ensuredDraftId = draftIdRef.current ?? (await saveDraft()) ?? draftIdRef.current;
       if (!ensuredDraftId) throw new Error("failed to create draft");
 
       const body = { brandId: d.brand, vision, keywords: splitKeywords(d.keywordsText), tone: "" };
@@ -1448,19 +1450,24 @@ const ig3 = Array.isArray(j.ig3) ? j.ig3.map(String).slice(0, 3) : [];
       });
 
       const j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(j?.error || "image error");
+if (!r.ok) throw new Error(j?.error || "image error");
 
-      const b64 = typeof j.b64 === "string" ? j.b64 : "";
-      if (!b64) throw new Error("no b64");
+// ✅ サーバは url を返す
+const url = typeof j?.url === "string" ? j.url : "";
+if (!url) throw new Error("no url");
 
-      const dataUrl = `data:image/png;base64,${b64}`;
-      const url = await uploadDataUrlToStorage(uid, ensuredDraftId, dataUrl);
+setD((prev) => ({
+  ...prev,
+  imageIdeaUrl: url,
+}));
 
-      setD((prev) => ({
-        ...prev,
-        imageIdeaUrl: url,
-      }));
-      await saveDraft({ imageIdeaUrl: url, phase: "draft" });
+await saveDraft({ imageIdeaUrl: url, phase: "draft" });
+
+// 表示も③へ寄せる
+setRightTab("image");
+setPreviewMode("idea");
+setPreviewReason("イメージ画像を生成しました（③に表示）");
+showMsg("イメージ画像を保存しました（③に表示）");
 
       // ✅ 生成直後の事故防止：③へ“表示も意識も”寄せる
       setRightTab("image");
@@ -1486,7 +1493,8 @@ const ig3 = Array.isArray(j.ig3) ? j.ig3.map(String).slice(0, 3) : [];
 
     setBusy(true);
     try {
-      const ensuredDraftId = draftId ?? (await saveDraft());
+            // ✅ state(draftId) は遅れることがあるので ref を正にする
+      const ensuredDraftId = draftIdRef.current ?? (await saveDraft()) ?? draftIdRef.current;
       if (!ensuredDraftId) throw new Error("failed to create draft");
 
       const out = await renderToCanvasAndGetDataUrlSilent();
@@ -1581,7 +1589,8 @@ async function applyIg3ToOverlayOnly(text: string) {
   setBusy(true);
   try {
     // 下書きID確定
-    const ensuredDraftId = draftId ?? (await saveDraft());
+        // ✅ state(draftId) は遅れることがあるので ref を正にする
+    const ensuredDraftId = draftIdRef.current ?? (await saveDraft()) ?? draftIdRef.current;
     if (!ensuredDraftId) throw new Error("failed to create draft");
 
     // 認証
@@ -1722,7 +1731,8 @@ await saveDraft({
 }
 async function clearBgHistory() {
   if (!uid) return;
-  if (!draftId) {
+    // ✅ state(draftId) は遅れることがあるので ref を正にする
+  if (!draftIdRef.current) {
     showMsg("この下書きはまだ作成されていません");
     return;
   }
@@ -1778,7 +1788,7 @@ const nextBgUrls = [url, ...curBg.filter((x) => x !== url)].slice(0, 10);
 // ✅ d.bgImageUrl（単発）も更新しておく（ロード復元の主役）
 setD((prev) => ({ ...prev, bgImageUrl: url, bgImageUrls: nextBgUrls }));
 
-const ensuredDraftId = draftId ?? (await saveDraft());
+const ensuredDraftId = draftIdRef.current ?? (await saveDraft()) ?? draftIdRef.current;
 if (!ensuredDraftId) throw new Error("failed to create draft");
 
 // ✅ Firestoreへも「単発(bgImageUrl) + 履歴(bgImageUrls)」を両方保存
@@ -1794,7 +1804,8 @@ async function syncBgImagesFromStorage() {
 
   // 下書きIDが無くても「共通背景」同期はできるが、
   // ついでに下書きIDを確定させて Firestore へ保存できるようにする
-  const ensuredDraftId = draftId ?? (await saveDraft());
+    // ✅ state(draftId) は遅れることがあるので ref を正にする
+  const ensuredDraftId = draftIdRef.current ?? (await saveDraft()) ?? draftIdRef.current;
   if (!ensuredDraftId) {
     showMsg("下書きIDの確定に失敗しました");
     return;
@@ -1907,7 +1918,8 @@ async function syncBgImagesFromStorage() {
   async function syncVideosFromStorage() {
     if (!uid) return;
 
-    const ensuredDraftId = draftId ?? (await saveDraft());
+        // ✅ state(draftId) は遅れることがあるので ref を正にする
+    const ensuredDraftId = draftIdRef.current ?? (await saveDraft()) ?? draftIdRef.current;
     if (!ensuredDraftId) {
       showMsg("下書きIDの確定に失敗しました");
       return;
@@ -1975,7 +1987,7 @@ async function generateVideo() {
 
   // ✅ 生成中 task があるなら「課金ゼロで復帰」
   if (d.videoTaskId && (d.videoStatus === "running" || d.videoStatus === "queued")) {
-    const ensuredDraftId = draftId ?? (await saveDraft());
+        const ensuredDraftId = draftIdRef.current ?? (await saveDraft()) ?? draftIdRef.current;
     if (!ensuredDraftId) {
       showMsg("下書きIDの確定に失敗しました");
       return;
@@ -1995,7 +2007,7 @@ async function generateVideo() {
     const token = await auth.currentUser?.getIdToken(true);
     if (!token) throw new Error("no token");
 
-    const ensuredDraftId = draftId ?? (await saveDraft());
+        const ensuredDraftId = draftIdRef.current ?? (await saveDraft()) ?? draftIdRef.current;
     if (!ensuredDraftId) throw new Error("failed to create draft");
 
     // ✅ 仕様確定：動画は aiImageUrl（背景合成・文字なし）限定
@@ -2495,7 +2507,7 @@ async function generateVideo() {
                 variant="secondary"
                 disabled={!uid || busy}
                 onClick={async () => {
-                  if (!draftId) {
+                 if (!draftIdRef.current) {
                     await saveDraft();
                     showMsg("先に下書きを作成しました");
                   } else {
@@ -2949,7 +2961,7 @@ async function generateVideo() {
     variant="secondary"
     disabled={!uid || busy || !d.videoTaskId || (d.videoStatus !== "running" && d.videoStatus !== "queued")}
     onClick={async () => {
-      const ensuredDraftId = draftId ?? (await saveDraft());
+            const ensuredDraftId = draftIdRef.current ?? (await saveDraft()) ?? draftIdRef.current;
       if (!ensuredDraftId) {
         showMsg("下書きIDの確定に失敗しました");
         return;
