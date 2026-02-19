@@ -1,25 +1,23 @@
-// /app/api/start-video-task/route.ts
+// /app/api/video/runway/status/route.ts
 // ✅ 互換ルート（UIからは叩かない）
-// - 旧「hash箱作成→task開始」経路を廃止
-// - 開始は /api/generate-video に一本化（draftsへ taskId/status を書く）
-// - pollは /api/check-video-task に一本化済み（2️⃣）
-
+// - 旧クライアントが残っても “同じ挙動” になるように /api/check-video-task に委譲する
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 
-async function forwardToGenerateVideo(req: Request) {
+// ここで同居させる（Next route から別route handler を直接importするより安全）
+async function forwardToCheckVideoTask(req: Request) {
   const base = new URL(req.url);
-  const url = new URL("/api/generate-video", base.origin);
+  const url = new URL("/api/check-video-task", base.origin);
 
-  const bodyText = await req.text().catch(() => "");
+  const body = await req.text().catch(() => "");
   const r = await fetch(url.toString(), {
     method: "POST",
     headers: {
       "Content-Type": req.headers.get("content-type") || "application/json",
       Authorization: req.headers.get("authorization") || "",
     },
-    body: bodyText || "{}",
+    body: body || "{}",
   });
 
   const t = await r.text().catch(() => "");
@@ -31,8 +29,8 @@ async function forwardToGenerateVideo(req: Request) {
 
 export async function POST(req: Request) {
   try {
-    return await forwardToGenerateVideo(req);
+    return await forwardToCheckVideoTask(req);
   } catch (e: any) {
-    return NextResponse.json({ error: e?.message || "start-video-task forward failed" }, { status: 500 });
+    return NextResponse.json({ error: e?.message || "runway/status failed" }, { status: 500 });
   }
 }

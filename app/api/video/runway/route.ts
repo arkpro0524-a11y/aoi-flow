@@ -1,8 +1,7 @@
-// /app/api/start-video-task/route.ts
+// /app/api/video/runway/route.ts
 // ✅ 互換ルート（UIからは叩かない）
-// - 旧「hash箱作成→task開始」経路を廃止
-// - 開始は /api/generate-video に一本化（draftsへ taskId/status を書く）
-// - pollは /api/check-video-task に一本化済み（2️⃣）
+// - 旧クライアント/旧実装が残っても “開始は常に /api/generate-video” に収束させる
+// - ここ自身でRunwayを叩かない（＝二系統を物理的に封印）
 
 export const runtime = "nodejs";
 
@@ -17,6 +16,7 @@ async function forwardToGenerateVideo(req: Request) {
     method: "POST",
     headers: {
       "Content-Type": req.headers.get("content-type") || "application/json",
+      // 認証はそのまま引き継ぐ（Bearer idToken）
       Authorization: req.headers.get("authorization") || "",
     },
     body: bodyText || "{}",
@@ -33,6 +33,6 @@ export async function POST(req: Request) {
   try {
     return await forwardToGenerateVideo(req);
   } catch (e: any) {
-    return NextResponse.json({ error: e?.message || "start-video-task forward failed" }, { status: 500 });
+    return NextResponse.json({ error: e?.message || "video/runway forward failed" }, { status: 500 });
   }
 }

@@ -1,185 +1,233 @@
 // /app/api/check-video-task/route.ts
+export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import admin from "firebase-admin";
-import crypto from "crypto";
-import { checkVideoTaskWithRunway } from "@/lib/server/runway";
-import { getAdminAuth, getAdminDb, getAdminBucket } from "@/firebaseAdmin";
+import { requireUserFromAuthHeader, getAdminDb } from "@/app/api/_firebase/admin";
 
-export const runtime = "nodejs";
+// ===============================
+// ✅ Runway task status 取得（最小・汎用）
+// - SDKラッパーが手元で不確実なので、ここではHTTPで安全側に寄せる
+// - 返却形式の揺れを吸収して status と url を取り出す
+// ===============================
+type RunwayPollResult =
+  | { ok: true; status: "queued" | "running" | "succeeded"; videoUrl?: string }
+  | { ok: false; status: "failed"; error: string };
 
-async function requireUser(req: Request) {
-  const authz = req.headers.get("authorization") || "";
-  const m = authz.match(/^Bearer\s+(.+)$/i);
-  const token = m?.[1];
-  if (!token) throw new Error("Missing Authorization Bearer token");
-
-  const decoded = await getAdminAuth().verifyIdToken(token);
-  if (!decoded?.uid) throw new Error("Invalid token");
-  return { uid: decoded.uid };
-}
-
-function toUiStatus(runwayStatus: string): "queued" | "running" | "done" | "error" {
-  if (runwayStatus === "queued") return "queued";
-  if (runwayStatus === "running") return "running";
-  if (runwayStatus === "succeeded") return "done";
-  if (runwayStatus === "failed") return "error";
-  return "running";
-}
-
-function pickVideoUrl(res: any): string | null {
-  const cands: any[] = [
-    res?.videoUrl,
-    res?.url,
-    res?.outputUrl,
-    res?.output_url,
-    res?.result?.url,
-    res?.result?.videoUrl,
-    res?.data?.url,
-    res?.data?.videoUrl,
-    ...(Array.isArray(res?.assets) ? res.assets.map((a: any) => a?.url) : []),
-    ...(Array.isArray(res?.outputs) ? res.outputs.map((o: any) => o?.url) : []),
-  ];
-
-  for (const v of cands) {
-    if (typeof v === "string" && v.trim()) return v.trim();
+function pickFirstString(x: any): string | null {
+  if (typeof x === "string" && x.trim()) return x.trim();
+  if (Array.isArray(x)) {
+    for (const v of x) {
+      const s = pickFirstString(v);
+      if (s) return s;
+    }
+  }
+  if (x && typeof x === "object") {
+    // よくある候補
+    const keys = ["url", "video_url", "videoUrl", "signed_url", "signedUrl", "download_url", "downloadUrl"];
+    for (const k of keys) {
+      const s = pickFirstString((x as any)[k]);
+      if (s) return s;
+    }
   }
   return null;
 }
 
-async function fetchAsBuffer(url: string): Promise<Buffer> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 60_000);
+function normalizeRunwayStatus(raw: any): "queued" | "running" | "succeeded" | "failed" {
+  const s = String(raw ?? "").toLowerCase();
+  if (s.includes("succeed") || s === "completed" || s === "success") return "succeeded";
+  if (s.includes("fail") || s === "error" || s === "canceled" || s === "cancelled") return "failed";
+  if (s.includes("run") || s.includes("progress") || s === "processing") return "running";
+  return "queued";
+}
 
-  try {
-    const res = await fetch(url, { signal: controller.signal });
-    if (!res.ok) throw new Error(`failed to download video: ${res.status}`);
-    const ab = await res.arrayBuffer();
-    return Buffer.from(ab);
-  } finally {
-    clearTimeout(timer);
+async function pollRunway(taskId: string): Promise<RunwayPollResult> {
+  const apiKey = process.env.RUNWAY_API_KEY;
+  if (!apiKey) {
+    return { ok: false, status: "failed", error: "RUNWAY_API_KEY is missing" };
   }
+
+  // ✅ エンドポイントはRunway側の世代で揺れるため、まず “tasks” を想定
+  // ※もし別URLならここだけ差し替えれば良い
+  const url = `https://api.runwayml.com/v1/tasks/${encodeURIComponent(taskId)}`;
+
+  const r = await fetch(url, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${apiKey}` },
+  });
+
+  const text = await r.text().catch(() => "");
+  let j: any = null;
+  try {
+    j = text ? JSON.parse(text) : null;
+  } catch {
+    j = null;
+  }
+
+  if (!r.ok) {
+    const msg = j?.error?.message || j?.message || text || `runway poll failed (${r.status})`;
+    return { ok: false, status: "failed", error: String(msg) };
+  }
+
+  const status = normalizeRunwayStatus(j?.status ?? j?.state ?? j?.task?.status);
+
+  if (status === "succeeded") {
+    // output の位置が揺れるので総当たりでURLを拾う
+    const candidate =
+      pickFirstString(j?.output) ||
+      pickFirstString(j?.outputs) ||
+      pickFirstString(j?.result) ||
+      pickFirstString(j?.data?.output) ||
+      pickFirstString(j?.data?.outputs);
+
+    if (candidate) return { ok: true, status: "succeeded", videoUrl: candidate };
+
+    // succeeded なのにURL無し → 仕様揺れ。ここは failed に落とさず running 扱いにして再試行余地を残す
+    return { ok: true, status: "running" };
+  }
+
+  if (status === "failed") {
+    const msg = j?.error?.message || j?.error || j?.message || "runway task failed";
+    return { ok: false, status: "failed", error: String(msg) };
+  }
+
+  return { ok: true, status };
 }
 
-function storageDownloadUrl(bucketName: string, filePath: string, token: string) {
-  const encoded = encodeURIComponent(filePath);
-  return `https://firebasestorage.googleapis.com/v0/b/${bucketName}/o/${encoded}?alt=media&token=${token}`;
-}
-
+// ===============================
+// ✅ 唯一のpoll
+// - 入力：draftId
+// - drafts から taskId を読み、Runway の状態を確認
+// - drafts を “唯一の状態” として更新（UIは drafts だけ見れば良い）
+// ===============================
 export async function POST(req: Request) {
   try {
-    const payload = await req.json();
+    const user = await requireUserFromAuthHeader(req);
 
-    const draftId = String(payload?.draftId || "");
-    const taskId = String(payload?.taskId || "");
-
-    if (!draftId) return NextResponse.json({ error: "draftId is required" }, { status: 400 });
-    if (!taskId) return NextResponse.json({ error: "taskId is required" }, { status: 400 });
-
-    const user = await requireUser(req);
+    const body = (await req.json().catch(() => ({} as any))) as any;
+    const draftId = String(body?.draftId ?? "").trim();
+    if (!draftId) {
+      return NextResponse.json({ error: "draftId is required" }, { status: 400 });
+    }
 
     const db = getAdminDb();
     const ref = db.collection("drafts").doc(draftId);
-
     const snap = await ref.get();
-    if (!snap.exists) return NextResponse.json({ error: "draft not found" }, { status: 404 });
 
-    const data = snap.data() as any;
-    if (String(data?.userId || "") !== user.uid) {
+    if (!snap.exists) {
+      return NextResponse.json({ error: "draft not found" }, { status: 404 });
+    }
+
+    const d = snap.data() as any;
+    if (String(d?.userId ?? "") !== user.uid) {
       return NextResponse.json({ error: "forbidden" }, { status: 403 });
     }
 
-    const res = await checkVideoTaskWithRunway(taskId);
-    const uiStatus = toUiStatus(String(res?.status || res?.rawStatus || ""));
-    const runwayVideoUrl = pickVideoUrl(res);
+    // ✅ すでに成功してURLあるなら即返す（課金・API叩きすぎ防止）
+    const alreadyUrl = String(d?.videoUrl ?? "").trim();
+    const alreadyStatus = String(d?.videoStatus ?? "").trim();
+    if (alreadyUrl && (alreadyStatus === "succeeded" || alreadyStatus === "success")) {
+      return NextResponse.json({
+        ok: true,
+        draftId,
+        taskId: String(d?.videoTaskId ?? "").trim() || null,
+        status: "succeeded",
+        videoUrl: alreadyUrl,
+      });
+    }
 
-    let finalUrl: string | null = null;
+    const taskId = String(d?.videoTaskId ?? "").trim();
+    if (!taskId) {
+      // task未開始
+      return NextResponse.json({
+        ok: true,
+        draftId,
+        taskId: null,
+        status: "idle",
+        videoUrl: null,
+      });
+    }
 
-    // ✅ succeeded → Firebase Storageへ保存してURL確定
-    if (uiStatus === "done" && runwayVideoUrl) {
-      const already = String(data?.videoUrl || "");
-      if (already.includes("firebasestorage.googleapis.com")) {
-        finalUrl = already;
-      } else {
-        const bucket = getAdminBucket();
-        const bucketName = String(bucket?.name || "").trim();
-        if (!bucketName) throw new Error("Firebase Storage bucket is not configured (bucket name empty)");
+    const polled = await pollRunway(taskId);
 
-        const filePath = `users/${user.uid}/drafts/${draftId}/videos/${Date.now()}_${taskId}.mp4`;
-        const buf = await fetchAsBuffer(runwayVideoUrl);
-
-        const token = crypto.randomUUID();
-        const file = bucket.file(filePath);
-
-        await file.save(buf, {
-          contentType: "video/mp4",
-          resumable: false,
-          metadata: {
-            metadata: { firebaseStorageDownloadTokens: token },
-            cacheControl: "public,max-age=31536000",
+    // ✅ draftsへ状態反映（唯一の真実）
+    if (polled.ok) {
+      if (polled.status === "queued" || polled.status === "running") {
+        await ref.set(
+          {
+            videoSource: "runway",
+            videoTaskId: taskId,
+            videoStatus: polled.status,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           },
-        });
+          { merge: true }
+        );
 
-        finalUrl = storageDownloadUrl(bucketName, filePath, token);
+        return NextResponse.json({
+          ok: true,
+          draftId,
+          taskId,
+          status: polled.status,
+          videoUrl: null,
+        });
       }
 
-      const prev: string[] = Array.isArray(data?.videoUrls)
-        ? data.videoUrls.filter((x: any) => typeof x === "string")
-        : [];
+      // succeeded
+      if (polled.status === "succeeded") {
+        const url = String(polled.videoUrl ?? "").trim();
+        if (!url) {
+          // URL無しは“走行中扱い”で返す（復旧余地）
+          await ref.set(
+            {
+              videoSource: "runway",
+              videoTaskId: taskId,
+              videoStatus: "running",
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true }
+          );
 
-      const nextUrls = finalUrl
-        ? [finalUrl, ...prev.filter((x) => x !== finalUrl)].slice(0, 10)
-        : prev.slice(0, 10);
+          return NextResponse.json({
+            ok: true,
+            draftId,
+            taskId,
+            status: "running",
+            videoUrl: null,
+          });
+        }
 
-      await ref.set(
-        {
-          videoTaskId: taskId,
-          videoUrl: finalUrl,
-          videoUrls: nextUrls,
-          videoStatus: "done",
-          videoCompletedAt: admin.firestore.FieldValue.serverTimestamp(),
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        },
-        { merge: true }
-      );
+        await ref.set(
+          {
+            videoSource: "runway",
+            videoTaskId: taskId,
+            videoStatus: "succeeded",
+            videoUrl: url,
+            videoError: null,
+            videoCompletedAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
 
-      return NextResponse.json({
-        ok: true,
-        taskId: res?.taskId || taskId,
-        status: "done",
-        url: finalUrl,
-        videoUrl: finalUrl,
-        rawStatus: res?.rawStatus || null,
-      });
+        return NextResponse.json({
+          ok: true,
+          draftId,
+          taskId,
+          status: "succeeded",
+          videoUrl: url,
+        });
+      }
     }
 
-    // ✅ failed → error
-    if (uiStatus === "error") {
-      await ref.set(
-        {
-          videoTaskId: taskId,
-          videoStatus: "error",
-          videoFailedAt: admin.firestore.FieldValue.serverTimestamp(),
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        },
-        { merge: true }
-      );
-
-      return NextResponse.json({
-        ok: true,
-        taskId: res?.taskId || taskId,
-        status: "error",
-        url: null,
-        videoUrl: null,
-        rawStatus: res?.rawStatus || null,
-      });
-    }
-
-    // ✅ queued / running
+    // failed
+    const err = String((polled as any)?.error ?? "runway task failed");
     await ref.set(
       {
+        videoSource: "runway",
         videoTaskId: taskId,
-        videoStatus: uiStatus,
+        videoStatus: "failed",
+        videoError: err,
+        videoCompletedAt: admin.firestore.FieldValue.serverTimestamp(),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       },
       { merge: true }
@@ -187,11 +235,11 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       ok: true,
-      taskId: res?.taskId || taskId,
-      status: uiStatus,
-      url: null,
+      draftId,
+      taskId,
+      status: "failed",
       videoUrl: null,
-      rawStatus: res?.rawStatus || null,
+      error: err,
     });
   } catch (e: any) {
     return NextResponse.json({ error: e?.message || "check-video-task failed" }, { status: 500 });

@@ -37,7 +37,22 @@ export type RecommendVideoTemplateParams = {
   platform?: VideoPlatform;
 };
 
-export type VideoTemplateRecommendation = {
+/**
+ * ✅ UIで使う「テンプレ推薦の正本」
+ * - videoButtons の id を返す（= そのまま保存・適用できる）
+ */
+export type VideoTemplateId = string;
+
+export type VideoTemplatePick = {
+  templateId: VideoTemplateId; // videoButtons の id（正本）
+  label?: string;              // UI表示用（任意：なければ videoButtons から引く）
+};
+
+/**
+ * （任意）旧：モデルが判断した詳細（デバッグ用）
+ * - これを recommendation 正本にすると UI が困るので debug に隔離
+ */
+export type VideoTemplateRecommendationDebug = {
   model: string;
   ratio: VideoRatio;
   seconds: VideoSeconds;
@@ -49,7 +64,8 @@ export type RecommendVideoTemplateResponse =
   | {
       ok: true;
       mock: boolean;
-      recommendation: VideoTemplateRecommendation;
+      recommendation: VideoTemplatePick; // ✅ 正本は templateId
+      debug?: VideoTemplateRecommendationDebug; // 任意
     }
   | {
       ok: false;

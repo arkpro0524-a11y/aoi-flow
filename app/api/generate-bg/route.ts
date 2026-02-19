@@ -1,4 +1,4 @@
-// /app/api/config/generate-bg/route.ts
+// /app/api/generate-bg/route.ts
 
 import { NextResponse } from "next/server";
 import { getAdminAuth, getAdminDb } from "@/firebaseAdmin";
@@ -24,11 +24,7 @@ async function requireUid(req: Request): Promise<string> {
 
 /* ========= helpers ========= */
 function stableHash(input: unknown): string {
-  return crypto
-    .createHash("sha256")
-    .update(JSON.stringify(input))
-    .digest("hex")
-    .slice(0, 32);
+  return crypto.createHash("sha256").update(JSON.stringify(input)).digest("hex").slice(0, 32);
 }
 
 function buildDownloadUrl(bucket: string, path: string, token: string) {
@@ -50,139 +46,119 @@ function compactKeywords(keys: unknown): string {
   return keys.map(String).slice(0, 12).join(", ");
 }
 
-function compactVoiceText(v: unknown): string {
-  const s = String(v ?? "")
-    .replace(/\r?\n/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  if (!s) return "";
-  const MAX = 220;
-  return s.length <= MAX ? s : s.slice(0, MAX) + "…";
-}
-
-async function loadBrand(uid: string, brandId: string) {
-  const db = getAdminDb();
-  const ref = db.doc(`users/${uid}/brands/${brandId}`);
-  const snap = await ref.get();
-  if (!snap.exists) return null;
-  return snap.data() as any;
-}
-
 /* ========= main ========= */
 export async function POST(req: Request) {
   try {
     const uid = await requireUid(req);
     const body = await req.json().catch(() => ({} as any));
 
-    const brandId = typeof body.brandId === "string" ? body.brandId : "vento";
-    const vision = typeof body.vision === "string" ? body.vision : "";
+    const draftId = String(body.draftId || "").trim();
+    if (!draftId) {
+      return NextResponse.json({ error: "draftId is required" }, { status: 400 });
+    }
+
+    const brandId = String(body.brandId || "vento");
+    const vision = String(body.vision || "").trim();
     const keywords = compactKeywords(body.keywords);
+    const referenceImageUrl = String(body.referenceImageUrl || body.sourceImageUrl || "").trim();
 
-    // 互換：referenceImageUrl / sourceImageUrl
-    const referenceImageUrl =
-      typeof body.referenceImageUrl === "string"
-        ? body.referenceImageUrl
-        : typeof body.sourceImageUrl === "string"
-          ? body.sourceImageUrl
-          : "";
+    const scene = String(body.scene || "studio");
+    const sceneHint = String(body.sceneHint || "");
 
-    if (!vision.trim()) {
+    if (!vision) {
       return NextResponse.json({ error: "vision is required" }, { status: 400 });
     }
     if (!referenceImageUrl) {
       return NextResponse.json({ error: "referenceImageUrl is required" }, { status: 400 });
     }
 
-    const brand = await loadBrand(uid, brandId);
-    if (!brand) {
-      return NextResponse.json(
-        { error: "brand not found. /flow/brands で作成・保存してください" },
-        { status: 400 }
-      );
+    const db = getAdminDb();
+    const brandSnap = await db.doc(`users/${uid}/brands/${brandId}`).get();
+    if (!brandSnap.exists) {
+      return NextResponse.json({ error: "brand not found" }, { status: 400 });
     }
 
-    const imagePolicy = brand.imagePolicy ?? {};
-    const styleText = String(imagePolicy.styleText ?? "");
-    const rules = Array.isArray(imagePolicy.rules) ? imagePolicy.rules.map(String) : [];
+    const brand = brandSnap.data() || {};
+    const styleText = String(brand?.imagePolicy?.styleText || "");
+    const rules = Array.isArray(brand?.imagePolicy?.rules)
+      ? brand.imagePolicy.rules.map(String)
+      : [];
 
-    const captionPolicy = brand.captionPolicy ?? {};
-    const voiceText = compactVoiceText(captionPolicy.voiceText ?? "");
-
-    // ✅ 背景生成は「必ず正方形」固定（UIのsizeは完全に無視）
-    // 720x1280 を投げてもここでは使わない＝エラー＆課金事故が止まる
     const OUTPUT_SIZE = "1024x1024";
+
+    /* =========================
+       ✅ Scene + 崩壊防止ルール強化
+    ========================== */
+
+    const hardRules = [
+      "The product must remain 100% unchanged.",
+      "Do NOT modify shape, structure, handles, wood grain, edges, or logo.",
+      "Do NOT add hands, people, fingers, arms, or new objects.",
+      "Do NOT place decorative props.",
+      "Background must create atmosphere using light, shadow, blur only.",
+      "No text. No watermark. No logo.",
+    ];
 
     const prompt = [
       "You will receive a product photo.",
-      "Goal: Create a clean, attractive square background that matches the brand style.",
-      "IMPORTANT: Keep the main subject (product) unchanged and sharp. Do NOT distort the product.",
-      "If needed, extend / improve background, lighting, and composition.",
-      `Brand: ${String(brand.name ?? brandId)}`,
+      "Your task: Replace or enhance ONLY the background.",
+      "",
+      `SCENE TYPE: ${scene}`,
+      sceneHint ? `SCENE DESCRIPTION: ${sceneHint}` : "",
+      "",
+      `Brand: ${brand.name || brandId}`,
       `Vision: ${vision}`,
       keywords ? `Keywords: ${keywords}` : "",
-      voiceText ? `Brand Voice (short): ${voiceText}` : "",
       styleText ? `Style: ${styleText}` : "",
-      rules.length ? `Rules: ${rules.join(" / ")}` : "",
-      "No text. No logos. No watermark.",
+      rules.length ? `Brand Rules: ${rules.join(" / ")}` : "",
+      "",
+      "STRICT RULES:",
+      ...hardRules.map((r) => `- ${r}`),
+      "",
       `Return a square image (${OUTPUT_SIZE}).`,
     ]
       .filter(Boolean)
       .join("\n");
 
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) throw new Error("OPENAI_API_KEY missing");
-
-    // ✅ 同条件の連打で課金しない（同一key→同一保存先→再利用）
     const key = stableHash({
       uid,
+      draftId,
       brandId,
-      vision: vision.trim(),
+      vision,
       keywords,
       referenceImageUrl,
+      scene,
       styleText,
       rules,
-      voiceText,
-      OUTPUT_SIZE,
     });
 
     const bucket = getStorage().bucket();
-    const objectPath = `users/${uid}/drafts/_bg/${brandId}/${key}.png`;
+    const objectPath = `users/${uid}/drafts/${draftId}/bg/${key}.png`;
     const fileRef = bucket.file(objectPath);
 
-    // 既存があれば再利用（課金ゼロ）
     const [exists] = await fileRef.exists();
     if (exists) {
       const [meta] = await fileRef.getMetadata().catch(() => [null as any]);
-      const existingToken =
-        meta?.metadata?.firebaseStorageDownloadTokens ||
-        meta?.metadata?.firebaseStorageDownloadToken ||
-        "";
-
       const token =
-        typeof existingToken === "string" && existingToken
-          ? existingToken.split(",")[0].trim()
-          : crypto.randomUUID();
-
-      if (!existingToken) {
-        await fileRef.setMetadata({
-          metadata: { firebaseStorageDownloadTokens: token },
-          contentType: meta?.contentType || "image/png",
-        });
-      }
+        meta?.metadata?.firebaseStorageDownloadTokens?.split(",")[0] ||
+        crypto.randomUUID();
 
       return NextResponse.json({
         url: buildDownloadUrl(bucket.name, objectPath, token),
         reused: true,
+        draftId,
       });
     }
 
-    // OpenAI（背景生成）
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) throw new Error("OPENAI_API_KEY missing");
+
     const image = await fetchAsImage(referenceImageUrl);
 
     const fd = new FormData();
     fd.append("model", "gpt-image-1");
     fd.append("prompt", prompt);
-    fd.append("size", OUTPUT_SIZE); // ★絶対固定
+    fd.append("size", OUTPUT_SIZE);
     fd.append("image", image);
 
     const r = await fetch("https://api.openai.com/v1/images/edits", {
@@ -195,12 +171,11 @@ export async function POST(req: Request) {
     if (!r.ok) throw new Error(j?.error?.message || "openai image edit error");
 
     const b64 = j?.data?.[0]?.b64_json;
-    if (typeof b64 !== "string" || !b64) throw new Error("no image returned");
+    if (!b64) throw new Error("no image returned");
 
     const buf = Buffer.from(b64, "base64");
-
-    // Storage保存（token付き）
     const token = crypto.randomUUID();
+
     await fileRef.save(buf, {
       contentType: "image/png",
       resumable: false,
@@ -211,6 +186,8 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       url: buildDownloadUrl(bucket.name, objectPath, token),
+      reused: false,
+      draftId,
     });
   } catch (e: any) {
     console.error(e);

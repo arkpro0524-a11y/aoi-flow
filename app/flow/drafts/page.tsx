@@ -17,7 +17,7 @@ import { auth, db } from "@/firebase";
 import { useToast } from "@/components/ToastProvider";
 
 type Brand = "vento" | "riva";
-type Phase = "draft" | "ready" | "posted";
+type Phase = "draft"; // ← draft のみ
 
 type DraftRow = {
   id: string;
@@ -62,11 +62,13 @@ export default function DraftsPage() {
       setRows([]);
       return;
     }
+
     (async () => {
       try {
         const qy = query(
           collection(db, "drafts"),
           where("userId", "==", uid),
+          where("phase", "==", "draft"), // ✅ 計画C：draft のみ
           orderBy("updatedAt", "desc"),
           limit(100)
         );
@@ -76,18 +78,12 @@ export default function DraftsPage() {
         const list: DraftRow[] = snap.docs.map((docu) => {
           const data = docu.data() as DocumentData;
           const brand: Brand = data.brand === "riva" ? "riva" : "vento";
-          const phase: Phase =
-            data.phase === "ready"
-              ? "ready"
-              : data.phase === "posted"
-              ? "posted"
-              : "draft";
 
           return {
             id: docu.id,
             userId: uid,
             brand,
-            phase,
+            phase: "draft",
             vision: typeof data.vision === "string" ? data.vision : "",
             caption_final:
               typeof data.caption_final === "string" ? data.caption_final : "",
@@ -187,6 +183,9 @@ export default function DraftsPage() {
           <div style={{ fontSize: HEADER_TITLE_PX, fontWeight: 900 }}>
             下書き一覧
           </div>
+          <div className="text-sm text-white/60 mt-1">
+            DRAFT のみ表示：{rows.length} 件
+          </div>
         </div>
 
         <div className="overflow-y-auto space-y-3" style={{ padding: PAGE_PAD }}>
@@ -227,7 +226,6 @@ export default function DraftsPage() {
                         }}
                       >
                         {d.imageUrl ? (
-                          // eslint-disable-next-line @next/next/no-img-element
                           <img
                             src={d.imageUrl}
                             alt="thumb"
@@ -282,7 +280,6 @@ export default function DraftsPage() {
                         style={{ padding: THUMB_PAD }}
                       >
                         {d.imageUrl ? (
-                          // eslint-disable-next-line @next/next/no-img-element
                           <img
                             src={d.imageUrl}
                             alt="thumb"
