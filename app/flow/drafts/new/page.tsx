@@ -600,7 +600,7 @@ async function applyTopRecommendation(arg: any) {
   const top = recommended[0];
 
   // ✅ non-ai → 商品動画へ寄せて、非AI人格を自動選択
-  if (top?.engine === "non-ai") {
+  if (top?.engine === "nonai") {
     setVideoTab("product");
     setNonAiPreset(
       {
@@ -897,8 +897,10 @@ const [bgImageUrl, setBgImageUrl] = useState<string | null>(null);
           const id = typeof x?.id === "string" ? x.id : "";
           if (!id) return null;
 
-          const engine: "non-ai" | "runway" =
-            String(x?.engine).toLowerCase() === "runway" ? "runway" : "non-ai";
+const engine: "nonai" | "runway" =
+  String(x?.engine).toLowerCase() === "runway"
+    ? "runway"
+    : "nonai";
 
           const mc = x?.motionCharacter ?? null;
 
@@ -2383,16 +2385,6 @@ const templateItems: { id: UiTemplate; label: string }[] = [
   { id: "static", label: "静止（動きなし）" },
 ];
 
-const VIDEO_SIZE_OPTIONS: {
-  id: UiVideoSize;
-  label: string;
-  sub: string;
-}[] = [
-  { id: "720x1280", label: "縦（Instagram / TikTok）", sub: "おすすめ" },
-  { id: "960x960", label: "正方形（Instagram投稿）", sub: "おすすめ" },
-  { id: "1280x720", label: "横（YouTube / Web）", sub: "おすすめ" },
-];
-
 function ratioFromVideoSize(size: UiVideoSize): string {
   if (size === "720x1280") return "720:1280";
   if (size === "960x960") return "960:960";
@@ -3302,8 +3294,9 @@ return (
                   <Chip>
                     内部表示：画像=OpenAI / 背景=OpenAI / 合成=Sharp / 動画=Runway
                     {` ｜状態：元=${d.baseImageUrl ? "✓" : "—"} / 背景=${bgDisplayUrl ? "✓" : "—"} / 合成=${
-                      d.aiImageUrl ? "✓" : "—"
-                    } / 動画=${d.videoUrl ? "✓" : "—"}`}
+  d.aiImageUrl ? "✓" : "—"
+} / 商品動画=${d.nonAiVideoUrl ? "✓" : "—"} / CM=${(d as any)?.cmVideo?.url ? "✓" : "—"}
+`}
                   </Chip>
                 ) : null}
               </div>
@@ -3976,7 +3969,18 @@ return (
     saveDraft={saveDraft}
     busy={busy}
     showMsg={showMsg}
-    initial={(d as any)?.cmApplied ?? {}}
+    initial={{
+      philosophy: d.vision ?? "",
+      keywordsText: d.keywordsText ?? "",
+      purpose: (d as any)?.purpose ?? "",
+      worldSpecText: (d as any)?.cmApplied?.worldSpecText ?? "",
+      cmVideo: (d as any)?.cmVideo ?? undefined,
+
+      // 旧互換（存在すれば）
+      runwayTaskId: (d as any)?.cmApplied?.runwayTaskId,
+      runwayStatus: (d as any)?.cmApplied?.runwayStatus,
+      runwayVideoUrl: (d as any)?.cmApplied?.runwayVideoUrl,
+    }}
   />
 ) : null}
   </div>
