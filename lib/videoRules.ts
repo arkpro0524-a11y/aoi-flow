@@ -1,24 +1,32 @@
 // /lib/videoRules.ts
 
-import { videoButtons, getVideoButtonById } from "@/lib/videoButtons";
+import { getVideoButtonById } from "@/lib/videoButtons";
 import type { MotionCharacter } from "@/lib/types/draft";
 
-/* ========================= */
+/* =========================
+   現在の設計：
+   - videoButtons は nonai 専用
+   - runway は別構造（cmVideo）
+   よって isRunway は常に false
+========================= */
 
-export function isRunway(id?: string) {
-  const b = getVideoButtonById(id);
-  return b?.engine === "runway";
+export function isRunway(_id?: string) {
+  return false;
 }
 
 export function canUseMotion(id?: string) {
   return !!getVideoButtonById(id);
 }
 
-export function clampMotionToRange(id: string, motion: MotionCharacter): MotionCharacter {
+export function clampMotionToRange(
+  id: string,
+  motion: MotionCharacter
+): MotionCharacter {
   const b = getVideoButtonById(id);
   if (!b) return motion;
 
-  const clamp = <T>(val: T, list: T[]) => (list.includes(val) ? val : list[0]);
+  const clamp = <T>(val: T, list: T[]) =>
+    list.includes(val) ? val : list[0];
 
   return {
     tempo: clamp(motion.tempo, b.motionRange.tempo),
@@ -29,10 +37,7 @@ export function clampMotionToRange(id: string, motion: MotionCharacter): MotionC
   };
 }
 
-export function enforceRunwayLimit(ids: string[], max = 2) {
-  const runway = ids.filter((id) => isRunway(id));
-  if (runway.length <= max) {
-    return { ok: true, selectedIds: ids };
-  }
-  return { ok: false, selectedIds: ids.slice(0, max) };
+export function enforceRunwayLimit(ids: string[], _max = 2) {
+  // runwayは存在しないのでそのまま返す
+  return { ok: true, selectedIds: ids };
 }

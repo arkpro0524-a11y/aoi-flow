@@ -25,7 +25,7 @@ type Input = {
 
 type Pick = {
   id: string;
-  engine: VideoEngine;
+  engine: VideoEngine; // "nonai" | "runway"
   motionCharacter: MotionCharacter;
   reason: string;
 };
@@ -42,20 +42,27 @@ function enforceRules(raw: Pick[]): Pick[] {
     }))
     .filter((p) => byId.has(p.id));
 
-  const fixed = normalized.map((p) => {
+  const fixed: Pick[] = normalized.map((p) => {
     const b = byId.get(p.id)!;
+
     return {
       ...p,
-      engine: b.engine,
+      // ✅ 型を明示的に VideoEngine に広げる
+      engine: b.engine as VideoEngine,
     };
   });
 
+  // ✅ 将来 runway が混ざっても安全
   const nonAi = fixed.filter((p) => p.engine === "nonai");
-  const runway = fixed.filter((p) => p.engine === "runway").slice(0, 2);
+
+  const runway = fixed
+    .filter((p) => p.engine === "runway")
+    .slice(0, 2);
 
   const merged = [...nonAi, ...runway];
 
   const exist = new Set(merged.map((m) => m.id));
+
   const nonAiPool = videoButtons.filter((b) => b.engine === "nonai");
 
   for (const b of nonAiPool) {
@@ -64,7 +71,7 @@ function enforceRules(raw: Pick[]): Pick[] {
 
     merged.push({
       id: b.id,
-      engine: b.engine,
+      engine: b.engine as VideoEngine,
       motionCharacter: b.defaultMotion,
       reason: "静かで破綻しにくい基本表現",
     });
@@ -81,7 +88,7 @@ function safeDefault(): Pick[] {
     .slice(0, 3)
     .map((b) => ({
       id: b.id,
-      engine: b.engine,
+      engine: b.engine as VideoEngine,
       motionCharacter: b.defaultMotion,
       reason: "情報不足のため安全側を選択",
     }));
