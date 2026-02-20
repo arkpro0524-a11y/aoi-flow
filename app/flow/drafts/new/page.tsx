@@ -2572,7 +2572,7 @@ async function generateBackgroundImage(referenceImageUrl: string): Promise<strin
     const ensuredDraftId = draftId ?? (await saveDraft());
     if (!ensuredDraftId) throw new Error("failed to create draft");
 
-    // ✅ 崩壊防止の「硬い制約」：どのsceneでも必ず入れる
+    // ✅ 崩壊防止の「硬い制約」
     const hardConstraints = [
       "商品（前景）の形状・輪郭・取手・木目・ロゴ・色は絶対に変えない",
       "手・人物・指・腕は絶対に入れない",
@@ -2581,8 +2581,41 @@ async function generateBackgroundImage(referenceImageUrl: string): Promise<strin
       "背景に文字・透かし・テキストを入れない",
     ];
 
-    // ✅ sceneごとの「指示」：生活感は背景のみで作る
-    const sceneHints: Record<BgScene, string> = {
+    // ✅ まずAIに「売り方→scene/bgPrompt」を決めさせる（ここが本丸）
+    // - 失敗しても落とさず、従来の bgScene/sceneHint にフォールバックする
+    let decidedScene: string = "";
+    let decidedBgPrompt: string = "";
+    let decidedWhy: string = "";
+    let decidedAngle: string = "";
+
+    try {
+      const recRes = await fetch("/api/recommend-scene", {
+        method: "POST",
+        headers: { "content-type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          brandId: dRef.current.brand,
+          vision,
+          keywords: splitKeywords(dRef.current.keywordsText),
+          productImageUrl: referenceImageUrl,
+        }),
+      });
+
+      const recJson = await recRes.json().catch(() => ({}));
+      if (recRes.ok) {
+        decidedScene = String(recJson?.scene ?? "").trim();
+        decidedBgPrompt = String(recJson?.bgPrompt ?? "").trim();
+        decidedWhy = String(recJson?.why ?? "").trim();
+        decidedAngle = String(recJson?.angle ?? "").trim();
+
+        // 任意：UIに出したければ showMsg / state に入れてOK（ここでは静かに）
+        // if (decidedAngle || decidedWhy) showMsg(`推奨: ${decidedAngle}（${decidedWhy}）`);
+      }
+    } catch {
+      // フォールバック（何もしない）
+    }
+
+    // ✅ 従来の sceneHint（フォールバック用）
+    const sceneHints: Record<string, string> = {
       studio: "無地またはミニマルな撮影背景。商品が主役。影は薄く。",
       lifestyle:
         "生活空間の雰囲気。玄関棚/リビング壁際/書斎の一角の“空気感”。小物を置かず光と影で示す。",
@@ -2592,19 +2625,25 @@ async function generateBackgroundImage(referenceImageUrl: string): Promise<strin
         "質感が伝わる背景（素材に合う壁・床）。近接寄りの雰囲気。ノイズや過度な加工は禁止。",
     };
 
+    // ✅ sceneは「AIが決めたもの」を最優先。無ければUIの bgScene。無ければ studio。
+    const finalScene = (decidedScene || (typeof bgScene === "string" ? bgScene : "") || "studio").trim();
+    const finalSceneHint = sceneHints[finalScene] ?? sceneHints["studio"];
+
     const body = {
       brandId: dRef.current.brand,
       vision,
       keywords: splitKeywords(dRef.current.keywordsText),
 
-      // ✅ サイズはlibの正（UiVideoSize）に合わせる。undefined混入防止
+      // ✅ UIのsizeは generate-bg 側では無視されるが、将来の互換用に正規化して送る
       size: normalizeVideoSize(dRef.current.videoSize ?? "720x1280"),
 
       referenceImageUrl,
 
-      // ✅ 追加：scene + hard constraints（サーバが未対応でも無害）
-      scene: bgScene,
-      sceneHint: sceneHints[bgScene],
+      // ✅ ここが差分：AIが決めた bgPrompt/scene をそのまま渡す
+      scene: finalScene,
+      sceneHint: finalSceneHint,
+      bgPrompt: decidedBgPrompt || undefined,
+
       hardConstraints,
 
       // ✅ 下書き隔離
@@ -2626,7 +2665,7 @@ async function generateBackgroundImage(referenceImageUrl: string): Promise<strin
     const url = typeof j?.url === "string" ? j.url : "";
     if (!url) throw new Error("no bg url");
 
-    // ✅ 生成できたら同期で履歴更新（2枚反映の本命）
+    // ✅ 生成できたら同期で履歴更新
     await syncBgImagesFromStorage();
 
     return url;
@@ -2634,7 +2673,6 @@ async function generateBackgroundImage(referenceImageUrl: string): Promise<strin
     setBgBusy(false);
   }
 }
-
 // - この下書きIDのフォルダだけ同期
 // - timeCreated 降順で最大10
 // - 代表(bgImageUrl) も必ず立てる
