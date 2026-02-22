@@ -1,7 +1,16 @@
-// /firebase.ts
+// /firebase.ts（全張り替え）
 import { initializeApp, getApps } from "firebase/app";
-import { getAuth } from "firebase/auth";
-import { initializeFirestore } from "firebase/firestore";
+import {
+  getAuth,
+  setPersistence,
+  browserLocalPersistence,
+  inMemoryPersistence,
+} from "firebase/auth";
+import {
+  initializeFirestore,
+  enableIndexedDbPersistence,
+  CACHE_SIZE_UNLIMITED,
+} from "firebase/firestore";
 import { getStorage } from "firebase/storage";
 
 const firebaseConfig = {
@@ -13,11 +22,39 @@ const firebaseConfig = {
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID!,
 };
 
-// ✅ windowチェック不要
 const app = getApps().length ? getApps()[0] : initializeApp(firebaseConfig);
 
 export const auth = getAuth(app);
+
 export const db = initializeFirestore(app, {
   experimentalForceLongPolling: true,
+  cacheSizeBytes: CACHE_SIZE_UNLIMITED,
 });
+
 export const storage = getStorage(app);
+
+// =========================
+// ✅ ClientBootstrap 用：永続化（Vercel/SSR安全）
+// =========================
+export async function ensureAuthPersistence() {
+  try {
+    if (typeof window === "undefined") return;
+    await setPersistence(auth, browserLocalPersistence);
+  } catch {
+    // Safari/制限環境などはメモリに落とす
+    try {
+      await setPersistence(auth, inMemoryPersistence);
+    } catch {
+      // noop
+    }
+  }
+}
+
+export async function ensureFirestorePersistence() {
+  try {
+    if (typeof window === "undefined") return;
+    await enableIndexedDbPersistence(db);
+  } catch {
+    // multi-tab / private mode 等で落ちるのは仕様、無視
+  }
+}
