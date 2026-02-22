@@ -8,7 +8,7 @@ import {
   signInWithPopup,
   onAuthStateChanged,
 } from "firebase/auth";
-import { auth, ensureAuthPersistence, ensureFirestorePersistence } from "@/firebase";
+import { auth } from "@/firebase";
 
 function GoogleG() {
   return (
@@ -27,9 +27,6 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    ensureAuthPersistence().catch(() => {});
-    ensureFirestorePersistence().catch(() => {});
-
     const unsub = onAuthStateChanged(auth, (u) => {
       if (u) router.replace("/flow/drafts");
     });

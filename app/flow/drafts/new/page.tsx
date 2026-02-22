@@ -22,13 +22,10 @@
  *   → “すでに生成中です” を表示して終了（課金事故防止）
  */
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
-import { onAuthStateChanged } from "firebase/auth";
-import { addDoc, collection, doc, getDoc, serverTimestamp, updateDoc } from "firebase/firestore";
-import { ref, uploadString, getDownloadURL, listAll, getMetadata } from "firebase/storage";
 
-import { auth, db, storage } from "@/firebase";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import ImageUploader from "@/components/upload/ImageUploader";
+import { useRouter, useSearchParams } from "next/navigation";
 
 // ✅ 計画A：非AI動画（選択/生成/保存）UI部品
 import VideoTemplatePicker from "@/components/video/VideoTemplatePicker";
@@ -58,7 +55,9 @@ import VideoPanel from "./VideoPanel";
 
 // ✅ CMパネルは「実体1箇所」に統一（思想違反③の再発防止）
 import BrandCMPanel from "@/components/cm/BrandCMPanel";
-
+import { auth, storage } from "@/firebase";
+import { onAuthStateChanged } from "firebase/auth";
+import { ref, listAll, getDownloadURL, getMetadata } from "firebase/storage";
 
 // =========================
 // 型定義（VideoTemplatePicker の props から正を取る）
@@ -478,34 +477,137 @@ function PhotoSubmissionGuide() {
   );
 }
 
-async function uploadDataUrlToStorage(uid: string, draftId: string, dataUrl: string) {
-  const ext = "png";
-  const path = `users/${uid}/drafts/${draftId}/${Date.now()}.${ext}`;
-  const r = ref(storage, path);
-  await uploadString(r, dataUrl, "data_url");
-  return await getDownloadURL(r);
+// ✅ Storage直叩き禁止：dataUrl も /api/upload/image に逃がす
+// ==============================
+// ✅ 共通：アップロード用 token を1回だけ安全に取る
+// ==============================
+async function getUploadTokenOrThrow(uid: string): Promise<string> {
+  const user = auth.currentUser;
+
+  if (!user) {
+    throw new Error("ログインがありません。再ログインしてください。");
+  }
+
+  if (user.uid !== uid) {
+    throw new Error("ユーザーが一致しません。再ログインしてください。");
+  }
+
+  const token = await user.getIdToken();
+  if (!token) {
+    throw new Error("トークン取得に失敗しました。");
+  }
+
+  return token;
 }
 
-async function uploadImageFileAsJpegToStorage(uid: string, draftId: string, file: File) {
+// ==============================
+// ✅ Upload（とにかく通す版）
+// - ログイン/通行証/uidチェックを一切しない
+// - 必ず /api/upload/image に POST する
+// - 失敗したら必ず throw（無反応禁止）
+// ==============================
+
+// ✅ Storage直叩き禁止：dataUrl も /api/upload/image に逃がす
+async function uploadDataUrlToStorage(_uid: string, draftId: string, dataUrl: string) {
+  if (!draftId) throw new Error("下書きIDがありません（先に保存してください）");
+
+  const m = String(dataUrl || "").match(/^data:(.+?);base64,(.+)$/);
+  if (!m) throw new Error("画像データの形が変です");
+
+  const mime = m[1] || "image/png";
+  const b64 = m[2] || "";
+  const bin = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+  const blob = new Blob([bin], { type: mime });
+
+  const fd = new FormData();
+  fd.append("draftId", draftId);
+  fd.append("file", new File([blob], `dataurl_${Date.now()}.jpg`, { type: mime }));
+
+  // ✅ ここが本丸：必ずPOSTを投げる
+  const res = await fetch("/api/upload/image", {
+    method: "POST",
+    body: fd,
+  });
+
+  const json = await res.json().catch(() => null);
+  if (!res.ok || !json?.ok) {
+    throw new Error(json?.error ?? `upload failed (status ${res.status})`);
+  }
+
+  const url = String(json.url || "").trim();
+  if (!url) throw new Error("アップロードは成功したのにURLが空です");
+  return url;
+}
+
+async function uploadImageFileAsJpegToStorage(_uid: string, draftId: string, file: File) {
+  if (!draftId) throw new Error("下書きIDがありません（先に保存してください）");
+
   const bitmap = await createImageBitmap(file).catch(() => null);
-  if (!bitmap) throw new Error("画像の読み込みに失敗しました（HEIF未対応の可能性）");
+  if (!bitmap) throw new Error("画像が読めません（HEIC/HEIFの可能性）");
 
   const canvas = document.createElement("canvas");
   canvas.width = bitmap.width;
   canvas.height = bitmap.height;
 
   const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("canvas error");
+  if (!ctx) throw new Error("画像を作る場所が作れません");
+
   ctx.drawImage(bitmap, 0, 0);
 
-  const dataUrl = canvas.toDataURL("image/jpeg", 0.92);
+  const jpg: Blob | null = await new Promise((res) => {
+    canvas.toBlob((b) => res(b), "image/jpeg", 0.92);
+  });
+  if (!jpg) throw new Error("JPEG変換に失敗しました");
 
-  const path = `users/${uid}/drafts/${draftId}/${Date.now()}.jpg`;
-  const r = ref(storage, path);
-  await uploadString(r, dataUrl, "data_url");
-  return await getDownloadURL(r);
+  const fd = new FormData();
+  fd.append("draftId", draftId);
+  fd.append("file", new File([jpg], `upload_${Date.now()}.jpg`, { type: "image/jpeg" }));
+
+  // ✅ ここが本丸：必ずPOSTを投げる
+  const res = await fetch("/api/upload/image", {
+    method: "POST",
+    body: fd,
+  });
+
+  const json = await res.json().catch(() => null);
+  if (!res.ok || !json?.ok) {
+    throw new Error(json?.error ?? `upload failed (status ${res.status})`);
+  }
+
+  const url = String(json.url || "").trim();
+  if (!url) throw new Error("アップロードは成功したのにURLが空です");
+  return url;
 }
 
+// ✅ ページ内ユーティリティ：複数画像を「JPEG化→Storage→URL」にして順序維持で返す
+type UploadImagesAsJpegArgs = {
+  uid: string;
+  draftId: string;
+  files: File[];
+};
+
+type UploadImagesAsJpegResult = {
+  urls: string[];
+  baseUrl: string | null;
+  materialUrls: string[];
+};async function uploadImagesAsJpeg(args: UploadImagesAsJpegArgs): Promise<UploadImagesAsJpegResult> {
+  const { uid, draftId, files } = args;
+
+  const list = Array.from(files || []);
+  if (list.length === 0) return { urls: [], baseUrl: null, materialUrls: [] };
+
+  // ✅ 順序維持（先頭=元画像、残り=素材）
+  const urls: string[] = [];
+  for (const f of list) {
+    const u = await uploadImageFileAsJpegToStorage(uid, draftId, f);
+    urls.push(u);
+  }
+
+  const baseUrl = urls[0] ?? null;
+  const materialUrls = urls.slice(1);
+
+  return { urls, baseUrl, materialUrls };
+}
 async function loadImageAsObjectUrl(src: string) {
   try {
     const res = await fetch(src, { method: "GET" });
@@ -549,9 +651,38 @@ function normalizePricing(raw: ConfigResponseLike): PricingTable {
   };
 }
 
+
+
 export default function NewDraftPage() {
-
-
+function commitDraftPatch(patch: Partial<DraftDoc>) {
+  const next = { ...dRef.current, ...patch } as DraftDoc;
+  dRef.current = next; // ✅ ここが本丸：保存前に“最新”へ更新
+  setD(next);
+  return next;
+}
+useEffect(() => {
+  const unsub = onAuthStateChanged(auth, async (user) => {
+    if (user) {
+      setUid(user.uid);
+      const token = await user.getIdToken();
+      setIdToken(token);
+    } else {
+      setUid(null);
+      setIdToken("");
+    }
+  });
+function makePrimary(url: string) {
+  const u = String(url || "").trim();
+  if (!u) return null;
+  return {
+    id: `primary-${Date.now()}`,
+    url: u,
+    createdAt: Date.now(),
+    role: "product" as const,
+  };
+}
+  return () => unsub();
+}, []);
 const PURPOSE_LABEL: Record<ImagePurpose, string> = {
   sales: "売上",
   branding: "世界観",
@@ -646,15 +777,28 @@ const [loadBusy, setLoadBusy] = useState(true);
 
 const [draftId, setDraftId] = useState<string | null>(id ?? null);
 
-// ===========================
-// ✅ stale draftId 対策：常に最新の draftId を参照する
-// ===========================
-const draftIdRef = useRef<string | null>(id ?? null);
-useEffect(() => {
-  draftIdRef.current = draftId;
-}, [draftId]);
+
+// ✅ 右①：元画像候補（背景履歴と同じ発想）
+// - 候補 = 現在の base + 素材(materials)
+// - base は先頭に置く（見つけやすくする）
+
 
 const [d, setD] = useState<DraftDoc>({ ...DEFAULT });
+
+// ✅ ④（合成）が「どの①（baseImageUrl）」から作られたかを記録（事故防止）
+const [compositeFromBaseUrl, setCompositeFromBaseUrl] = useState<string>("");
+
+// ✅ 今の①に対して④が有効か？（①を変えたら古い④を誤用しない）
+const isCompositeFresh = useMemo(() => {
+  const base = String(d.baseImageUrl || "").trim();
+  if (!base) return false;
+  if (!d.aiImageUrl) return false;
+
+  // compositeFromBaseUrl が空＝旧データ互換（表示は許す）
+  if (!compositeFromBaseUrl) return true;
+
+  return compositeFromBaseUrl === base;
+}, [d.baseImageUrl, d.aiImageUrl, compositeFromBaseUrl]);
 
 // ===========================
 // ✅ stale closure 対策：常に最新の d を参照する（必須）
@@ -663,6 +807,28 @@ const dRef = useRef<DraftDoc>({ ...DEFAULT });
 useEffect(() => {
   dRef.current = d;
 }, [d]);
+
+
+const baseCandidates = useMemo(() => {
+  const base = String(d.baseImageUrl || "").trim();
+
+  const mats = Array.isArray(d.images?.materials) ? d.images!.materials : [];
+  const list = [
+    ...(base ? [base] : []),
+    ...mats.map((x) => String(x || "").trim()).filter(Boolean),
+  ];
+
+  // uniqKeepOrder はすでにある前提
+  return uniqKeepOrder(list, 20);
+}, [d.baseImageUrl, d.images?.materials]);
+
+// ===========================
+// ✅ stale draftId 対策：常に最新の draftId を参照する
+// ===========================
+const draftIdRef = useRef<string | null>(id ?? null);
+useEffect(() => {
+  draftIdRef.current = draftId;
+}, [draftId]);
 
 // ===========================
 // TODO(分割): UIから判断/副作用を剥がす
@@ -761,84 +927,114 @@ const [bgImageUrl, setBgImageUrl] = useState<string | null>(null);
   // - 制作者以外は見えない（価格は見せてもOKだが、ここは要件通り“どのAIか”を隠す）
   const OWNER_UID = (process.env.NEXT_PUBLIC_OWNER_UID || "").trim();
   const isOwner = !!uid && !!OWNER_UID && uid === OWNER_UID;
-  // ↑↑ここまで追加↑↑
 
-  // ===========================
-  // ✅ missing functions（この3つが無いとTSが死ぬ）
-  // ===========================
+async function onUploadImageFilesNew(files: File[]) {
+  if (!uid) return;
+  if (!files || files.length === 0) return;
 
-  // 1) 画像アップロード（複数）
-  // - 先頭1枚：baseImageUrl（投稿用の元画像）
-  // - 2枚目以降：d.images.materials に追加（素材）
-  // - Firestore：baseImageUrl と images を保存
-  async function onUploadImageFiles(files: FileList | File[]) {
-    if (!uid) return;
+  if (inFlightRef.current["upload"]) return;
+  inFlightRef.current["upload"] = true;
 
-    const list = Array.from(files || []).filter(Boolean);
-    if (list.length === 0) return;
+  setBusy(true);
+  try {
+    const ensuredDraftId = draftId ?? (await saveDraft());
+    if (!ensuredDraftId) throw new Error("下書きIDが作れませんでした");
 
-    if (inFlightRef.current["upload"]) return;
-    inFlightRef.current["upload"] = true;
-
-    setBusy(true);
-    try {
-      const ensuredDraftId = draftId ?? (await saveDraft());
-      if (!ensuredDraftId) throw new Error("failed to create draft");
-
-      // ✅ 1枚ずつ順にアップロード（順序を崩さない）
-      const uploadedUrls: string[] = [];
-      for (const f of list) {
-        const url = await uploadImageFileAsJpegToStorage(uid, ensuredDraftId, f);
-        if (url) uploadedUrls.push(url);
-      }
-
-      if (uploadedUrls.length === 0) {
-        throw new Error("画像のアップロードに失敗しました");
-      }
-
-      const first = uploadedUrls[0];          // ✅ 先頭を元画像へ
-      const rest = uploadedUrls.slice(1);     // ✅ 残りを素材へ
-
-      // ✅ 現在の materials を取得（重複排除しつつ先頭に追加）
-      const curMaterials = Array.isArray(dRef.current.images?.materials) ? dRef.current.images!.materials : [];
-      const nextMaterials = uniqKeepOrder([...rest, ...curMaterials], 20);
-
-      // ✅ Draft state 更新
-      setD((p: DraftDoc) => ({
-        ...p,
-        baseImageUrl: first ?? p.baseImageUrl,
-        imageSource: "upload",
-        images: {
-          ...(p.images ?? { primary: null, materials: [] }),
-          // primary は「UI上の代表」を持ちたい場合に使えるが、今回は触らない（事故防止）
-          materials: nextMaterials,
-        },
-      }));
-
-      // ✅ 空表示事故防止：元画像が入ったら必ず base に寄せる
-      setPreviewMode("base");
-      setPreviewReason("");
-
-      // ✅ Firestore 保存（base + images）
-      await saveDraft({
-        baseImageUrl: first,
-        imageSource: "upload",
-        phase: "draft",
-        images: {
-          ...(dRef.current.images ?? { primary: null, materials: [] }),
-          materials: nextMaterials,
-        },
-      });
-
-      showMsg(`元画像+素材を保存しました（${uploadedUrls.length}枚 / JPEG変換）`);
-    } catch (e: any) {
-      console.error(e);
-      showMsg(`画像アップロードに失敗しました：${e?.message || "不明"}`);
-    } finally {
-      setBusy(false);
-      inFlightRef.current["upload"] = false;
+    // 1枚ずつアップしてURLを集める（外部関数に依存しない）
+    const urls: string[] = [];
+    for (const f of files) {
+      const url = await uploadImageFileAsJpegToStorage(uid, ensuredDraftId, f);
+      urls.push(url);
     }
+
+const hasBase = !!String(dRef.current.baseImageUrl || "").trim();
+
+const baseUrl = hasBase ? String(dRef.current.baseImageUrl || "").trim() : urls[0];
+const materialUrls = hasBase ? urls : urls.slice(1);
+    if (!baseUrl) throw new Error("アップロード結果が空です");
+
+    const curMaterials = Array.isArray(dRef.current.images?.materials)
+      ? dRef.current.images!.materials
+      : [];
+
+    const nextMaterials = uniqKeepOrder([...materialUrls, ...curMaterials], 20);
+
+commitDraftPatch({
+  baseImageUrl: baseUrl,
+  imageSource: "upload",
+  phase: "draft",
+  images: {
+    ...(dRef.current.images ?? { primary: null, materials: [] }),
+    materials: nextMaterials,
+  },
+});
+
+await saveDraft({
+  baseImageUrl: baseUrl,
+  imageSource: "upload",
+  phase: "draft",
+  images: {
+    ...(dRef.current.images ?? { primary: null, materials: [] }),
+    materials: nextMaterials,
+  },
+});
+    showMsg(`✅ アップロード完了：${urls.length}枚（先頭=元画像 / 残り=素材）`);
+  } catch (e: any) {
+    console.error(e);
+    showMsg(`❌ アップロード失敗：${e?.message || "不明"}`);
+  } finally {
+    setBusy(false);
+    inFlightRef.current["upload"] = false;
   }
+}
+
+async function promoteMaterialToBase(url: string) {
+  if (!uid) return;
+  const u = String(url || "").trim();
+  if (!u) return;
+
+  // すでに元画像なら何もしない（無駄な保存を防ぐ）
+  const currentBase = String(dRef.current.baseImageUrl || "").trim();
+  if (currentBase === u) {
+    showMsg("この画像が現在の元画像です");
+    return;
+  }
+
+  const curMaterials = Array.isArray(dRef.current.images?.materials)
+    ? dRef.current.images!.materials
+    : [];
+
+  // ✅ 入れ替え：選んだuをbaseへ、今のbaseは素材へ回す
+  const nextMaterials = uniqKeepOrder(
+    [
+      ...(currentBase ? [currentBase] : []),
+      ...curMaterials.filter((x) => String(x || "").trim() !== u),
+    ],
+    20
+  );
+
+commitDraftPatch({
+  baseImageUrl: u,
+  imageSource: "upload",
+  phase: "draft",
+  images: {
+    ...(dRef.current.images ?? { primary: null, materials: [] }),
+    materials: nextMaterials,
+  },
+});
+
+await saveDraft({
+  baseImageUrl: u,
+  imageSource: "upload",
+  phase: "draft",
+  images: {
+    ...(dRef.current.images ?? { primary: null, materials: [] }),
+    materials: nextMaterials,
+  },
+} as any);
+  showMsg("✅ 元画像を入れ替えました（①に反映）");
+}
+
   // 2) おすすめ（動画プリセット取得）
   async function fetchRecommendPresets() {
     const key = "recommendPresets";
@@ -922,11 +1118,11 @@ const engine: "nonai" | "runway" =
           return { id, engine, motionCharacter, reason };
         })
         .filter(Boolean) as {
-        id: string;
-        engine: "non-ai" | "runway";
-        motionCharacter: MotionCharacter;
-        reason: string;
-      }[];
+  id: string;
+  engine: "nonai" | "runway";
+  motionCharacter: MotionCharacter;
+  reason: string;
+}[];
 
       if (!normalized.length) {
         setRecommendReason("おすすめがありません（Vision/Keywords/ブランドを見直すか、手動で選んでください）");
@@ -1121,10 +1317,7 @@ async function selectStaticVariant(v: StaticImageVariant) {
     timestamp: Date.now(),
   };
 
-  const nextLogs = [
-    ...(dRef.current.staticImageLogs || []),
-    log,
-  ];
+  const nextLogs = [...(dRef.current.staticImageLogs || []), log];
 
   // ✅ state更新（UI即反映）
   setD((prev) => ({
@@ -1132,6 +1325,8 @@ async function selectStaticVariant(v: StaticImageVariant) {
     staticImageLogs: nextLogs,
     selectedStaticVariantId: v.id,
     selectedStaticPrompt: v.prompt,
+    selectedStaticVariantTitle: v.title, // ✅ 追加
+    // originMetaはここでは触らない（安全）
   }));
 
   try {
@@ -1140,7 +1335,8 @@ async function selectStaticVariant(v: StaticImageVariant) {
       staticImageLogs: nextLogs,
       selectedStaticVariantId: v.id,
       selectedStaticPrompt: v.prompt,
-    });
+      selectedStaticVariantTitle: v.title, // ✅ 追加
+    } as any);
 
     showMsg(`構図 ${v.id} を採用しました`);
   } catch (e: any) {
@@ -1328,15 +1524,22 @@ useEffect(() => {
           return;
         }
 
-        const refDoc = doc(db, "drafts", id);
-        const snap = await getDoc(refDoc);
-        if (!snap.exists()) {
-          setDraftId(null);
-          setD((prev) => ({ ...prev, userId: uid }));
-          return;
-        }
+const token = await auth.currentUser?.getIdToken(true);
+if (!token) throw new Error("no token");
 
-const data = snap.data() as any;
+const r = await fetch("/api/drafts/get", {
+  method: "POST",
+  headers: {
+    "content-type": "application/json",
+    Authorization: `Bearer ${token}`,
+  },
+  body: JSON.stringify({ draftId: id }),
+});
+
+const j = await r.json().catch(() => ({}));
+if (!r.ok || !j?.ok) throw new Error(j?.error || "get draft failed");
+
+const data = (j.data || {}) as any;
 
 // ✅ ③-3) 既存Draftの正規化（移行の本丸）
 const normalized = normalizeDraftImages(data);
@@ -1389,16 +1592,22 @@ if (!baseImageUrl && classifyUrl(imageUrl) === "base") {
         const phase: Phase =
           data.phase === "ready" ? "ready" : data.phase === "posted" ? "posted" : "draft";
 
-        const vision = typeof data.vision === "string" ? data.vision : "";
-        const keywordsText = typeof data.keywordsText === "string" ? data.keywordsText : "";
-        const memo = typeof data.memo === "string" ? data.memo : "";
+const vision = typeof data.vision === "string" ? data.vision : "";
+const keywordsText = typeof data.keywordsText === "string" ? data.keywordsText : "";
+const memo = typeof data.memo === "string" ? data.memo : "";
 
-        const ig =
-          typeof data.ig === "string"
-            ? data.ig
-            : typeof data.caption_final === "string"
-              ? data.caption_final
-              : "";
+const ig =
+  typeof data.ig === "string"
+    ? data.ig
+    : typeof data.caption_final === "string"
+      ? data.caption_final
+      : "";
+
+// ✅ 追加：旧データ互換（title が無い既存ドキュメントも救う）
+const title =
+  (typeof data.title === "string" && data.title.trim())
+    ? data.title.trim()
+    : (memo.trim() || ig.trim() || vision.trim() || "").slice(0, 60);
         const x = typeof data.x === "string" ? data.x : "";
         const ig3 = Array.isArray(data.ig3) ? data.ig3.map(String).slice(0, 3) : [];
 
@@ -1501,13 +1710,13 @@ setD({
   userId: uid,
   brand,
   phase,
+  title,            // ✅ 追加（DraftDoc に title を持たせる前提）
   vision,
   keywordsText,
   memo,
   ig,
   x,
-  ig3,
-  baseImageUrl,
+  ig3,  baseImageUrl,
   aiImageUrl,
   compositeImageUrl,
   imageUrl: typeof data.imageUrl === "string" ? data.imageUrl : undefined,
@@ -1662,6 +1871,8 @@ const displayImageUrl = useMemo(() => {
   }
   return overlayPreviewDataUrl || d.baseImageUrl || "";
 }, [previewMode, overlayPreviewDataUrl, d.aiImageUrl, d.baseImageUrl, d.imageIdeaUrl]);
+
+
 // ✅ 表示する動画URL（非AI専用）
 // 優先：選択中 → 非AIプレビュー → 代表 → 履歴
 const displayVideoUrl = useMemo(() => {
@@ -1930,79 +2141,28 @@ function enqueueSave<T>(job: () => Promise<T>): Promise<T> {
 // ===========================
 
 async function saveDraft(partial?: Partial<DraftDoc>): Promise<string | null> {
-  // ✅ saveDraft を直列化（多重実行で巻き戻らない）
   return enqueueSave(async () => {
-    // ✅ 絶対条件：Auth確定前に Firestore write しない（ルールで弾かれる）
     const u = auth.currentUser;
     if (!u?.uid) {
       showMsg("ログイン確認中です（保存できません）");
       return null;
     }
+    const token = await u.getIdToken(true);
 
-    // ✅ stateのuidより「Authのuid」を正とする（ズレ事故防止）
-    const realUid = u.uid;
-
-    // ✅ base は “実行時” の最新を読む（stale closure防止の本丸）
     const base = dRef.current;
+    const next: DraftDoc = { ...base, ...(partial ?? {}), userId: u.uid };
 
-    // ✅ hasOwnProperty 判定も “実行時” に行う（partial参照はそのままでOK）
-    const includeNonAiVideoUrls = !!partial && Object.prototype.hasOwnProperty.call(partial, "nonAiVideoUrls");
-    const includeBgImageUrls = !!partial && Object.prototype.hasOwnProperty.call(partial, "bgImageUrls");
-
-    // ✅ CM保存：cmVideo（塊）だけ（BrandCMPanel側から来た時だけ書く）
-    const includeCmVideo = !!partial && Object.prototype.hasOwnProperty.call(partial, "cmVideo");
-    const includeCmApplied = !!partial && Object.prototype.hasOwnProperty.call(partial, "cmApplied");
-
-    // ✅ next（stateを正として組む：ただし直列化されるので巻き戻らない）
-    const next: DraftDoc = { ...base, ...(partial ?? {}), userId: realUid };
-
-    // ✅ 代表画像
-    const representativeUrl =
-      (partial && Object.prototype.hasOwnProperty.call(partial, "imageUrl") ? (partial as any).imageUrl : null) ||
-      next.aiImageUrl ||
-      next.baseImageUrl ||
-      next.compositeImageUrl ||
-      null;
-
-    // ==========================================
-    // ✅ Firestore対策：undefined を「完全に排除」
-    // ==========================================
-    function stripUndefinedDeep<T>(input: T): T {
-      const walk = (v: any): any => {
-        if (v === undefined) return undefined;
-        if (v === null) return null;
-
-        if (Array.isArray(v)) {
-          const out: any[] = [];
-          for (const item of v) {
-            const w = walk(item);
-            if (w !== undefined) out.push(w);
-          }
-          return out;
-        }
-
-        if (typeof v === "object") {
-          const out: any = {};
-          for (const [k, val] of Object.entries(v)) {
-            const w = walk(val);
-            if (w !== undefined) out[k] = w;
-          }
-          return out;
-        }
-
-        return v;
-      };
-      return walk(input);
-    }
-
-    // ✅ 配列はここで必ず “順序維持・重複排除”
-    const normalizedBg = uniqKeepOrder(Array.isArray(next.bgImageUrls) ? next.bgImageUrls : [], 10);
-    const normalizedNonAi = uniqKeepOrder(Array.isArray(next.nonAiVideoUrls) ? next.nonAiVideoUrls : [], 10);
+    const title =
+      String(next.memo ?? "").trim() ||
+      String(next.ig ?? "").trim() ||
+      String(next.vision ?? "").trim() ||
+      "";
 
     const payload: any = {
-      userId: realUid,
+      userId: u.uid,
       brand: next.brand,
       phase: next.phase,
+      title: title ? title.slice(0, 60) : "",
       vision: next.vision,
       keywordsText: next.keywordsText,
       memo: next.memo,
@@ -2013,110 +2173,56 @@ async function saveDraft(partial?: Partial<DraftDoc>): Promise<string | null> {
       baseImageUrl: next.baseImageUrl ?? null,
       aiImageUrl: next.aiImageUrl ?? null,
       compositeImageUrl: next.compositeImageUrl ?? null,
-
       imageIdeaUrl: next.imageIdeaUrl ?? null,
       bgImageUrl: next.bgImageUrl ?? null,
 
-      imageUrl: representativeUrl,
-      caption_final: next.ig,
+      imageUrl: next.aiImageUrl || next.baseImageUrl || next.compositeImageUrl || null,
       imageSource: next.imageSource ?? "upload",
 
-      // ✅ 追加：複数素材（永続化）
       images: next.images ?? { primary: null, materials: [] },
-
       textOverlayBySlot: next.textOverlayBySlot ?? null,
 
-      // -------------------------
-      // ✅ product：non-ai（非AIは nonAi* の箱だけ）
-      // -------------------------
       videoSource: next.videoSource ?? null,
       nonAiVideoUrl: next.nonAiVideoUrl ?? null,
       nonAiVideoPreset: next.nonAiVideoPreset ?? null,
 
-      // -------------------------
-      // ✅ CM：cmVideo（塊）だけ（partialに含めた時だけ保存）
-      // -------------------------
-      ...(includeCmVideo ? { cmVideo: (partial as any).cmVideo } : {}),
-      ...(includeCmApplied ? { cmApplied: (partial as any).cmApplied } : {}),
+      originMeta: (next as any).originMeta ?? null,
 
-      updatedAt: serverTimestamp(),
+      // ✅ partialに「含まれてきた時だけ」上書きしたいもの
+      ...(partial && Object.prototype.hasOwnProperty.call(partial, "bgImageUrls") ? { bgImageUrls: (partial as any).bgImageUrls } : {}),
+      ...(partial && Object.prototype.hasOwnProperty.call(partial, "nonAiVideoUrls") ? { nonAiVideoUrls: (partial as any).nonAiVideoUrls } : {}),
+      ...(partial && Object.prototype.hasOwnProperty.call(partial, "cmVideo") ? { cmVideo: (partial as any).cmVideo } : {}),
+      ...(partial && Object.prototype.hasOwnProperty.call(partial, "cmApplied") ? { cmApplied: (partial as any).cmApplied } : {}),
     };
-
-    // ✅ partialで “含めた” 場合だけ配列を更新（事故防止）
-    if (includeBgImageUrls) payload.bgImageUrls = normalizedBg;
-    if (includeNonAiVideoUrls) payload.nonAiVideoUrls = normalizedNonAi;
 
     const currentDraftId = draftIdRef.current;
 
-    // ✅ 既存更新：配列だけは「読み→マージ」で巻き戻り0にする
-    let mergedBg = includeBgImageUrls ? normalizedBg : undefined;
-    let mergedNonAi = includeNonAiVideoUrls ? normalizedNonAi : undefined;
+    const res = await fetch("/api/drafts/save", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ draftId: currentDraftId, patch: payload }),
+    });
 
-    if (currentDraftId && (includeBgImageUrls || includeNonAiVideoUrls)) {
-      try {
-        const snap = await getDoc(doc(db, "drafts", currentDraftId));
-        const cur = (snap.exists() ? (snap.data() as any) : {}) || {};
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok || !j?.ok) throw new Error(j?.error || `save failed (${res.status})`);
 
-        if (includeBgImageUrls) {
-          const remote = Array.isArray(cur.bgImageUrls) ? cur.bgImageUrls : [];
-          mergedBg = uniqKeepOrder([...(normalizedBg ?? []), ...remote], 10);
-          payload.bgImageUrls = mergedBg;
-        }
+    const savedId = String(j.draftId || "").trim();
+    if (!savedId) throw new Error("draftId missing from API response");
 
-        if (includeNonAiVideoUrls) {
-          const remote = Array.isArray(cur.nonAiVideoUrls) ? cur.nonAiVideoUrls : [];
-          mergedNonAi = uniqKeepOrder([...(normalizedNonAi ?? []), ...remote], 10);
-          payload.nonAiVideoUrls = mergedNonAi;
-        }
-      } catch {
-        // 読み失敗しても保存自体は続行（最悪でも writeQueue で同一ページ内は崩れない）
-      }
-    }
-
-    // ✅ 新規作成
     if (!currentDraftId) {
-      payload.createdAt = serverTimestamp();
-
-      // ✅ 新規作成時は初期配列も必ず持つ（復元の主役）
-      payload.bgImageUrls = normalizedBg;
-      payload.nonAiVideoUrls = normalizedNonAi;
-
-      const safePayload = stripUndefinedDeep(payload);
-
-      const refDoc = await addDoc(collection(db, "drafts"), safePayload);
-      draftIdRef.current = refDoc.id;
-      setDraftId(refDoc.id);
-      router.replace(`/flow/drafts/new?id=${encodeURIComponent(refDoc.id)}`);
-
-      const nextState: DraftDoc = {
-        ...next,
-        bgImageUrls: normalizedBg,
-        nonAiVideoUrls: normalizedNonAi,
-      };
-      setD(nextState);
-      return refDoc.id;
+      draftIdRef.current = savedId;
+      setDraftId(savedId);
+      if (!id) router.replace(`/flow/drafts/new?id=${encodeURIComponent(savedId)}`);
     }
 
-    // ✅ 既存更新
-    try {
-      const safePayload = stripUndefinedDeep(payload);
-
-      await updateDoc(doc(db, "drafts", currentDraftId), safePayload);
-
-      const nextState: DraftDoc = {
-        ...next,
-        ...(includeBgImageUrls ? { bgImageUrls: normalizedBg } : {}),
-        ...(includeNonAiVideoUrls ? { nonAiVideoUrls: normalizedNonAi } : {}),
-      };
-      setD(nextState);
-      return currentDraftId;
-    } catch (e: any) {
-      console.error("🔥 saveDraft updateDoc failed:", e);
-      showMsg(`🔥 Firestore保存失敗: ${e?.message || "不明"}`);
-      throw e;
-    }
+    setD(next);
+    return savedId;
   });
 }
+
 async function generateCaptions() {
   if (!uid) return;
 
@@ -2183,14 +2289,35 @@ async function generateCaptions() {
     inFlightRef.current["captions"] = false;
   }
 }
+
+function OriginMetaView({ meta }: { meta: any | undefined }) {
+  if (!meta) {
+    return (
+      <div className="mt-2 text-white/45" style={{ fontSize: 12 }}>
+        生成元：未記録
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-2 text-white/70" style={{ fontSize: 12, lineHeight: 1.6 }}>
+      <div className="font-black text-white/80">生成元</div>
+      <div>・{meta.label}</div>
+      {meta.detail ? <div>・{meta.detail}</div> : null}
+      {meta.usedVision ? <div>・使用Vision：{meta.usedVision}</div> : null}
+      {typeof meta.at === "number" ? <div>・生成時刻：{new Date(meta.at).toLocaleString("ja-JP")}</div> : null}
+    </div>
+  );
+}
+
+
 async function generateAiImage() {
   if (!uid) return;
 
   // -----------------------------
   // ✅ 1. 構図選択があればそれを優先
   // -----------------------------
-  const effectiveVision =
-    (d.selectedStaticPrompt ?? d.vision ?? "").trim();
+  const effectiveVision = (dRef.current.selectedStaticPrompt ?? dRef.current.vision ?? "").trim();
 
   if (!effectiveVision) {
     showMsg("Vision（必須）を入力してください");
@@ -2213,9 +2340,9 @@ async function generateAiImage() {
     // ✅ 2. APIに渡すvisionは統一
     // -----------------------------
     const body = {
-      brandId: d.brand,
+      brandId: dRef.current.brand,
       vision: effectiveVision,
-      keywords: splitKeywords(d.keywordsText),
+      keywords: splitKeywords(dRef.current.keywordsText),
       tone: "",
     };
 
@@ -2231,28 +2358,44 @@ async function generateAiImage() {
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j?.error || "image error");
 
-// ✅ 返り値ゆれ吸収（ここが本丸）
-let outUrl = "";
+    // ✅ 返り値ゆれ吸収（ここが本丸）
+    let outUrl = "";
 
-// 1) URL系（imageUrl / url / outputUrl）
-const urlLike =
-  (typeof j?.imageUrl === "string" && j.imageUrl) ||
-  (typeof j?.url === "string" && j.url) ||
-  (typeof j?.outputUrl === "string" && j.outputUrl) ||
-  "";
+    const urlLike =
+      (typeof j?.imageUrl === "string" && j.imageUrl) ||
+      (typeof j?.url === "string" && j.url) ||
+      (typeof j?.outputUrl === "string" && j.outputUrl) ||
+      "";
 
-if (urlLike && /^https?:\/\//.test(urlLike)) {
-  outUrl = urlLike;
-} else if (typeof j?.dataUrl === "string" && j.dataUrl.startsWith("data:image/")) {
-  outUrl = await uploadDataUrlToStorage(uid, ensuredDraftId, j.dataUrl);
-} else if (typeof j?.b64 === "string" && j.b64) {
-  const dataUrl = `data:image/png;base64,${j.b64}`;
-  outUrl = await uploadDataUrlToStorage(uid, ensuredDraftId, dataUrl);
-} else {
-  throw new Error("生成結果が取得できません（url/imageUrl/outputUrl/dataUrl/b64 が無い）");
-}
+    if (urlLike && /^https?:\/\//.test(urlLike)) {
+      outUrl = urlLike;
+    } else if (typeof j?.dataUrl === "string" && j.dataUrl.startsWith("data:image/")) {
+      outUrl = await uploadDataUrlToStorage(uid, ensuredDraftId, j.dataUrl);
+    } else if (typeof j?.b64 === "string" && j.b64) {
+      const dataUrl = `data:image/png;base64,${j.b64}`;
+      outUrl = await uploadDataUrlToStorage(uid, ensuredDraftId, dataUrl);
+    } else {
+      throw new Error("生成結果が取得できません（url/imageUrl/outputUrl/dataUrl/b64 が無い）");
+    }
 
-const url = outUrl; // 以降は既存のurl変数を使うなら合わせる
+    const url = outUrl;
+
+    // -----------------------------
+    // ✅ 2.5 originMeta（③）
+    // -----------------------------
+    const meta = {
+      kind: "idea_image",
+      label: "③ イメージ画像：左の「イメージ画像を生成」",
+      detail: dRef.current.selectedStaticPrompt
+        ? `静止画最適化AI採用中（案: ${dRef.current.selectedStaticVariantTitle ?? "不明"}）`
+        : "Vision直入力",
+      usedVision: effectiveVision,
+      selectedVariantId: dRef.current.selectedStaticVariantId,
+      selectedVariantTitle: dRef.current.selectedStaticVariantTitle,
+      purpose: String(staticPurpose ?? ""),
+      bgScene: String(bgScene ?? ""),
+      at: Date.now(),
+    } as const;
 
     // -----------------------------
     // ✅ 3. 状態更新
@@ -2260,12 +2403,14 @@ const url = outUrl; // 以降は既存のurl変数を使うなら合わせる
     setD((prev) => ({
       ...prev,
       imageIdeaUrl: url,
+      originMeta: { ...(prev.originMeta ?? {}), idea: meta },
     }));
 
     await saveDraft({
       imageIdeaUrl: url,
       phase: "draft",
-    });
+      originMeta: { ...(dRef.current.originMeta ?? {}), idea: meta },
+    } as any);
 
     // -----------------------------
     // ✅ 4. UI誘導
@@ -2274,7 +2419,6 @@ const url = outUrl; // 以降は既存のurl変数を使うなら合わせる
     setPreviewMode("idea");
     setPreviewReason("イメージ画像を生成しました（③に表示）");
     showMsg("イメージ画像を保存しました（③に表示）");
-
   } catch (e: any) {
     console.error(e);
     showMsg(`画像生成に失敗しました\n\n原因: ${e?.message || "不明"}`);
@@ -2283,7 +2427,6 @@ const url = outUrl; // 以降は既存のurl変数を使うなら合わせる
     inFlightRef.current["image"] = false;
   }
 }
-
 async function saveCompositeAsImageUrl() {
   if (!uid) return;
 
@@ -2412,6 +2555,7 @@ async function replaceBackgroundAndSaveToAiImage() {
       showMsg("先に元画像（アップロード→保存）を作ってください（前景は元画像のみ）");
       return;
     }
+    setCompositeFromBaseUrl(base);
 
     // ---------------------------
     // ① 前景の透過抽出
@@ -2433,7 +2577,6 @@ async function replaceBackgroundAndSaveToAiImage() {
       throw new Error(fgJson?.error || "extract-foreground error");
     }
 
-    // ✅ 返り値ゆれ吸収
     const fg =
       (typeof fgJson?.url === "string" && fgJson.url) ||
       (typeof fgJson?.foregroundUrl === "string" && fgJson.foregroundUrl) ||
@@ -2450,7 +2593,8 @@ async function replaceBackgroundAndSaveToAiImage() {
     const existingBg = (bgImageUrl || d.bgImageUrl || "").trim();
     const bg = existingBg ? existingBg : await generateBackgroundImage(fg);
 
-const ratio = ratioFromVideoSize(normalizeVideoSize(d.videoSize));
+    const ratio = ratioFromVideoSize(normalizeVideoSize(d.videoSize));
+
     // ---------------------------
     // ③ 背景合成
     // ---------------------------
@@ -2476,7 +2620,6 @@ const ratio = ratioFromVideoSize(normalizeVideoSize(d.videoSize));
     // ✅ 返り値ゆれ吸収（ここが本丸）
     let outUrl = "";
 
-    // 1) URL系（imageUrl / url / outputUrl）
     const urlLike =
       (typeof j?.imageUrl === "string" && j.imageUrl) ||
       (typeof j?.url === "string" && j.url) ||
@@ -2494,8 +2637,21 @@ const ratio = ratioFromVideoSize(normalizeVideoSize(d.videoSize));
       throw new Error("合成結果が取得できません（url/imageUrl/outputUrl/dataUrl/b64 が無い）");
     }
 
+    // ✅ ④ originMeta（composite）
+    const meta = {
+      kind: "composite",
+      label: "④ 合成：右の「製品画像＋背景を合成（保存）」",
+      detail: `背景=${String(bg || "").slice(0, 40)}…`,
+      usedVision: dRef.current.selectedStaticPrompt ? dRef.current.selectedStaticPrompt : dRef.current.vision,
+      selectedVariantId: dRef.current.selectedStaticVariantId,
+      selectedVariantTitle: dRef.current.selectedStaticVariantTitle,
+      purpose: String(staticPurpose ?? ""),
+      bgScene: String(bgScene ?? ""),
+      at: Date.now(),
+    } as const;
+
     // ---------------------------
-    // ④ UI state & Firestore 反映（表示事故を0にする）
+    // UI state & Firestore 反映（表示事故を0にする）
     // ---------------------------
     setRightTab("image");
     setBgImageUrl(bg);
@@ -2505,19 +2661,11 @@ const ratio = ratioFromVideoSize(normalizeVideoSize(d.videoSize));
       aiImageUrl: outUrl,
       imageUrl: outUrl,
       imageSource: "ai",
+      bgImageUrl: bg,
+      originMeta: { ...(p.originMeta ?? {}), composite: meta },
     }));
 
-    console.log("AFTER COMPOSITE", {
-      outUrl,
-      bg,
-      hasAiImageUrl: !!outUrl,
-      beforePreviewMode: previewMode,
-    });
-
     setPreviewMode("composite");
-
-    console.log("PREVIEW MODE SET TO COMPOSITE");
-
     setPreviewReason("");
 
     await saveDraft({
@@ -2526,7 +2674,8 @@ const ratio = ratioFromVideoSize(normalizeVideoSize(d.videoSize));
       imageSource: "ai",
       phase: "draft",
       bgImageUrl: bg,
-    });
+      originMeta: { ...(dRef.current.originMeta ?? {}), composite: meta },
+    } as any);
 
     showMsg("✅ 切り抜き＋背景合成 完了（④に表示）");
   } catch (e: any) {
@@ -2537,7 +2686,6 @@ const ratio = ratioFromVideoSize(normalizeVideoSize(d.videoSize));
     inFlightRef.current["replaceBg"] = false;
   }
 }
-
 async function clearBgHistory() {
   if (!uid) return;
   if (!draftId) {
@@ -2582,7 +2730,6 @@ async function generateBackgroundImage(referenceImageUrl: string): Promise<strin
     ];
 
     // ✅ まずAIに「売り方→scene/bgPrompt」を決めさせる（ここが本丸）
-    // - 失敗しても落とさず、従来の bgScene/sceneHint にフォールバックする
     let decidedScene: string = "";
     let decidedBgPrompt: string = "";
     let decidedWhy: string = "";
@@ -2606,26 +2753,18 @@ async function generateBackgroundImage(referenceImageUrl: string): Promise<strin
         decidedBgPrompt = String(recJson?.bgPrompt ?? "").trim();
         decidedWhy = String(recJson?.why ?? "").trim();
         decidedAngle = String(recJson?.angle ?? "").trim();
-
-        // 任意：UIに出したければ showMsg / state に入れてOK（ここでは静かに）
-        // if (decidedAngle || decidedWhy) showMsg(`推奨: ${decidedAngle}（${decidedWhy}）`);
       }
     } catch {
       // フォールバック（何もしない）
     }
 
-    // ✅ 従来の sceneHint（フォールバック用）
     const sceneHints: Record<string, string> = {
       studio: "無地またはミニマルな撮影背景。商品が主役。影は薄く。",
-      lifestyle:
-        "生活空間の雰囲気。玄関棚/リビング壁際/書斎の一角の“空気感”。小物を置かず光と影で示す。",
-      scale:
-        "サイズ感が伝わる文脈（棚上/机上/床置き想定）。ただし小物追加は禁止。空間の奥行きで伝える。",
-      detail:
-        "質感が伝わる背景（素材に合う壁・床）。近接寄りの雰囲気。ノイズや過度な加工は禁止。",
+      lifestyle: "生活空間の雰囲気。玄関棚/リビング壁際/書斎の一角の“空気感”。小物を置かず光と影で示す。",
+      scale: "サイズ感が伝わる文脈（棚上/机上/床置き想定）。ただし小物追加は禁止。空間の奥行きで伝える。",
+      detail: "質感が伝わる背景（素材に合う壁・床）。近接寄りの雰囲気。ノイズや過度な加工は禁止。",
     };
 
-    // ✅ sceneは「AIが決めたもの」を最優先。無ければUIの bgScene。無ければ studio。
     const finalScene = (decidedScene || (typeof bgScene === "string" ? bgScene : "") || "studio").trim();
     const finalSceneHint = sceneHints[finalScene] ?? sceneHints["studio"];
 
@@ -2633,20 +2772,12 @@ async function generateBackgroundImage(referenceImageUrl: string): Promise<strin
       brandId: dRef.current.brand,
       vision,
       keywords: splitKeywords(dRef.current.keywordsText),
-
-      // ✅ UIのsizeは generate-bg 側では無視されるが、将来の互換用に正規化して送る
       size: normalizeVideoSize(dRef.current.videoSize ?? "720x1280"),
-
       referenceImageUrl,
-
-      // ✅ ここが差分：AIが決めた bgPrompt/scene をそのまま渡す
       scene: finalScene,
       sceneHint: finalSceneHint,
       bgPrompt: decidedBgPrompt || undefined,
-
       hardConstraints,
-
-      // ✅ 下書き隔離
       draftId: ensuredDraftId,
     };
 
@@ -2665,6 +2796,34 @@ async function generateBackgroundImage(referenceImageUrl: string): Promise<strin
     const url = typeof j?.url === "string" ? j.url : "";
     if (!url) throw new Error("no bg url");
 
+    // ✅ ② originMeta（bg）
+    const meta = {
+      kind: "bg_only",
+      label: "② 背景のみ：右の「背景画像を生成（背景のみ）」",
+      detail: dRef.current.selectedStaticPrompt
+        ? `静止画最適化AI採用中（案: ${dRef.current.selectedStaticVariantTitle ?? "不明"}）`
+        : "Vision直入力",
+      usedVision: vision,
+      selectedVariantId: dRef.current.selectedStaticVariantId,
+      selectedVariantTitle: dRef.current.selectedStaticVariantTitle,
+      purpose: String(staticPurpose ?? ""),
+      bgScene: String(bgScene ?? ""),
+      at: Date.now(),
+    } as const;
+
+    // ✅ state + Firestore に反映（ここが追加）
+    setD((p) => ({
+      ...p,
+      bgImageUrl: url,
+      originMeta: { ...(p.originMeta ?? {}), bg: meta },
+    }));
+    setBgImageUrl(url);
+
+    await saveDraft({
+      bgImageUrl: url,
+      originMeta: { ...(dRef.current.originMeta ?? {}), bg: meta },
+    } as any);
+
     // ✅ 生成できたら同期で履歴更新
     await syncBgImagesFromStorage();
 
@@ -2672,8 +2831,7 @@ async function generateBackgroundImage(referenceImageUrl: string): Promise<strin
   } finally {
     setBgBusy(false);
   }
-}
-// - この下書きIDのフォルダだけ同期
+}// - この下書きIDのフォルダだけ同期
 // - timeCreated 降順で最大10
 // - 代表(bgImageUrl) も必ず立てる
 // - found / scanFolder / any / head再宣言 などの事故を全部潰す
@@ -2788,6 +2946,100 @@ async function syncBgImagesFromStorage() {
     inFlightRef.current["syncBgs"] = false;
   }
 }
+
+
+
+// ===========================
+// ✅ イメージ画像同期（Storage → Firestore）
+// - bgと完全分離
+// ===========================
+async function syncIdeaImagesFromStorage() {
+  if (!uid) return;
+
+  const ensuredDraftId = draftId ?? (await saveDraft());
+  if (!ensuredDraftId) {
+    showMsg("下書きIDの確定に失敗しました");
+    return;
+  }
+
+  if (inFlightRef.current["syncIdeas"]) return;
+  inFlightRef.current["syncIdeas"] = true;
+
+  setBusy(true);
+  try {
+    const ideaFolder = `users/${uid}/drafts/${ensuredDraftId}/idea`;
+    const folderRef = ref(storage, ideaFolder);
+    const listed = await listAll(folderRef).catch(() => ({ items: [] as any[] }));
+
+    const found: { url: string; t: number }[] = [];
+
+    for (const itemRef of listed.items || []) {
+      const name = String(itemRef.name || "").toLowerCase();
+
+      if (
+        !(
+          name.endsWith(".png") ||
+          name.endsWith(".jpg") ||
+          name.endsWith(".jpeg") ||
+          name.endsWith(".webp")
+        )
+      ) continue;
+
+      try {
+        const meta = await getMetadata(itemRef);
+        const t = meta?.timeCreated ? new Date(meta.timeCreated).getTime() : 0;
+        const url = await getDownloadURL(itemRef);
+        found.push({ url, t });
+      } catch {}
+    }
+
+    if (found.length === 0) {
+      showMsg("イメージ画像が見つかりませんでした");
+      return;
+    }
+
+    const next = found
+      .slice()
+      .sort((a, b) => (b.t ?? 0) - (a.t ?? 0))
+      .map((x) => x.url)
+      .slice(0, 10);
+
+    const head = next[0] ?? undefined;
+
+    setD((prev) => ({
+      ...prev,
+      imageIdeaUrl: head,
+      imageIdeaUrls: next,
+    }));
+
+    await saveDraft({
+      imageIdeaUrl: head,
+      imageIdeaUrls: next,
+    });
+
+    showMsg(`イメージを同期しました：${next.length}件`);
+  } catch (e: any) {
+    console.error(e);
+    showMsg(`同期失敗: ${e?.message || "不明"}`);
+  } finally {
+    setBusy(false);
+    inFlightRef.current["syncIdeas"] = false;
+  }
+}
+function clearIdeaHistory() {
+  setD((prev) => ({
+    ...prev,
+    imageIdeaUrls: [],
+  }));
+
+  void saveDraft({
+    imageIdeaUrls: [],
+  });
+
+  showMsg("イメージ履歴をクリアしました");
+}
+
+
 // ===========================
 // ✅ 非AI専用：動画同期（Storage → Firestore）
 // - Runway領域（/videos）には触れない
@@ -3174,44 +3426,6 @@ return (
             </div>
           ) : null}
 
-          <div className="mt-3 flex flex-wrap gap-2 items-center">
-<label className="inline-flex items-center gap-2">
-  <input
-    type="file"
-    accept="image/*"
-    multiple
-    disabled={!uid || busy}
-    onChange={async (e) => {
-      const files = e.target.files;
-      e.currentTarget.value = "";
-      if (!files || files.length === 0) return;
-      await onUploadImageFiles(files);
-    }}
-  />
-</label>
-            <Btn
-              variant="secondary"
-              disabled={!canGenerate}
-              onClick={generateAiImage}
-              title="AI画像は base を上書きしません（aiImageUrlへ保存）"
-            >
-              イメージ画像を生成（世界観・雰囲気）
-            </Btn>
-
-            <Btn variant="ghost" disabled={!uid || busy} onClick={() => saveDraft()}>
-              保存
-            </Btn>
-          </div>
-
-          <div className="text-white/55 mt-2" style={{ fontSize: UI.FONT.labelPx, lineHeight: 1.5 }}>
-            ※ イメージ画像は、合成や動画の素材には使用されません。
-          </div>
-
-          <div className="text-white/55 mt-2" style={{ fontSize: UI.FONT.labelPx, lineHeight: 1.5 }}>
-            ※ アップロード画像は内部でJPEGに変換して保存します。
-            <br />
-            ※ AI画像は aiImageUrl に保存され、アップロード画像（base）は上書きされません。
-          </div>
 
           <PhotoSubmissionGuide />
 
@@ -3474,6 +3688,66 @@ return (
                         元画像がありません（アップロード→保存）
                       </div>
                     )}
+<div className="mt-3">
+<ImageUploader
+  disabled={!uid || busy}
+  multiple
+  label="① 元画像をアップロード"
+onPick={(files) => {
+  console.log("[UI] picked files:", files.map((f) => `${f.name} ${f.size}`));
+  void (async () => {
+    try {
+      await onUploadImageFilesNew(files);
+      showMsg("アップロード開始しました");
+    } catch (e: any) {
+      console.error("upload failed:", e);
+      showMsg(`アップロード失敗: ${e?.message || "不明"}`);
+    }
+  })();
+}}
+/>
+  <div className="text-white/55 mt-2" style={{ fontSize: 12, lineHeight: 1.5 }}>
+    ※ 画像を選ぶとすぐアップロードが始まります（別のボタンは不要）
+  </div>
+</div>
+                    {/* ✅ 元画像（①）を選ぶ：背景履歴と同じUI */}
+{baseCandidates.length > 1 ? (
+  <div className="mt-2">
+    <div className="text-white/70 font-bold" style={{ fontSize: 12 }}>
+      元画像を選ぶ（タップで①に反映）
+    </div>
+
+    <div className="mt-2 grid grid-cols-4 gap-2">
+      {baseCandidates.map((u) => {
+        const isActive = String(d.baseImageUrl || "").trim() === u;
+
+        return (
+          <button
+            key={u}
+            type="button"
+            disabled={!uid || busy}
+            onClick={() => void promoteMaterialToBase(u)}
+            className={[
+              "rounded-xl border p-1 transition",
+              isActive
+                ? "border-white/70 bg-white/10"
+                : "border-white/15 bg-black/20 hover:bg-white/5",
+              (!uid || busy) ? "opacity-40" : "",
+            ].join(" ")}
+            title={isActive ? "現在の元画像" : "この画像を元画像（①）にする"}
+          >
+            <img
+              src={u}
+              alt="base-candidate"
+              className="w-full rounded-lg"
+              style={{ aspectRatio: "1 / 1", objectFit: "cover" }}
+            />
+          </button>
+        );
+      })}
+    </div>
+  </div>
+) : null}
 
                     {/* 文字編集UI */}
                     <div className="mt-3 rounded-2xl border border-white/10 bg-black/15 p-3">
@@ -3772,36 +4046,110 @@ return (
                   </div>
                 </details>
 
-                {/* ③ イメージ画像（世界観・雰囲気） */}
-                <details className="area3 rounded-2xl border border-white/10 bg-black/20">
-                  <summary className="cursor-pointer select-none p-3">
-                    <div className="text-white/70" style={{ fontSize: 12 }}>
-                      ③ イメージ画像（世界観・雰囲気）
-                    </div>
-                  </summary>
+{/* ③ イメージ画像（世界観・雰囲気） */}
+<details className="area3 rounded-2xl border border-white/10 bg-black/20">
+  <summary className="cursor-pointer select-none p-3">
+    <div className="text-white/70" style={{ fontSize: 12 }}>
+      ③ イメージ画像（世界観・雰囲気）
+    </div>
+  </summary>
 
-                  <div className="p-3 pt-0">
-                    {d.imageIdeaUrl ? (
-                      <img
-                        src={d.imageIdeaUrl}
-                        alt="idea"
-                        className="w-full rounded-xl border border-white/10"
-                        style={{ height: 240, objectFit: "contain", background: "rgba(0,0,0,0.25)" }}
-                      />
-                    ) : (
-                      <div
-                        className="w-full rounded-xl border border-white/10 bg-black/30 flex items-center justify-center text-white/55"
-                        style={{ aspectRatio: "1 / 1", fontSize: 13 }}
-                      >
-                        イメージ画像がありません（左で生成）
-                      </div>
-                    )}
+  <div className="p-3 pt-0">
+    {d.imageIdeaUrl ? (
+      <img
+        src={d.imageIdeaUrl}
+        alt="idea"
+        className="w-full rounded-xl border border-white/10"
+        style={{ height: 240, objectFit: "contain", background: "rgba(0,0,0,0.25)" }}
+      />
+    ) : (
+      <div
+        className="w-full rounded-xl border border-white/10 bg-black/30 flex items-center justify-center text-white/55"
+        style={{ aspectRatio: "1 / 1", fontSize: 13 }}
+      >
+        イメージ画像がありません（ここで生成）
+      </div>
+    )}
 
-                    <div className="text-white/55 mt-2" style={{ fontSize: 12, lineHeight: 1.5 }}>
-                      ※ イメージ画像は、合成や動画の素材には使用されません。
-                    </div>
-                  </div>
-                </details>
+    {/* ✅ ③の中にボタンを移設 */}
+    <div className="mt-3 flex flex-wrap gap-2">
+      <Btn
+        variant="secondary"
+        disabled={!canGenerate}
+        onClick={async () => {
+          try {
+            await generateAiImage();
+            showMsg("イメージ画像を生成しました");
+          } catch (e: any) {
+            console.error("generateAiImage failed:", e);
+            showMsg(`生成失敗: ${e?.message || "不明"}`);
+          }
+        }}
+        title="イメージ画像は合成や動画には使いません（世界観・雰囲気用）"
+      >
+        イメージ画像を生成（世界観・雰囲気）
+      </Btn>
+
+      <Btn
+        variant="secondary"
+        disabled={!uid || busy}
+        onClick={syncIdeaImagesFromStorage}
+      >
+        イメージを同期（Storage→Firestore）
+      </Btn>
+
+      <Btn
+        variant="danger"
+        disabled={!uid || busy || (d.imageIdeaUrls?.length ?? 0) === 0}
+        onClick={clearIdeaHistory}
+        title="この下書きの候補リストだけ消します（Storageの画像は消えません）"
+      >
+        履歴クリア
+      </Btn>
+    </div>
+
+    <div className="text-white/55 mt-2" style={{ fontSize: 12, lineHeight: 1.5 }}>
+      ※ イメージ画像は、合成や動画の素材には使用されません。
+    </div>
+
+    {/* ✅ 背景(②)と同じ感じで履歴表示 */}
+    {(d.imageIdeaUrls?.length ?? 0) > 0 ? (
+      <div className="mt-3">
+        <div className="text-white/70 mb-2" style={{ fontSize: 12 }}>
+          イメージ履歴（クリックで表示｜課金なし）
+        </div>
+
+        <div className="flex flex-col gap-2">
+          {(d.imageIdeaUrls ?? []).slice(0, 6).map((u: string) => (
+            <button
+              key={u}
+              type="button"
+              disabled={!uid || busy}
+              onClick={async () => {
+                setD((p) => ({ ...p, imageIdeaUrl: u }));
+                void saveDraft({ imageIdeaUrl: u });
+              }}
+              className={[
+                "text-left rounded-xl border px-3 py-2 transition",
+                (!uid || busy) ? "opacity-40" : "",
+              ].join(" ")}
+              style={{
+                borderColor: "rgba(255,255,255,0.10)",
+                background: "rgba(0,0,0,0.15)",
+                color: "rgba(255,255,255,0.78)",
+                fontSize: 12,
+              }}
+              title="この画像を③に表示"
+            >
+              {u.slice(0, 60)}
+              {u.length > 60 ? "…" : ""}
+            </button>
+          ))}
+        </div>
+      </div>
+    ) : null}
+  </div>
+</details>
 
                 {/* ④ 合成（動画用・文字なし） */}
                 <details className="area4 rounded-2xl border border-white/10 bg-black/20">
@@ -3812,21 +4160,30 @@ return (
                   </summary>
 
                   <div className="p-3 pt-0">
-                    {(previewMode === "composite" ? displayImageUrl : d.aiImageUrl || "") ? (
-                      <img
-                        src={previewMode === "composite" ? displayImageUrl : d.aiImageUrl || ""}
-                        alt="composite"
-                        className="w-full rounded-xl border border-white/10"
-                        style={{ height: 240, objectFit: "contain", background: "rgba(0,0,0,0.25)" }}
-                      />
-                    ) : (
-                      <div
-                        className="w-full rounded-xl border border-white/10 bg-black/30 flex items-center justify-center text-white/55"
-                        style={{ aspectRatio: "1 / 1", fontSize: 13 }}
-                      >
-                        合成画像がありません（製品画像＋背景を合成）
-                      </div>
-                    )}
+                   {!d.aiImageUrl ? (
+  <div
+    className="w-full rounded-xl border border-white/10 bg-black/30 flex items-center justify-center text-white/55"
+    style={{ aspectRatio: "1 / 1", fontSize: 13, textAlign: "center", padding: 10 }}
+  >
+    合成画像がありません（製品画像＋背景を合成）
+  </div>
+) : isCompositeFresh ? (
+  <img
+    src={previewMode === "composite" ? displayImageUrl : d.aiImageUrl || ""}
+    alt="composite"
+    className="w-full rounded-xl border border-white/10"
+    style={{ height: 240, objectFit: "contain", background: "rgba(0,0,0,0.25)" }}
+  />
+) : (
+  <div
+    className="w-full rounded-xl border border-white/10 bg-black/30 flex items-center justify-center text-white/55"
+    style={{ aspectRatio: "1 / 1", fontSize: 13, textAlign: "center", padding: 10 }}
+  >
+    ④は古い①から作られています。
+    <br />
+    「製品画像＋背景を合成（保存）」で再生成してください。
+  </div>
+)}
 
                     <div className="text-white/55 mt-2" style={{ fontSize: 12, lineHeight: 1.5 }}>
                       ※ この画像が「動画」に使われます（文字なし）。

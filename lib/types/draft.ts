@@ -1,6 +1,12 @@
-// /lib/types/draft.ts
+// =========================
+// UI Video Size
+// =========================
 
 export type UiVideoSize = "720x1280" | "1280x720" | "960x960";
+
+// =========================
+// Draft Image
+// =========================
 
 export type DraftImage = {
   id: string;
@@ -94,17 +100,54 @@ export type DraftImages = {
 };
 
 // =========================
+// ✅ NEW: 生成元メタ（追跡用）
+// =========================
+
+export type ImageOriginKind =
+  | "base_upload"
+  | "idea_image"
+  | "bg_only"
+  | "composite"
+  | "static_variant_selected";
+
+export type ImageOriginMeta = {
+  kind: ImageOriginKind;
+
+  // UIに出す短い説明
+  label: string;
+
+  // 任意の補足
+  detail?: string;
+
+  // 実際にAPIへ渡したvision
+  usedVision?: string;
+
+  // 静止画最適化AI関連
+  selectedVariantId?: string;
+  selectedVariantTitle?: string;
+
+  // sales / branding など
+  purpose?: string;
+
+  // living / studio など
+  bgScene?: string;
+
+  // 生成時刻
+  at?: number;
+};
+
+// =========================
 // ✅ NEW: productVideo / cmVideo（A案の本体）
 // =========================
 
 export type ProductVideo = {
   source: "nonai";
-  url: string | null; // 代表
-  urls: string[]; // 履歴
-  preset: NonAiVideoPreset | null; // 人格（non-aiのみ）
+  url: string | null;
+  urls: string[];
+  preset: NonAiVideoPreset | null;
 
-  burnedUrl: string | null; // 焼き込み 代表
-  burnedUrls: string[]; // 焼き込み履歴
+  burnedUrl: string | null;
+  burnedUrls: string[];
 };
 
 export type CmVideoStatus = "idle" | "queued" | "running" | "done" | "error";
@@ -120,8 +163,8 @@ export type CmVideo = {
   provider: "runway";
   taskId: string | null;
   status: CmVideoStatus;
-  url: string | null; // 代表
-  urls: string[]; // 履歴
+  url: string | null;
+  urls: string[];
   persona: CmVideoPersona | null;
 };
 
@@ -135,6 +178,12 @@ export type DraftDoc = {
   brand: "vento" | "riva";
   phase: "draft" | "ready" | "posted";
 
+  // ✅ 一覧用タイトル
+  title?: string;
+
+  // =========================
+  // brand/context（recommendation 用）
+  // =========================
   vision: string;
   keywordsText: string;
   memo?: string;
@@ -143,21 +192,23 @@ export type DraftDoc = {
   x: string;
   ig3: string[];
 
-  // 🔥 recommendation
   voice?: string;
   ban?: string;
   must?: string;
   purpose?: string;
   platform?: string;
 
-  // 🔥 video button
+  // UI選択（動画ボタン）
   videoButtonId?: string;
 
-  // ---------- image ----------
+  // =========================
+  // image
+  // =========================
   baseImageUrl?: string;
   aiImageUrl?: string;
   compositeImageUrl?: string;
   imageIdeaUrl?: string;
+  imageIdeaUrls?: string[];
 
   imageUrl?: string;
   imageSource?: "upload" | "ai" | "composite";
@@ -165,8 +216,10 @@ export type DraftDoc = {
   imagePurpose?: ImagePurpose;
   staticImageVariants?: StaticImageVariant[];
   staticImageLogs?: StaticImageLog[];
+
   selectedStaticVariantId?: string;
   selectedStaticPrompt?: string;
+  selectedStaticVariantTitle?: string;
 
   images?: DraftImages;
   textOverlayBySlot?: TextOverlayBySlot;
@@ -174,18 +227,21 @@ export type DraftDoc = {
   bgImageUrl?: string;
   bgImageUrls?: string[];
 
-  // =========================
-  // ✅ A案：完全分離
-  // =========================
-  productVideo?: ProductVideo; // non-ai 専用
-  cmVideo?: CmVideo; // runway 専用
+  originMeta?: {
+    idea?: ImageOriginMeta;
+    bg?: ImageOriginMeta;
+    composite?: ImageOriginMeta;
+  };
 
   // =========================
-  // ⚠️ 旧フィールド（互換用 / 近いうち削除）
-  // ※ STEP F で完全削除する
+  // A案：完全分離
   // =========================
+  productVideo?: ProductVideo;
+  cmVideo?: CmVideo;
 
-  // ---------- runway (legacy) ----------
+  // =========================
+  // legacy（互換用）
+  // =========================
   videoUrl?: string;
   videoUrls?: string[];
   videoTaskId?: string;
@@ -205,24 +261,19 @@ export type DraftDoc = {
 
   videoEngine?: VideoEngine;
 
-  // ---------- non-ai (legacy) ----------
   videoSource?: VideoEngine;
   nonAiVideoUrl?: string;
   nonAiVideoUrls?: string[];
   nonAiVideoPreset?: NonAiVideoPreset;
 
-  // ---------- burn (legacy) ----------
   videoBurnedUrl?: string;
   videoBurnedAt?: any;
   videoTextOverlay?: any;
 
-  // ---------- misc ----------
   createdAt?: any;
   updatedAt?: any;
 
   motion?: MotionCharacter;
 
-  // ---------- legacy: CM panel old key ----------
-  // 以前は cmApplied に保存していた名残（読むだけ用）
   cmApplied?: any;
 };
