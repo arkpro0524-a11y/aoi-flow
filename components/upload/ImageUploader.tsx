@@ -1,5 +1,4 @@
 // /components/upload/ImageUploader.tsx
-// /components/upload/ImageUploader.tsx
 "use client";
 
 import React, { useRef } from "react";

@@ -1,4 +1,4 @@
-// /lib/storage/uploadImages.ts
+// lib/storage/uploadImages.ts
 "use client";
 
 import { auth } from "@/firebase";
@@ -37,8 +37,7 @@ async function toJpegBlob(file: File, quality = 0.92): Promise<Blob> {
 
 /**
  * ✅ “確実に通す”ルート：API経由アップロード
- * - Storage直叩き（uploadBytes/getDownloadURL）をやめる
- * - /api/upload/image が Admin SDK で保存して signedUrl を返す
+ * - /api/upload/image が Admin SDK で保存して { url } を返す（※ signedUrlではない）
  */
 export async function uploadImagesAsJpeg(args: {
   uid: string;
@@ -68,9 +67,7 @@ export async function uploadImagesAsJpeg(args: {
     const jpg = await toJpegBlob(f, 0.92);
 
     const fd = new FormData();
-    // ✅ サーバー側は File を受けたいので、File化して渡す（Blobでも動くが堅めに）
     fd.append("file", new File([jpg], `upload_${i}.jpg`, { type: "image/jpeg" }));
-    // 任意：サーバー側で保存先を draft に寄せたいなら追加で渡す（route.ts側で使う）
     fd.append("draftId", draftId);
 
     const res = await fetch("/api/upload/image", {
@@ -84,12 +81,11 @@ export async function uploadImagesAsJpeg(args: {
     const json = await res.json().catch(() => null);
 
     if (!res.ok || !json?.ok) {
-      // サーバーからの理由をそのまま出す
       throw new Error(json?.error ?? `upload failed (status ${res.status})`);
     }
 
-    // signedUrl を表示URLとして使う（期限はサーバー側設定）
-    urls.push(json.signedUrl as string);
+    // ✅ FIX: signedUrl → url
+    urls.push(String(json.url || "").trim());
   }
 
   const baseUrl = urls[0] ?? null;
