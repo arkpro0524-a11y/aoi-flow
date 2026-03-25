@@ -1,22 +1,43 @@
-//app/cutout/page.tsx
+// /app/cutout/page.tsx
 "use client";
 
 import { useState } from "react";
 
 export default function CutoutPage() {
   const [url, setUrl] = useState<string | null>(null);
+  const [msg, setMsg] = useState("");
 
   const handleFile = async (file: File) => {
-    const fd = new FormData();
-    fd.append("file", file);
+    setMsg("送信中...");
+    setUrl(null);
 
-    const res = await fetch("/api/cutout", {
-      method: "POST",
-      body: fd,
-    });
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
 
-    const blob = await res.blob();
-    setUrl(URL.createObjectURL(blob));
+      const res = await fetch("/api/cutout", {
+        method: "POST",
+        body: fd,
+      });
+
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        throw new Error(text || `status ${res.status}`);
+      }
+
+      const isFallback = res.headers.get("X-Cutout-Fallback") === "true";
+      const blob = await res.blob();
+
+      setUrl(URL.createObjectURL(blob));
+      setMsg(
+        isFallback
+          ? "cutoutサーバー未接続のため、透過ではなくPNG変換で返しました"
+          : "透過画像を取得しました"
+      );
+    } catch (e: any) {
+      console.error(e);
+      setMsg(`失敗: ${e?.message || "不明"}`);
+    }
   };
 
   return (
@@ -28,15 +49,19 @@ export default function CutoutPage() {
         accept="image/*"
         onChange={(e) => {
           const f = e.target.files?.[0];
-          if (f) handleFile(f);
+          if (f) void handleFile(f);
         }}
       />
 
-      {url && (
+      {msg ? (
+        <div style={{ marginTop: 16, fontSize: 14, opacity: 0.85 }}>{msg}</div>
+      ) : null}
+
+      {url ? (
         <div style={{ marginTop: 20 }}>
-          <img src={url} style={{ maxWidth: 400 }} />
+          <img src={url} alt="cutout result" style={{ maxWidth: 400 }} />
         </div>
-      )}
+      ) : null}
     </div>
   );
 }
