@@ -216,8 +216,16 @@ async function uploadDataUrlToStorage(_uid: string, draftId: string, dataUrl: st
   fd.append("draftId", draftId);
   fd.append("file", new File([blob], `dataurl_${Date.now()}.png`, { type: mime }));
 
+  const token = await auth.currentUser?.getIdToken(true);
+  if (!token) {
+    throw new Error("ログイン情報が取得できません");
+  }
+
   const res = await fetch("/api/upload/image", {
     method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
     body: fd,
   });
 
@@ -271,8 +279,16 @@ async function uploadImageFileAsJpegToStorage(_uid: string, draftId: string, fil
   fd.append("draftId", draftId);
   fd.append("file", new File([jpg], `upload_${Date.now()}.jpg`, { type: "image/jpeg" }));
 
+  const token = await auth.currentUser?.getIdToken(true);
+  if (!token) {
+    throw new Error("ログイン情報が取得できません");
+  }
+
   const res = await fetch("/api/upload/image", {
     method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
     body: fd,
   });
 
@@ -321,8 +337,16 @@ async function uploadPngBlobToStorage(_uid: string, draftId: string, blob: Blob)
   fd.append("draftId", draftId);
   fd.append("file", new File([blob], `cutout_${Date.now()}.png`, { type: "image/png" }));
 
+  const token = await auth.currentUser?.getIdToken(true);
+  if (!token) {
+    throw new Error("ログイン情報が取得できません");
+  }
+
   const res = await fetch("/api/upload/image", {
     method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
     body: fd,
   });
 
