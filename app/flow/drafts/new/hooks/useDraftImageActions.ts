@@ -1409,31 +1409,43 @@ return {
       let baseUrl = hasBase ? String(dRef.current.baseImageUrl || "").trim() : "";
       const uploadedMaterialUrls: string[] = [];
 
-      if (!hasBase) {
-        const first = list[0];
-        if (!first) {
-          throw new Error("画像がありません");
-        }
+if (!hasBase) {
+  const first = list[0];
+  if (!first) {
+    throw new Error("画像がありません");
+  }
 
-        const pngBlob = await cutoutToPngBlob(first);
-        baseUrl = await uploadPngBlobToStorage(uid, ensuredDraftId, pngBlob);
+  const firstType = String(first.type || "").toLowerCase();
+  const firstName = String(first.name || "").toLowerCase();
+  const isHeic =
+    firstType.includes("image/heic") ||
+    firstType.includes("image/heif") ||
+    firstName.endsWith(".heic") ||
+    firstName.endsWith(".heif");
 
-        if (!baseUrl) {
-          throw new Error("透過アップロード結果が空です");
-        }
+  if (isHeic) {
+    baseUrl = await uploadImageFileAsJpegToStorage(uid, ensuredDraftId, first);
+  } else {
+    const pngBlob = await cutoutToPngBlob(first);
+    baseUrl = await uploadPngBlobToStorage(uid, ensuredDraftId, pngBlob);
+  }
 
-        const rest = list.slice(1);
+  if (!baseUrl) {
+    throw new Error("元画像アップロード結果が空です");
+  }
 
-        for (const f of rest) {
-          const url = await uploadImageFileAsJpegToStorage(uid, ensuredDraftId, f);
-          uploadedMaterialUrls.push(url);
-        }
-      } else {
-        for (const f of list) {
-          const url = await uploadImageFileAsJpegToStorage(uid, ensuredDraftId, f);
-          uploadedMaterialUrls.push(url);
-        }
-      }
+  const rest = list.slice(1);
+
+  for (const f of rest) {
+    const url = await uploadImageFileAsJpegToStorage(uid, ensuredDraftId, f);
+    uploadedMaterialUrls.push(url);
+  }
+} else {
+  for (const f of list) {
+    const url = await uploadImageFileAsJpegToStorage(uid, ensuredDraftId, f);
+    uploadedMaterialUrls.push(url);
+  }
+}
 
       const curMaterials = normalizeMaterialImages(dRef.current.images?.materials);
       const nextMaterials = buildMaterialImagesFromUrls(uploadedMaterialUrls, curMaterials);
