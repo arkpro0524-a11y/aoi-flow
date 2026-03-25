@@ -1,4 +1,4 @@
-//app/flow/drafts/new/components/BackgroundPanel.tsx
+// /app/flow/drafts/new/components/BackgroundPanel.tsx
 "use client";
 
 import React, { useMemo, useState } from "react";
@@ -21,6 +21,15 @@ import { Btn } from "../ui";
  *   3. recommended[].url
  *   4. recommended[].imageUrl
  * - これで API 側が旧形式でも新形式でも UI が落ちないようにする
+ *
+ * 今回の追加修正
+ * - 「商品/背景合成」タブにもテンプレ背景おすすめ情報を表示する
+ * - 背景選択タブで取得したおすすめ情報を、そのまま合成タブでも使う
+ * - これにより、最終判断の場で
+ *   - おすすめ理由
+ *   - 候補比較
+ *   - 選択中状態
+ *   を確認できる
  *
  * 既存の重要仕様
  * - template:
@@ -505,6 +514,15 @@ export default function BackgroundPanel({
     return Array.from(new Set(raw.map((u) => String(u || "").trim()).filter(Boolean)));
   }, [d.bgImageUrls]);
 
+  /**
+   * 合成タブで表示する「今の背景がおすすめ何位か」を出す
+   */
+  const currentTemplateRecommendIndex = useMemo(() => {
+    const current = String(d.templateBgUrl || "").trim();
+    if (!current) return -1;
+    return templateRecommended.findIndex((item) => item.url === current);
+  }, [d.templateBgUrl, templateRecommended]);
+
   const productStyle: React.CSSProperties = {
     position: "absolute",
     width: `${previewProductWidthPercent}%`,
@@ -581,11 +599,7 @@ export default function BackgroundPanel({
 
       const result = await fetchTemplateRecommendations();
 
-      const topReason = String(
-        result?.topReason ||
-          result?.picked?.reason ||
-          ""
-      ).trim();
+      const topReason = String(result?.topReason || result?.picked?.reason || "").trim();
 
       const recommended = Array.isArray(result?.recommended)
         ? result.recommended
@@ -1288,6 +1302,96 @@ export default function BackgroundPanel({
               </div>
             </div>
 
+            {/* テンプレ背景モードの時は、合成タブにもおすすめ情報を出す */}
+            {isTemplateMode && (templateRecommendTopReason || templateRecommended.length > 0) ? (
+              <div className="mt-3 rounded-2xl border border-white/10 bg-black/15 p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-white/85 font-bold" style={{ fontSize: 12 }}>
+                    テンプレ背景おすすめ
+                  </div>
+
+                  {currentTemplateRecommendIndex >= 0 ? (
+                    <SmallBadge
+                      active
+                      label={`おすすめ ${currentTemplateRecommendIndex + 1}位`}
+                    />
+                  ) : (
+                    <SmallBadge active={false} label="候補比較中" />
+                  )}
+                </div>
+
+                {templateRecommendTopReason ? (
+                  <div
+                    className="mt-2 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-white/72"
+                    style={{ fontSize: 12, lineHeight: 1.6 }}
+                  >
+                    {templateRecommendTopReason}
+                  </div>
+                ) : null}
+
+                {currentTemplateRecommendIndex >= 0 &&
+                templateRecommended[currentTemplateRecommendIndex] ? (
+                  <div
+                    className="mt-2 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-white/68"
+                    style={{ fontSize: 12, lineHeight: 1.6 }}
+                  >
+                    現在の背景：
+                    おすすめ {currentTemplateRecommendIndex + 1}
+                    {typeof templateRecommended[currentTemplateRecommendIndex]?.score === "number"
+                      ? ` / score ${templateRecommended[currentTemplateRecommendIndex]?.score}`
+                      : ""}
+                    {" / "}
+                    {templateRecommended[currentTemplateRecommendIndex]?.reason || "相性が高い背景です"}
+                  </div>
+                ) : null}
+
+                {templateRecommended.length > 0 ? (
+                  <div className="mt-3 flex flex-col gap-2">
+                    {templateRecommended.slice(0, 3).map((item, index) => {
+                      const isCurrent = String(d.templateBgUrl || "").trim() === item.url;
+
+                      return (
+                        <button
+                          key={`${item.url}-composite-${index}`}
+                          type="button"
+                          onClick={() => void handleSelectTemplateBackground(item.url)}
+                          className="rounded-xl border px-3 py-3 text-left transition hover:bg-white/5"
+                          style={{
+                            borderColor: isCurrent
+                              ? "rgba(255,255,255,0.34)"
+                              : "rgba(255,255,255,0.10)",
+                            background: isCurrent
+                              ? "rgba(255,255,255,0.06)"
+                              : "rgba(0,0,0,0.15)",
+                            color: "rgba(255,255,255,0.82)",
+                          }}
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="font-semibold" style={{ fontSize: 12 }}>
+                              候補 {index + 1}
+                              {typeof item.score === "number" ? ` / score ${item.score}` : ""}
+                            </div>
+
+                            <SmallBadge
+                              active={isCurrent}
+                              label={isCurrent ? "選択中" : "切替可能"}
+                            />
+                          </div>
+
+                          <div
+                            className="mt-2 text-white/62"
+                            style={{ fontSize: 12, lineHeight: 1.6 }}
+                          >
+                            {item.reason || "商品との相性が高い背景です"}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
             <div className="mt-3 flex flex-wrap gap-2">
               {isTemplateMode ? (
                 <Btn
@@ -1386,6 +1490,53 @@ export default function BackgroundPanel({
                 />
               </div>
             </div>
+
+            <div className="mt-3 rounded-2xl border border-white/10 bg-black/15 p-3">
+  <div className="text-white/72 mb-2" style={{ fontSize: 12 }}>
+    構図プリセット（売れる配置）
+  </div>
+
+  <div className="flex flex-wrap gap-2">
+    <ModeButton
+      active={false}
+      label="SELL（売る）"
+      disabled={busy || activePhotoMode === "ai_bg"}
+      onClick={() => {
+        setPlacementScale(82);
+        setPlacementX(50);
+        setPlacementY(64);
+      }}
+    />
+
+    <ModeButton
+      active={false}
+      label="BRAND（世界観）"
+      disabled={busy || activePhotoMode === "ai_bg"}
+      onClick={() => {
+        setPlacementScale(65);
+        setPlacementX(50);
+        setPlacementY(55);
+      }}
+    />
+
+    <ModeButton
+      active={false}
+      label="SMALL（余白）"
+      disabled={busy || activePhotoMode === "ai_bg"}
+      onClick={() => {
+        setPlacementScale(48);
+        setPlacementX(50);
+        setPlacementY(52);
+      }}
+    />
+  </div>
+
+  <div className="mt-2 text-white/50" style={{ fontSize: 11, lineHeight: 1.6 }}>
+    ワンクリックで売れやすい配置に自動調整されます。
+  </div>
+</div>
+
+
 
             <div className="mt-3 grid grid-cols-1 gap-3">
               <SliderRow

@@ -10,7 +10,10 @@ import type {
 } from "@/lib/types/draft";
 import type { AppRouterInstance } from "next/dist/shared/lib/app-router-context.shared-runtime";
 
-import useDraftEditorState, { getOverlaySourceUrlForPreview } from "./useDraftEditorState";
+import useDraftEditorState, {
+  getOverlaySourceUrlForPreview,
+  type TemplateBgRecommendItem,
+} from "./useDraftEditorState";
 import useDraftPersistence from "./useDraftPersistence";
 import useDraftImageActions from "./useDraftImageActions";
 import useDraftCaptionActions from "./useDraftCaptionActions";
@@ -32,6 +35,9 @@ import useDraftPricing from "./useDraftPricing";
  * - BackgroundPanel が期待している返り値
  *   { topReason, recommended: [{ url, reason, score }] }
  *   にここで正規化する
+ * - template 背景専用 state を state.d から local state に同期する
+ * - ブランド切替時に template 背景専用 local state も初期化する
+ * - TypeScript が null を混ぜないように型ガードを入れる
  */
 
 type Params = {
@@ -50,6 +56,15 @@ type TemplateRecommendResultForPanel = {
     score?: number;
   }>;
 };
+
+/**
+ * null を確実に除去するための型ガード
+ */
+function isTemplateBgRecommendItem(
+  value: TemplateBgRecommendItem | null
+): value is TemplateBgRecommendItem {
+  return value !== null;
+}
 
 export default function useDraftEditorController(params: Params) {
   const { id, router } = params;
@@ -123,7 +138,7 @@ export default function useDraftEditorController(params: Params) {
 
     /**
      * 既存 state 一式をまとめて渡す
-     * template 系の optional props もここ経由で受けられるようにしている
+     * template 系の props もここ経由で受けられるようにしている
      */
     ...(state as any),
 
@@ -235,6 +250,14 @@ export default function useDraftEditorController(params: Params) {
     state.setStoryImageUrl(null);
     state.setStoryImageUrls([]);
 
+    /**
+     * template 背景専用 local state も初期化する
+     */
+    state.setTemplateBgUrl(null);
+    state.setTemplateBgUrls([]);
+    state.setTemplateBgRecommend([]);
+    state.setTemplateBgRecommendReason("");
+
     state.setD((prev) => ({
       ...prev,
       brand: "vento",
@@ -246,6 +269,13 @@ export default function useDraftEditorController(params: Params) {
       nonAiVideoUrl: undefined,
       nonAiVideoUrls: [],
       nonAiVideoPreset: undefined,
+
+      templateBgUrl: undefined,
+      templateBgUrls: [],
+      templateBgSelectedId: undefined,
+      templateBgRecommendedIds: [],
+      templateBgRecommendations: [],
+
       useSceneImageUrl: undefined,
       useSceneImageUrls: [],
       imageIdeaUrl: undefined,
@@ -273,6 +303,14 @@ export default function useDraftEditorController(params: Params) {
     state.setStoryImageUrl(null);
     state.setStoryImageUrls([]);
 
+    /**
+     * template 背景専用 local state も初期化する
+     */
+    state.setTemplateBgUrl(null);
+    state.setTemplateBgUrls([]);
+    state.setTemplateBgRecommend([]);
+    state.setTemplateBgRecommendReason("");
+
     state.setD((prev) => ({
       ...prev,
       brand: "riva",
@@ -284,6 +322,13 @@ export default function useDraftEditorController(params: Params) {
       nonAiVideoUrl: undefined,
       nonAiVideoUrls: [],
       nonAiVideoPreset: undefined,
+
+      templateBgUrl: undefined,
+      templateBgUrls: [],
+      templateBgSelectedId: undefined,
+      templateBgRecommendedIds: [],
+      templateBgRecommendations: [],
+
       useSceneImageUrl: undefined,
       useSceneImageUrls: [],
       imageIdeaUrl: undefined,
@@ -393,18 +438,12 @@ export default function useDraftEditorController(params: Params) {
   }
 
   /**
-   * 今回の修正ポイント
+   * UI 側は fetchTemplateRecommendations という名前と
+   * { topReason, recommended: [{ url, reason, score }] }
+   * を期待している。
    *
-   * useDraftImageActions 側の実装名は
-   * - recommendTemplateBackgrounds
-   *
-   * しかし UI 側は
-   * - fetchTemplateRecommendations
-   * という名前と
-   * - { topReason, recommended: [{ url, reason, score }] }
-   * という返り値を期待している
-   *
-   * そのため controller で名前ズレと返り値ズレを吸収する
+   * actions 側の recommendTemplateBackgrounds の返り値を
+   * ここで正規化して返す。
    */
   async function fetchTemplateRecommendations(): Promise<TemplateRecommendResultForPanel> {
     const rawList =
@@ -415,7 +454,7 @@ export default function useDraftEditorController(params: Params) {
     const safeList = Array.isArray(rawList) ? rawList : [];
 
     const normalizedRecommended = safeList
-      .map((item: any) => {
+      .map((item: any): TemplateBgRecommendItem | null => {
         const url = String(item?.url ?? item?.imageUrl ?? "").trim();
         const reason = String(item?.reason ?? "").trim();
         const score =
@@ -431,17 +470,21 @@ export default function useDraftEditorController(params: Params) {
           score,
         };
       })
-      .filter(Boolean) as Array<{
-      url: string;
-      reason: string;
-      score?: number;
-    }>;
+      .filter(isTemplateBgRecommendItem);
+
+    const topReason =
+      normalizedRecommended.length > 0
+        ? String(normalizedRecommended[0]?.reason || "").trim()
+        : "";
+
+    /**
+     * controller 正規化後の結果を local state にも反映
+     */
+    state.setTemplateBgRecommend(normalizedRecommended);
+    state.setTemplateBgRecommendReason(topReason);
 
     return {
-      topReason:
-        normalizedRecommended.length > 0
-          ? String(normalizedRecommended[0]?.reason || "").trim()
-          : "",
+      topReason,
       recommended: normalizedRecommended,
     };
   }
@@ -580,6 +623,8 @@ export default function useDraftEditorController(params: Params) {
 
   /**
    * Firestore 読込 → ローカル state 同期
+   *
+   * template 背景専用 state もここで同期する
    */
   useEffect(() => {
     const nextPhotoMode = (state.d.activePhotoMode ?? "ai_bg") as ProductPhotoMode;
@@ -614,6 +659,73 @@ export default function useDraftEditorController(params: Params) {
         );
       }
     }
+
+    /**
+     * テンプレ背景URL
+     */
+    const nextTemplateBgUrl =
+      typeof state.d.templateBgUrl === "string" ? state.d.templateBgUrl.trim() : "";
+
+    state.setTemplateBgUrl((prev) =>
+      (prev ?? "") !== nextTemplateBgUrl ? nextTemplateBgUrl || null : prev
+    );
+
+    /**
+     * テンプレ背景URL一覧
+     */
+    const nextTemplateBgUrls = Array.isArray(state.d.templateBgUrls)
+      ? state.d.templateBgUrls.map((u) => String(u ?? "").trim()).filter(Boolean)
+      : [];
+
+    state.setTemplateBgUrls((prev) =>
+      JSON.stringify(prev) !== JSON.stringify(nextTemplateBgUrls) ? nextTemplateBgUrls : prev
+    );
+
+    /**
+     * テンプレ背景おすすめ一覧
+     * - 保存先は templateBgRecommendations を優先
+     * - 旧/混在形式でも url / imageUrl のどちらでも吸収
+     */
+    const nextTemplateBgRecommend = Array.isArray((state.d as any).templateBgRecommendations)
+      ? ((state.d as any).templateBgRecommendations as any[])
+          .map((item: any): TemplateBgRecommendItem | null => {
+            const url = String(item?.url ?? item?.imageUrl ?? "").trim();
+            const reason = String(item?.reason ?? "").trim();
+            const score =
+              typeof item?.score === "number" && Number.isFinite(item.score)
+                ? item.score
+                : undefined;
+
+            if (!url) return null;
+
+            return {
+              url,
+              reason,
+              score,
+            };
+          })
+          .filter(isTemplateBgRecommendItem)
+      : [];
+
+    state.setTemplateBgRecommend((prev) =>
+      JSON.stringify(prev) !== JSON.stringify(nextTemplateBgRecommend)
+        ? nextTemplateBgRecommend
+        : prev
+    );
+
+    /**
+     * テンプレ背景おすすめ理由
+     * - 保存先が無ければ 1件目理由を採用
+     */
+    const nextTemplateBgRecommendReason = String(
+      (state.d as any).templateBgRecommendReason ||
+        nextTemplateBgRecommend[0]?.reason ||
+        ""
+    ).trim();
+
+    state.setTemplateBgRecommendReason((prev) =>
+      prev !== nextTemplateBgRecommendReason ? nextTemplateBgRecommendReason : prev
+    );
 
     const nextSizeTemplateType = (state.d.sizeTemplateType ?? "simple") as SizeTemplateType;
     state.setSizeTemplateType((prev) =>
@@ -660,6 +772,11 @@ export default function useDraftEditorController(params: Params) {
     placementScale: state.placementScale,
     placementX: state.placementX,
     placementY: state.placementY,
+
+    templateBgUrl: state.templateBgUrl,
+    templateBgUrls: state.templateBgUrls,
+    templateBgRecommend: state.templateBgRecommend,
+    templateBgRecommendReason: state.templateBgRecommendReason,
 
     useSceneImageUrl: state.useSceneImageUrl,
     useSceneImageUrls: state.useSceneImageUrls,
@@ -730,6 +847,11 @@ export default function useDraftEditorController(params: Params) {
     setPlacementScale: state.setPlacementScale,
     setPlacementX: state.setPlacementX,
     setPlacementY: state.setPlacementY,
+
+    setTemplateBgUrl: state.setTemplateBgUrl,
+    setTemplateBgUrls: state.setTemplateBgUrls,
+    setTemplateBgRecommend: state.setTemplateBgRecommend,
+    setTemplateBgRecommendReason: state.setTemplateBgRecommendReason,
 
     setUseSceneImageUrl: state.setUseSceneImageUrl,
     setUseSceneImageUrls: state.setUseSceneImageUrls,
@@ -829,12 +951,6 @@ export default function useDraftEditorController(params: Params) {
     syncIdeaImagesFromStorage: imageActions.syncIdeaImagesFromStorage,
     clearIdeaHistory: imageActions.clearIdeaHistory,
 
-    /**
-     * テンプレ背景系
-     * - generate はそのまま返す
-     * - recommend は controller 側で名前と返り値を吸収した関数を返す
-     * - select はそのまま返す
-     */
     generateTemplateBackground: (imageActions as any).generateTemplateBackground,
     fetchTemplateRecommendations,
     selectTemplateBackground: (imageActions as any).selectTemplateBackground,
