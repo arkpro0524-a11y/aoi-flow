@@ -106,6 +106,44 @@ export default function ImageTextEditor({ value, onChange }: Props) {
         </label>
       </div>
 
+      <div className="grid grid-cols-2 gap-2">
+        <label className="text-xs text-white/80">
+          横位置
+          <input
+            type="number"
+            min={0}
+            max={100}
+            value={v.x}
+            onChange={(e) =>
+              onChange({
+                ...value,
+                ...v,
+                x: Number(e.target.value),
+              })
+            }
+            className="mt-1 w-full rounded-md border border-white/15 bg-black/40 px-2 py-1 text-sm text-white outline-none"
+          />
+        </label>
+
+        <label className="text-xs text-white/80">
+          縦位置
+          <input
+            type="number"
+            min={0}
+            max={100}
+            value={v.y}
+            onChange={(e) =>
+              onChange({
+                ...value,
+                ...v,
+                y: Number(e.target.value),
+              })
+            }
+            className="mt-1 w-full rounded-md border border-white/15 bg-black/40 px-2 py-1 text-sm text-white outline-none"
+          />
+        </label>
+      </div>
+
       <label className="text-xs text-white/80">
         文字色
         <input
@@ -120,6 +158,24 @@ export default function ImageTextEditor({ value, onChange }: Props) {
           }
           className="mt-1 block h-10 w-full rounded-md border border-white/15 bg-black/40 p-1"
         />
+      </label>
+
+      <label className="flex items-center gap-2 text-xs text-white/80">
+        <input
+          type="checkbox"
+          checked={v.background.enabled}
+          onChange={(e) =>
+            onChange({
+              ...value,
+              ...v,
+              background: {
+                ...v.background,
+                enabled: e.target.checked,
+              },
+            })
+          }
+        />
+        文字背景を使う
       </label>
     </div>
   );

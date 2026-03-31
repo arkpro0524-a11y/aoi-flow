@@ -1,4 +1,4 @@
-//app/flow/drafts/new/components/CompositeImagePanel.tsx
+// /app/flow/drafts/new/components/CompositeImagePanel.tsx
 "use client";
 
 import React from "react";
@@ -10,9 +10,10 @@ import React from "react";
  * - 合成画像の表示
  * - 合成が最新かどうかの注意表示
  *
- * ✅ 重要
- * - 元の inline JSX の事故防止文言を落とさない
- * - 「古い①から作られた④」を明確に警告する
+ * ✅ 今回の調整
+ * - 影を「広い黒い楕円」ではなく、もっと薄く自然に見える形へ修正
+ * - 濃すぎる違和感を減らす
+ * - 既存の表示ロジックは変えない
  */
 
 type Props = {
@@ -35,7 +36,7 @@ export default function CompositeImagePanel({
       <div className="p-3 pt-0">
         {!aiImageUrl ? (
           <div
-            className="w-full rounded-xl border border-white/10 bg-black/30 flex items-center justify-center text-white/55"
+            className="flex w-full items-center justify-center rounded-xl border border-white/10 bg-black/30 text-white/55"
             style={{
               aspectRatio: "1 / 1",
               fontSize: 13,
@@ -46,15 +47,42 @@ export default function CompositeImagePanel({
             合成画像がありません（製品画像＋背景を合成）
           </div>
         ) : isCompositeFresh ? (
-          <img
-            src={aiImageUrl || ""}
-            alt="composite"
-            className="w-full rounded-xl border border-white/10"
-            style={{ height: 240, objectFit: "contain", background: "#fff" }}
-          />
+          <div
+            className="flex w-full items-center justify-center rounded-xl border border-white/10"
+            style={{
+              height: 240,
+              background: "#ffffff",
+              overflow: "hidden",
+              padding: 10,
+            }}
+          >
+            <img
+              src={aiImageUrl}
+              alt="composite"
+              className="max-h-full max-w-full"
+              style={{
+                objectFit: "contain",
+
+                /**
+                 * 影をかなり弱めて自然寄りにします
+                 * - 近い影を薄く
+                 * - 遠い影をさらに薄く
+                 * - 前回より黒さと広がりを減らす
+                 */
+                filter:
+                  "drop-shadow(0px 6px 8px rgba(0, 0, 0, 0.10)) drop-shadow(0px 14px 14px rgba(0, 0, 0, 0.06))",
+
+                /**
+                 * 少しだけ下げて接地感を出します
+                 * 前回より弱めます
+                 */
+                transform: "translateY(1px)",
+              }}
+            />
+          </div>
         ) : (
           <div
-            className="w-full rounded-xl border border-white/10 bg-black/30 flex items-center justify-center text-white/55"
+            className="flex w-full items-center justify-center rounded-xl border border-white/10 bg-black/30 text-white/55"
             style={{
               aspectRatio: "1 / 1",
               fontSize: 13,
@@ -69,7 +97,7 @@ export default function CompositeImagePanel({
         )}
 
         <div
-          className="text-white/55 mt-2"
+          className="mt-2 text-white/55"
           style={{ fontSize: 12, lineHeight: 1.5 }}
         >
           ※ この画像が「動画」に使われます（文字なし）。

@@ -24,9 +24,10 @@ import type {
  * - page.tsx から受けた props を各子パネルへ正しく橋渡しする
  *
  * 今回の修正ポイント
+ * - BaseImagePanel に追加した props と型を正しく流す
  * - BackgroundPanel へテンプレ背景用 props を追加で流す
- * - これで「テンプレ背景を生成 / おすすめ取得 / 候補選択」が
- *   実体関数まで届くようにする
+ * - BackgroundPanel へ影UI用 props を追加で流す
+ * - templateBgUrl / templateBgUrls を page.tsx から受けて BackgroundPanel へ橋渡しする
  */
 
 type BgScene = "studio" | "lifestyle" | "scale" | "detail";
@@ -37,12 +38,6 @@ type ProductSize = "large" | "medium" | "small";
 type GroundingType = "floor" | "table" | "hanging" | "wall";
 type SellDirection = "sales" | "branding" | "trust" | "story";
 
-/**
- * BackgroundPanel が期待しているおすすめ返り値の形
- * - url
- * - reason
- * - score
- */
 type TemplateRecommendItemForPanel = {
   url: string;
   reason: string;
@@ -63,7 +58,7 @@ type Props = {
   cutoutReason: string;
 
   overlayPreviewDataUrl: string | null;
-  baseCandidates: any[];
+  baseCandidates: string[];
   currentSlot: ImageSlot;
   formStyle: React.CSSProperties;
   defaultTextOverlay: TextOverlay;
@@ -103,10 +98,10 @@ type Props = {
   onGenerateStaticVariants: () => Promise<void>;
   onSelectStaticVariant: (v: StaticImageVariant) => Promise<void>;
 
-  onUploadImageFilesNew: (files: File[]) => Promise<void>;
-  onCutoutCurrentBaseToReplace: () => Promise<void>;
-  onPromoteMaterialToBase: (url: string) => Promise<void>;
-  onSaveCompositeAsImageUrl: () => Promise<void>;
+  onUploadImageFilesNew: (files: File[]) => Promise<void> | void;
+  onCutoutCurrentBaseToReplace: () => Promise<void> | void;
+  onPromoteMaterialToBase: (url: string) => Promise<void> | void;
+  onSaveCompositeAsImageUrl: () => Promise<void> | void;
   onSaveDraft: () => void | Promise<void>;
 
   onGenerateBackgroundImage: (keyword: string) => Promise<string>;
@@ -119,9 +114,12 @@ type Props = {
   onClearIdeaHistory: () => void;
 
   /**
-   * 今回追加
-   * テンプレ背景関連
+   * テンプレ背景の正式な親state
+   * - page.tsx → ImageTabPanel → BackgroundPanel で橋渡しする
    */
+  templateBgUrl?: string;
+  templateBgUrls?: string[];
+
   generateTemplateBackground?: () => Promise<string | void>;
   fetchTemplateRecommendations?: () => Promise<TemplateRecommendResultForPanel | void>;
   selectTemplateBackground?: (url: string) => Promise<void> | void;
@@ -132,9 +130,6 @@ type Props = {
   saveDraft: (partial?: Partial<DraftDoc>) => Promise<string | null>;
   showMsg: (s: string) => void;
 
-  /**
-   * ④ 合成画像タブ内で使う配置調整 props
-   */
   activePhotoMode: ProductPhotoMode;
   setActivePhotoMode: React.Dispatch<React.SetStateAction<ProductPhotoMode>>;
 
@@ -147,22 +142,36 @@ type Props = {
   placementY: number;
   setPlacementY: React.Dispatch<React.SetStateAction<number>>;
 
+  shadowOpacity: number;
+  setShadowOpacity: React.Dispatch<React.SetStateAction<number>>;
+
+  shadowBlur: number;
+  setShadowBlur: React.Dispatch<React.SetStateAction<number>>;
+
+  shadowScale: number;
+  setShadowScale: React.Dispatch<React.SetStateAction<number>>;
+
+  shadowOffsetX: number;
+  setShadowOffsetX: React.Dispatch<React.SetStateAction<number>>;
+
+  shadowOffsetY: number;
+  setShadowOffsetY: React.Dispatch<React.SetStateAction<number>>;
+
   onSavePlacement: (partial?: {
     scale?: number;
     x?: number;
     y?: number;
+    shadowOpacity?: number;
+    shadowBlur?: number;
+    shadowScale?: number;
+    shadowOffsetX?: number;
+    shadowOffsetY?: number;
     activePhotoMode?: ProductPhotoMode;
   }) => Promise<void> | void;
 
-  /**
-   * ③ サイズテンプレ
-   */
   sizeTemplateType: SizeTemplateType;
   setSizeTemplateType: React.Dispatch<React.SetStateAction<SizeTemplateType>>;
 
-  /**
-   * ⑤ ストーリー
-   */
   storyDisplayUrl: string;
   onGenerateStoryImage: () => Promise<void>;
 };
@@ -227,6 +236,8 @@ export default function ImageTabPanel({
   onSyncIdeaImagesFromStorage,
   onClearIdeaHistory,
 
+  templateBgUrl,
+  templateBgUrls,
   generateTemplateBackground,
   fetchTemplateRecommendations,
   selectTemplateBackground,
@@ -245,6 +256,16 @@ export default function ImageTabPanel({
   setPlacementX,
   placementY,
   setPlacementY,
+  shadowOpacity,
+  setShadowOpacity,
+  shadowBlur,
+  setShadowBlur,
+  shadowScale,
+  setShadowScale,
+  shadowOffsetX,
+  setShadowOffsetX,
+  shadowOffsetY,
+  setShadowOffsetY,
   onSavePlacement,
 
   sizeTemplateType,
@@ -296,14 +317,12 @@ export default function ImageTabPanel({
         uid={uid}
         busy={busy}
         d={d}
+        templateBgUrl={templateBgUrl}
+        templateBgUrls={templateBgUrls}
         generateBackgroundImage={onGenerateBackgroundImage}
         replaceBackgroundAndSaveToAiImage={onReplaceBackgroundAndSaveToAiImage}
         syncBgImagesFromStorage={onSyncBgImagesFromStorage}
         clearBgHistory={onClearBgHistory}
-        /**
-         * 今回追加
-         * テンプレ背景系の処理を BackgroundPanel に流す
-         */
         generateTemplateBackground={generateTemplateBackground}
         fetchTemplateRecommendations={fetchTemplateRecommendations}
         selectTemplateBackground={selectTemplateBackground}
@@ -332,6 +351,16 @@ export default function ImageTabPanel({
         setPlacementX={setPlacementX}
         placementY={placementY}
         setPlacementY={setPlacementY}
+        shadowOpacity={shadowOpacity}
+        setShadowOpacity={setShadowOpacity}
+        shadowBlur={shadowBlur}
+        setShadowBlur={setShadowBlur}
+        shadowScale={shadowScale}
+        setShadowScale={setShadowScale}
+        shadowOffsetX={shadowOffsetX}
+        setShadowOffsetX={setShadowOffsetX}
+        shadowOffsetY={shadowOffsetY}
+        setShadowOffsetY={setShadowOffsetY}
         onSavePlacement={onSavePlacement}
       />
 

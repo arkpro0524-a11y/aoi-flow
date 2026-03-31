@@ -1,4 +1,4 @@
-// /app/flow/drafts/new/hooks/useDraftImageActions.ts
+//app/flow/drafts/new/hooks/useDraftImageActions.ts
 "use client";
 
 import React from "react";
@@ -23,27 +23,19 @@ import {
 /**
  * 画像関連専用 hook
  *
- * 今回の主変更
- * - ① 商品写真の位置/大きさ調整の保存を追加
- * - ② 使用シーン（AI再生成）を正式対応
- * - ③ サイズテンプレ反映を追加
- * - ④ 背景生成 / 合成は既存維持
- * - ⑤ ストーリー（AI再生成）を追加
+ * 今回の責務整理
+ * - テンプレ背景:
+ *   商品を際立たせるための販売背景
+ *   → templateBgUrl / templateBgUrls で管理する
+ *   → bgImageUrl に橋渡ししない
  *
- * 今回の追加（STEP5）
- * - テンプレ背景生成
- * - テンプレ背景おすすめ取得
- * - テンプレ背景選択
- * - テンプレ背景履歴同期
- * - テンプレ背景履歴クリア
+ * - AI背景:
+ *   使用イメージを想起しやすくする背景
+ *   → bgImageUrl / bgImageUrls で管理する
  *
  * 重要
- * - 既存関数は落とさない
- * - 既存の imageIdeaUrl / imageIdeaUrls も互換のため残す
- * - 新しい正式名 useSceneImageUrl / storyImageUrl も同時に保存する
- * - 現行UI互換のため、テンプレ背景を選択した際は templateBgUrl に加えて
- *   bgImageUrl にも同じURLを入れる
- *   （STEP7 で BackgroundPanel 側を正式対応させるまでの橋渡し）
+ * - templateBgUrl と bgImageUrl を混ぜない
+ * - 合成時だけ activePhotoMode を見てどちらを使うか決める
  */
 
 type ProductCategory = "furniture" | "goods" | "apparel" | "small" | "other";
@@ -86,46 +78,38 @@ type Params = {
   groundingType: GroundingType;
   sellDirection: SellDirection;
 
-  /**
-   * ① 商品写真用
-   */
   activePhotoMode: ProductPhotoMode;
   placementScale: number;
   placementX: number;
   placementY: number;
+  shadowOpacity: number;
+  shadowBlur: number;
+  shadowScale: number;
+  shadowOffsetX: number;
+  shadowOffsetY: number;
   setActivePhotoMode: React.Dispatch<React.SetStateAction<ProductPhotoMode>>;
   setPlacementScale: React.Dispatch<React.SetStateAction<number>>;
   setPlacementX: React.Dispatch<React.SetStateAction<number>>;
   setPlacementY: React.Dispatch<React.SetStateAction<number>>;
+  setShadowOpacity: React.Dispatch<React.SetStateAction<number>>;
+  setShadowBlur: React.Dispatch<React.SetStateAction<number>>;
+  setShadowScale: React.Dispatch<React.SetStateAction<number>>;
+  setShadowOffsetX: React.Dispatch<React.SetStateAction<number>>;
+  setShadowOffsetY: React.Dispatch<React.SetStateAction<number>>;
 
-  /**
-   * ③ サイズ用
-   */
   sizeTemplateType: SizeTemplateType;
   setSizeTemplateType: React.Dispatch<React.SetStateAction<SizeTemplateType>>;
 
-  /**
-   * ② 使用シーン用
-   */
   useSceneImageUrl: string | null;
   useSceneImageUrls: string[];
   setUseSceneImageUrl: React.Dispatch<React.SetStateAction<string | null>>;
   setUseSceneImageUrls: React.Dispatch<React.SetStateAction<string[]>>;
 
-  /**
-   * ⑤ ストーリー用
-   */
   storyImageUrl: string | null;
   storyImageUrls: string[];
   setStoryImageUrl: React.Dispatch<React.SetStateAction<string | null>>;
   setStoryImageUrls: React.Dispatch<React.SetStateAction<string[]>>;
 
-  /**
-   * STEP5 テンプレ背景用
-   *
-   * ここは controller 側で ...(state as any) から渡される前提なので optional にしてある。
-   * まだ state 側未実装でも hook が落ちないようにする。
-   */
   templateBgUrl?: string | null;
   templateBgUrls?: string[];
   setTemplateBgUrl?: React.Dispatch<React.SetStateAction<string | null>>;
@@ -150,10 +134,6 @@ type Params = {
   showMsg: (s: string) => void;
 };
 
-/* =========================
- * 小関数
- * ========================= */
-
 function asTrimmedString(v: unknown): string {
   return typeof v === "string" ? v.trim() : "";
 }
@@ -167,13 +147,6 @@ function normalizeTemplateBgCategory(input: unknown): TemplateBgCategory {
   return "studio";
 }
 
-/**
- * 商品条件からテンプレ背景カテゴリをゆるく推定する
- *
- * 目的
- * - generate API に category を渡す時の初期値
- * - recommend が未実行でも最低限使える値を出す
- */
 function inferTemplateCategoryFromProduct(input: {
   productCategory: ProductCategory;
   productSize: ProductSize;
@@ -194,9 +167,6 @@ function inferTemplateCategoryFromProduct(input: {
   return "studio";
 }
 
-/**
- * dataUrl を Storage に保存する
- */
 async function uploadDataUrlToStorage(_uid: string, draftId: string, dataUrl: string) {
   if (!draftId) {
     throw new Error("下書きIDがありません（先に保存してください）");
@@ -243,9 +213,6 @@ async function uploadDataUrlToStorage(_uid: string, draftId: string, dataUrl: st
   return url;
 }
 
-/**
- * 通常画像を JPEG として保存する
- */
 async function uploadImageFileAsJpegToStorage(_uid: string, draftId: string, file: File) {
   if (!draftId) {
     throw new Error("下書きIDがありません（先に保存してください）");
@@ -306,9 +273,6 @@ async function uploadImageFileAsJpegToStorage(_uid: string, draftId: string, fil
   return url;
 }
 
-/**
- * cutout API を使って透過PNGを作る
- */
 async function cutoutToPngBlob(file: File): Promise<Blob> {
   const fd = new FormData();
   fd.append("file", file);
@@ -325,9 +289,6 @@ async function cutoutToPngBlob(file: File): Promise<Blob> {
   return await res.blob();
 }
 
-/**
- * 透過PNG を Storage に保存する
- */
 async function uploadPngBlobToStorage(_uid: string, draftId: string, blob: Blob) {
   if (!draftId) {
     throw new Error("下書きIDがありません（先に保存してください）");
@@ -364,9 +325,6 @@ async function uploadPngBlobToStorage(_uid: string, draftId: string, blob: Blob)
   return url;
 }
 
-/**
- * URL画像を File 化する
- */
 async function fetchUrlAsFile(url: string, filename = "base.jpg"): Promise<File> {
   const res = await fetch(url, { method: "GET" });
   if (!res.ok) {
@@ -380,9 +338,6 @@ async function fetchUrlAsFile(url: string, filename = "base.jpg"): Promise<File>
   return new File([blob], `${filename}.${ext}`, { type });
 }
 
-/**
- * プレビュー表示用に object URL を作る
- */
 async function loadImageAsObjectUrl(src: string) {
   try {
     const res = await fetch(src, { method: "GET" });
@@ -401,9 +356,6 @@ async function loadImageAsObjectUrl(src: string) {
   }
 }
 
-/**
- * materials の旧形式 / 新形式混在を吸収する
- */
 function normalizeMaterialImages(input: unknown): DraftImage[] {
   const list = Array.isArray(input) ? input : [];
   const out: DraftImage[] = [];
@@ -447,9 +399,6 @@ function normalizeMaterialImages(input: unknown): DraftImage[] {
   return out;
 }
 
-/**
- * URL配列から materials を再構成する
- */
 function buildMaterialImagesFromUrls(urls: string[], current: DraftImage[]): DraftImage[] {
   const mergedUrls = uniqKeepOrder(
     [
@@ -483,9 +432,6 @@ function buildMaterialImagesFromUrls(urls: string[], current: DraftImage[]): Dra
   });
 }
 
-/**
- * 商品理解レイヤーの最終値
- */
 function resolveProductUnderstanding(input: {
   productCategory: ProductCategory;
   productSize: ProductSize;
@@ -550,14 +496,6 @@ function resolveProductUnderstanding(input: {
   };
 }
 
-/**
- * サイズテンプレの簡易生成
- *
- * 今回は最小構成として、
- * 既存の元画像から「どの見せ方テンプレを使うか」を保存する。
- * 実画像URLは後段で page / panel 側から固定画像や案内画像を当てられるよう
- * ここでは null でも落ちない形にしている。
- */
 function resolveSizeTemplatePreview(type: SizeTemplateType, baseUrl: string): string {
   if (!baseUrl) return "";
 
@@ -567,10 +505,6 @@ function resolveSizeTemplatePreview(type: SizeTemplateType, baseUrl: string): st
 
   return baseUrl;
 }
-
-/* =========================
- * hook 本体
- * ========================= */
 
 export default function useDraftImageActions(params: Params) {
   const {
@@ -599,10 +533,20 @@ export default function useDraftImageActions(params: Params) {
     placementScale,
     placementX,
     placementY,
+    shadowOpacity,
+    shadowBlur,
+    shadowScale,
+    shadowOffsetX,
+    shadowOffsetY,
     setActivePhotoMode,
     setPlacementScale,
     setPlacementX,
     setPlacementY,
+    setShadowOpacity,
+    setShadowBlur,
+    setShadowScale,
+    setShadowOffsetX,
+    setShadowOffsetY,
 
     sizeTemplateType,
     setSizeTemplateType,
@@ -648,27 +592,39 @@ export default function useDraftImageActions(params: Params) {
     return next;
   }
 
-  /**
-   * ① 商品位置・サイズ調整値を保存する
-   *
-   * 重要
-   * - ここでは「位置と大きさの値」を保存する
-   * - 実際の見た目反映は UI 側キャンバス / プレビューで行う
-   */
   async function saveProductPlacement(partial?: {
     scale?: number;
     x?: number;
     y?: number;
+    shadowOpacity?: number;
+    shadowBlur?: number;
+    shadowScale?: number;
+    shadowOffsetX?: number;
+    shadowOffsetY?: number;
     activePhotoMode?: ProductPhotoMode;
   }) {
     const nextScale = clamp(Number(partial?.scale ?? placementScale ?? 1), 0.4, 2.2);
     const nextX = clamp(Number(partial?.x ?? placementX ?? 0.5), 0, 1);
     const nextY = clamp(Number(partial?.y ?? placementY ?? 0.5), 0, 1);
+    const nextShadowOpacity = clamp(Number(partial?.shadowOpacity ?? shadowOpacity ?? 0.12), 0, 1);
+    const nextShadowBlur = clamp(Number(partial?.shadowBlur ?? shadowBlur ?? 12), 0, 100);
+    const nextShadowScale = clamp(Number(partial?.shadowScale ?? shadowScale ?? 1), 0.5, 2);
+    const nextShadowOffsetX = clamp(Number(partial?.shadowOffsetX ?? shadowOffsetX ?? 0), -1, 1);
+    const nextShadowOffsetY = clamp(
+      Number(partial?.shadowOffsetY ?? shadowOffsetY ?? 0.02),
+      -1,
+      1
+    );
     const nextMode = (partial?.activePhotoMode ?? activePhotoMode ?? "ai_bg") as ProductPhotoMode;
 
     setPlacementScale(nextScale);
     setPlacementX(nextX);
     setPlacementY(nextY);
+    setShadowOpacity(nextShadowOpacity);
+    setShadowBlur(nextShadowBlur);
+    setShadowScale(nextShadowScale);
+    setShadowOffsetX(nextShadowOffsetX);
+    setShadowOffsetY(nextShadowOffsetY);
     setActivePhotoMode(nextMode);
 
     commitDraftPatch({
@@ -677,7 +633,19 @@ export default function useDraftImageActions(params: Params) {
         scale: nextScale,
         x: nextX,
         y: nextY,
+        shadow: {
+          opacity: nextShadowOpacity,
+          blur: nextShadowBlur,
+          scale: nextShadowScale,
+          offsetX: nextShadowOffsetX,
+          offsetY: nextShadowOffsetY,
+        },
       },
+      shadowOpacity: nextShadowOpacity,
+      shadowBlur: nextShadowBlur,
+      shadowScale: nextShadowScale,
+      shadowOffsetX: nextShadowOffsetX,
+      shadowOffsetY: nextShadowOffsetY,
     });
 
     await saveDraft({
@@ -686,18 +654,26 @@ export default function useDraftImageActions(params: Params) {
         scale: nextScale,
         x: nextX,
         y: nextY,
+        shadow: {
+          opacity: nextShadowOpacity,
+          blur: nextShadowBlur,
+          scale: nextShadowScale,
+          offsetX: nextShadowOffsetX,
+          offsetY: nextShadowOffsetY,
+        },
       },
+      shadowOpacity: nextShadowOpacity,
+      shadowBlur: nextShadowBlur,
+      shadowScale: nextShadowScale,
+      shadowOffsetX: nextShadowOffsetX,
+      shadowOffsetY: nextShadowOffsetY,
     } as any);
 
-    showMsg("① 商品写真の位置と大きさを保存しました");
+    showMsg("① 商品写真の位置・大きさ・影を保存しました");
   }
 
-  /**
-   * ③ サイズテンプレを保存する
-   */
   async function applySizeTemplate(type: SizeTemplateType) {
-    const safeType: SizeTemplateType =
-      type === "measure" || type === "compare" ? type : "simple";
+    const safeType: SizeTemplateType = type === "measure" || type === "compare" ? type : "simple";
 
     const baseUrl = String(dRef.current.baseImageUrl || "").trim();
     const previewUrl = resolveSizeTemplatePreview(safeType, baseUrl) || undefined;
@@ -718,13 +694,12 @@ export default function useDraftImageActions(params: Params) {
   }
 
   /**
-   * STEP5
-   * テンプレ背景を選択する
+   * テンプレ背景選択
    *
    * 重要
-   * - 正式保存先は templateBgUrl
-   * - ただし現行UIの preview 互換のため bgImageUrl にも同じURLを入れる
-   * - activePhotoMode は template に寄せる
+   * - templateBgUrl にだけ保存する
+   * - bgImageUrl へ橋渡ししない
+   * - activePhotoMode だけ template に寄せる
    */
   async function selectTemplateBackground(url: string) {
     const nextUrl = String(url || "").trim();
@@ -750,33 +725,23 @@ export default function useDraftImageActions(params: Params) {
       setTemplateBgUrls(nextUrls);
     }
 
-    setBgImageUrl(nextUrl);
     setActivePhotoMode("template");
 
     commitDraftPatch({
       templateBgUrl: nextUrl,
       templateBgUrls: nextUrls,
-      bgImageUrl: nextUrl,
       activePhotoMode: "template",
     });
 
     await saveDraft({
       templateBgUrl: nextUrl,
       templateBgUrls: nextUrls,
-      bgImageUrl: nextUrl,
       activePhotoMode: "template",
     } as any);
 
     showMsg("✅ テンプレ背景を選択しました");
   }
 
-  /**
-   * STEP5
-   * テンプレ背景おすすめ取得
-   *
-   * 返却されたおすすめ一覧は local state に保持する。
-   * ここでは draft へは保存しない。
-   */
   async function fetchTemplateRecommendations() {
     if (!uid) {
       showMsg("ログインしてください");
@@ -838,47 +803,34 @@ export default function useDraftImageActions(params: Params) {
         throw new Error(json?.error || "template recommend error");
       }
 
-/**
- * API → UI 形式に変換
- */
-const rawRecommended = Array.isArray(json?.recommended)
-  ? json.recommended
-  : [];
+      const rawRecommended = Array.isArray(json?.recommended) ? json.recommended : [];
 
-/**
- * UI用に変換
- * imageUrl → url に変換
- */
-const recommended = rawRecommended.map((item: any, index: number) => ({
-  id: String(item?.id || `rec-${index}-${Date.now()}`),
-  url: String(item?.imageUrl || "").trim(),
-  category: normalizeTemplateBgCategory(item?.category),
-  score: Number(item?.score || 0),
-  reason: String(item?.reason || "").trim(),
-  reasons: Array.isArray(item?.reasons) ? item.reasons : [],
-  tags: Array.isArray(item?.tags) ? item.tags : [],
-}));
+      const recommended = rawRecommended
+        .map((item: any, index: number) => ({
+          id: String(item?.id || `rec-${index}-${Date.now()}`),
+          url: String(item?.url || item?.imageUrl || "").trim(),
+          category: normalizeTemplateBgCategory(item?.category),
+          score: Number(item?.score || 0),
+          reason: String(item?.reason || "").trim(),
+          reasons: Array.isArray(item?.reasons) ? item.reasons : [],
+          tags: Array.isArray(item?.tags) ? item.tags : [],
+        }))
+        .filter((item: { url: string }) => item.url);
 
-/**
- * topReason を生成
- */
-const topReason =
-  typeof json?.picked?.reason === "string" && json.picked.reason.trim()
-    ? json.picked.reason.trim()
-    : recommended.length > 0
-      ? String(recommended[0]?.reason || "").trim()
-      : "";
+      const topReason =
+        typeof json?.picked?.reason === "string" && json.picked.reason.trim()
+          ? json.picked.reason.trim()
+          : recommended.length > 0
+            ? String(recommended[0]?.reason || "").trim()
+            : "";
 
-/**
- * state反映
- */
-if (typeof setTemplateBgRecommend === "function") {
-  setTemplateBgRecommend(recommended as any);
-}
+      if (typeof setTemplateBgRecommend === "function") {
+        setTemplateBgRecommend(recommended as any);
+      }
 
-if (typeof setTemplateBgRecommendReason === "function") {
-  setTemplateBgRecommendReason(topReason);
-}
+      if (typeof setTemplateBgRecommendReason === "function") {
+        setTemplateBgRecommendReason(topReason);
+      }
 
       if (recommended.length > 0) {
         showMsg("✅ テンプレ背景のおすすめを更新しました");
@@ -886,11 +838,10 @@ if (typeof setTemplateBgRecommendReason === "function") {
         showMsg("テンプレ背景のおすすめ候補がありませんでした");
       }
 
-return {
-  recommended,
-  topReason,
-};
-
+      return {
+        recommended,
+        topReason,
+      };
     } catch (e: any) {
       console.error(e);
       showMsg(`テンプレ背景おすすめ取得に失敗：${e?.message || "不明"}`);
@@ -902,13 +853,12 @@ return {
   }
 
   /**
-   * STEP5
    * テンプレ背景生成
    *
    * 重要
-   * - product cutout / vision / keywords / 商品理解条件をまとめてAPIへ渡す
-   * - 生成後は templateBgUrl / templateBgUrls に保存
-   * - 現行UI互換のため bgImageUrl にも反映
+   * - baseImageUrl は送るが、サーバ側では画像参照生成には使わない設計へ変更済み
+   * - templateBgUrl 系だけ更新する
+   * - bgImageUrl へ橋渡ししない
    */
   async function generateTemplateBackground(category?: TemplateBgCategory): Promise<string> {
     if (!uid) {
@@ -925,10 +875,7 @@ return {
       throw new Error("元画像がありません。先に商品画像を用意してください。");
     }
 
-    const effectiveVision = (
-      ((dRef.current as any).selectedStaticPrompt ?? dRef.current.vision) ||
-      ""
-    ).trim();
+    const effectiveVision = (((dRef.current as any).selectedStaticPrompt ?? dRef.current.vision) || "").trim();
 
     if (!effectiveVision) {
       throw new Error("Vision（必須）が空です");
@@ -953,9 +900,7 @@ return {
           String(dRef.current.brandId ?? "").trim() ||
           "vento") as "vento" | "riva";
 
-      const keywordsText = String(
-        (dRef.current as any).keywordsText ?? dRef.current.keywords ?? ""
-      );
+      const keywordsText = String((dRef.current as any).keywordsText ?? dRef.current.keywords ?? "");
 
       const resolvedCategory = normalizeTemplateBgCategory(
         category ??
@@ -1015,24 +960,17 @@ return {
         setTemplateBgUrls(nextUrls);
       }
 
-      /**
-       * 現行 BackgroundPanel は bgDisplayUrl 側を見ているため、
-       * 互換のために bgImageUrl にも流す
-       */
-      setBgImageUrl(outUrl);
       setActivePhotoMode("template");
 
       commitDraftPatch({
         templateBgUrl: outUrl,
         templateBgUrls: nextUrls,
-        bgImageUrl: outUrl,
         activePhotoMode: "template",
       });
 
       await saveDraft({
         templateBgUrl: outUrl,
         templateBgUrls: nextUrls,
-        bgImageUrl: outUrl,
         activePhotoMode: "template",
       } as any);
 
@@ -1044,10 +982,6 @@ return {
     }
   }
 
-  /**
-   * STEP5
-   * テンプレ背景履歴クリア
-   */
   async function clearTemplateBgHistory() {
     if (!uid) return;
 
@@ -1086,15 +1020,6 @@ return {
     showMsg("テンプレ背景履歴をクリアしました");
   }
 
-  /**
-   * STEP5
-   * テンプレ背景を Storage から同期する
-   *
-   * 前提
-   * - STEP3 の generate API が
-   *   users/{uid}/drafts/{draftId}/template-bg
-   *   以下へ保存している前提
-   */
   async function syncTemplateBgImagesFromStorage() {
     if (!uid) return;
 
@@ -1180,11 +1105,6 @@ return {
         setTemplateBgUrls(nextUrls);
       }
 
-      /**
-       * 現行UI互換
-       */
-      setBgImageUrl(head ?? null);
-
       setD((prev) => ({
         ...prev,
         templateBgUrl: head,
@@ -1254,9 +1174,7 @@ return {
     }
 
     const slotOverlay = (cur.textOverlayBySlot?.[currentSlot] ?? null) as TextOverlay | null;
-    const overlayText = Array.isArray(slotOverlay?.lines)
-      ? slotOverlay.lines.join("\n").trim()
-      : "";
+    const overlayText = Array.isArray(slotOverlay?.lines) ? slotOverlay.lines.join("\n").trim() : "";
 
     if (overlayText) {
       const fontPx = Math.max(10, Math.round(slotOverlay?.fontSize ?? 64));
@@ -1409,43 +1327,43 @@ return {
       let baseUrl = hasBase ? String(dRef.current.baseImageUrl || "").trim() : "";
       const uploadedMaterialUrls: string[] = [];
 
-if (!hasBase) {
-  const first = list[0];
-  if (!first) {
-    throw new Error("画像がありません");
-  }
+      if (!hasBase) {
+        const first = list[0];
+        if (!first) {
+          throw new Error("画像がありません");
+        }
 
-  const firstType = String(first.type || "").toLowerCase();
-  const firstName = String(first.name || "").toLowerCase();
-  const isHeic =
-    firstType.includes("image/heic") ||
-    firstType.includes("image/heif") ||
-    firstName.endsWith(".heic") ||
-    firstName.endsWith(".heif");
+        const firstType = String(first.type || "").toLowerCase();
+        const firstName = String(first.name || "").toLowerCase();
+        const isHeic =
+          firstType.includes("image/heic") ||
+          firstType.includes("image/heif") ||
+          firstName.endsWith(".heic") ||
+          firstName.endsWith(".heif");
 
-  if (isHeic) {
-    baseUrl = await uploadImageFileAsJpegToStorage(uid, ensuredDraftId, first);
-  } else {
-    const pngBlob = await cutoutToPngBlob(first);
-    baseUrl = await uploadPngBlobToStorage(uid, ensuredDraftId, pngBlob);
-  }
+        if (isHeic) {
+          baseUrl = await uploadImageFileAsJpegToStorage(uid, ensuredDraftId, first);
+        } else {
+          const pngBlob = await cutoutToPngBlob(first);
+          baseUrl = await uploadPngBlobToStorage(uid, ensuredDraftId, pngBlob);
+        }
 
-  if (!baseUrl) {
-    throw new Error("元画像アップロード結果が空です");
-  }
+        if (!baseUrl) {
+          throw new Error("元画像アップロード結果が空です");
+        }
 
-  const rest = list.slice(1);
+        const rest = list.slice(1);
 
-  for (const f of rest) {
-    const url = await uploadImageFileAsJpegToStorage(uid, ensuredDraftId, f);
-    uploadedMaterialUrls.push(url);
-  }
-} else {
-  for (const f of list) {
-    const url = await uploadImageFileAsJpegToStorage(uid, ensuredDraftId, f);
-    uploadedMaterialUrls.push(url);
-  }
-}
+        for (const f of rest) {
+          const url = await uploadImageFileAsJpegToStorage(uid, ensuredDraftId, f);
+          uploadedMaterialUrls.push(url);
+        }
+      } else {
+        for (const f of list) {
+          const url = await uploadImageFileAsJpegToStorage(uid, ensuredDraftId, f);
+          uploadedMaterialUrls.push(url);
+        }
+      }
 
       const curMaterials = normalizeMaterialImages(dRef.current.images?.materials);
       const nextMaterials = buildMaterialImagesFromUrls(uploadedMaterialUrls, curMaterials);
@@ -1460,10 +1378,6 @@ if (!hasBase) {
           primary: makePrimary(baseUrl),
           materials: nextMaterials,
         },
-        /**
-         * ④ ディテールは元写真系なので、
-         * 初回アップロード時は base をそのまま detail にも入れておく
-         */
         detailImageUrl: baseUrl || dRef.current.detailImageUrl,
       });
 
@@ -1511,9 +1425,7 @@ if (!hasBase) {
     const nextMaterialUrls = uniqKeepOrder(
       [
         ...(currentBase ? [currentBase] : []),
-        ...curMaterials
-          .map((x) => String(x.url || "").trim())
-          .filter((x) => x && x !== u),
+        ...curMaterials.map((x) => String(x.url || "").trim()).filter((x) => x && x !== u),
       ],
       20
     );
@@ -1570,14 +1482,6 @@ if (!hasBase) {
     showMsg("✅ 元画像を入れ替えました（①に反映）");
   }
 
-  /**
-   * ② 使用シーン（AI再生成）
-   *
-   * 重要
-   * - 元画像を referenceImageUrl として渡す
-   * - 商品も背景もAIでまとめて再生成する用途
-   * - 旧互換 imageIdeaUrl と、新正式名 useSceneImageUrl の両方に保存する
-   */
   async function generateAiImage() {
     if (!uid) return;
 
@@ -1587,10 +1491,7 @@ if (!hasBase) {
       return;
     }
 
-    const effectiveVision = (
-      ((dRef.current as any).selectedStaticPrompt ?? dRef.current.vision) ||
-      ""
-    ).trim();
+    const effectiveVision = (((dRef.current as any).selectedStaticPrompt ?? dRef.current.vision) || "").trim();
 
     if (!effectiveVision) {
       showMsg("Vision（必須）を入力してください");
@@ -1618,9 +1519,7 @@ if (!hasBase) {
           String(dRef.current.brandId ?? "").trim() ||
           "vento") as "vento" | "riva";
 
-      const keywordsText = String(
-        (dRef.current as any).keywordsText ?? dRef.current.keywords ?? ""
-      );
+      const keywordsText = String((dRef.current as any).keywordsText ?? dRef.current.keywords ?? "");
 
       const understanding = resolveProductUnderstanding({
         productCategory,
@@ -1675,11 +1574,7 @@ if (!hasBase) {
       } else if (typeof j?.dataUrl === "string" && j.dataUrl.startsWith("data:image/")) {
         outUrl = await uploadDataUrlToStorage(uid, ensuredDraftId, j.dataUrl);
       } else if (typeof j?.b64 === "string" && j.b64) {
-        outUrl = await uploadDataUrlToStorage(
-          uid,
-          ensuredDraftId,
-          `data:image/png;base64,${j.b64}`
-        );
+        outUrl = await uploadDataUrlToStorage(uid, ensuredDraftId, `data:image/png;base64,${j.b64}`);
       } else {
         throw new Error("生成結果が取得できません（url/imageUrl/outputUrl/dataUrl/b64 が無い）");
       }
@@ -1688,9 +1583,7 @@ if (!hasBase) {
         ? dRef.current.useSceneImageUrls.map((u) => String(u ?? "").trim()).filter(Boolean)
         : [];
       const currentSceneUrlsB = Array.isArray((dRef.current as any).imageIdeaUrls)
-        ? (dRef.current as any).imageIdeaUrls
-            .map((u: unknown) => String(u ?? "").trim())
-            .filter(Boolean)
+        ? (dRef.current as any).imageIdeaUrls.map((u: unknown) => String(u ?? "").trim()).filter(Boolean)
         : [];
       const nextSceneUrls = uniqKeepOrder([outUrl, ...currentSceneUrlsA, ...currentSceneUrlsB], 10);
 
@@ -1741,11 +1634,6 @@ if (!hasBase) {
     }
   }
 
-  /**
-   * ⑤ ストーリー（AI再生成）
-   *
-   * 使用シーンと似ているが、目的を story に寄せる
-   */
   async function generateStoryImage() {
     if (!uid) return;
 
@@ -1755,10 +1643,7 @@ if (!hasBase) {
       return;
     }
 
-    const effectiveVision = (
-      ((dRef.current as any).selectedStaticPrompt ?? dRef.current.vision) ||
-      ""
-    ).trim();
+    const effectiveVision = (((dRef.current as any).selectedStaticPrompt ?? dRef.current.vision) || "").trim();
 
     if (!effectiveVision) {
       showMsg("Vision（必須）を入力してください");
@@ -1786,9 +1671,7 @@ if (!hasBase) {
           String(dRef.current.brandId ?? "").trim() ||
           "vento") as "vento" | "riva";
 
-      const keywordsText = String(
-        (dRef.current as any).keywordsText ?? dRef.current.keywords ?? ""
-      );
+      const keywordsText = String((dRef.current as any).keywordsText ?? dRef.current.keywords ?? "");
 
       const understanding = resolveProductUnderstanding({
         productCategory,
@@ -1843,11 +1726,7 @@ if (!hasBase) {
       } else if (typeof j?.dataUrl === "string" && j.dataUrl.startsWith("data:image/")) {
         outUrl = await uploadDataUrlToStorage(uid, ensuredDraftId, j.dataUrl);
       } else if (typeof j?.b64 === "string" && j.b64) {
-        outUrl = await uploadDataUrlToStorage(
-          uid,
-          ensuredDraftId,
-          `data:image/png;base64,${j.b64}`
-        );
+        outUrl = await uploadDataUrlToStorage(uid, ensuredDraftId, `data:image/png;base64,${j.b64}`);
       } else {
         throw new Error("生成結果が取得できません（url/imageUrl/outputUrl/dataUrl/b64 が無い）");
       }
@@ -1940,6 +1819,14 @@ if (!hasBase) {
     }
   }
 
+  /**
+   * AI背景生成
+   *
+   * 重要
+   * - 使用イメージ寄り背景
+   * - bgImageUrl 系を更新する
+   * - templateBgUrl とは混ぜない
+   */
   async function generateBackgroundImage(keyword: string): Promise<string> {
     if (!uid) {
       throw new Error("no uid");
@@ -1957,10 +1844,7 @@ if (!hasBase) {
         throw new Error("no token");
       }
 
-      const vision = (
-        ((dRef.current as any).selectedStaticPrompt ?? dRef.current.vision) ||
-        ""
-      ).trim();
+      const vision = (((dRef.current as any).selectedStaticPrompt ?? dRef.current.vision) || "").trim();
 
       if (!vision) {
         throw new Error("Vision（必須）が空です");
@@ -2004,13 +1888,11 @@ if (!hasBase) {
         "文字・透かし・ロゴは禁止",
         "ブランド名・看板・説明テキスト禁止",
         "過度な装飾や主張の強い小物は禁止",
-        "中央に商品を置くための広い空きスペースを必ず確保",
-        "手前に十分な水平面（床・棚・台）を必ず含める",
-        "商品が接地できる平面を明確に描写する",
-        "カメラ高さは商品目線（俯瞰禁止）",
-        "正面または45度構図のみ",
-        "奥行きが強すぎない安定構図",
-        "販売画像用の安定した背景構成にする",
+        "中央に商品を置くための空きスペースを十分に確保",
+        "接地タイプに応じた自然な平面を用意する",
+        "背景は商品使用時を想起しやすくするためのもの",
+        "商品そのものは絶対に描かない",
+        "元画像の背景は再現しない",
       ];
 
       const brandId =
@@ -2018,9 +1900,7 @@ if (!hasBase) {
           String(dRef.current.brandId ?? "").trim() ||
           "vento") as "vento" | "riva";
 
-      const keywordsText = String(
-        (dRef.current as any).keywordsText ?? dRef.current.keywords ?? ""
-      );
+      const keywordsText = String((dRef.current as any).keywordsText ?? dRef.current.keywords ?? "");
 
       const understanding = resolveProductUnderstanding({
         productCategory,
@@ -2117,10 +1997,18 @@ if (!hasBase) {
   async function replaceBackgroundAndSaveToAiImage() {
     const bk = String(backgroundKeyword || "").trim();
     const hasBg = !!(dRef.current.bgImageUrl || bgImageUrl || bgDisplayUrl);
+    const hasTemplateBg = !!String(templateBgUrl || d.templateBgUrl || "").trim();
 
-    if (!hasBg && !bk) {
-      showMsg("②で背景キーワードを入力してください（背景が未設定です）");
-      return;
+    if (activePhotoMode === "template") {
+      if (!hasTemplateBg) {
+        showMsg("テンプレ背景が未設定です");
+        return;
+      }
+    } else {
+      if (!hasBg && !bk) {
+        showMsg("②で背景キーワードを入力してください（背景が未設定です）");
+        return;
+      }
     }
 
     if (!uid) return;
@@ -2182,13 +2070,17 @@ if (!hasBase) {
         throw new Error("foreground url が取得できませんでした（サーバ返り値を確認）");
       }
 
-      /**
-       * 現段階では合成APIの背景元は bgImageUrl を使っている。
-       * テンプレ背景選択時には bgImageUrl にも流しているため、
-       * 既存処理を壊さずそのまま通せる。
-       */
-      const existingBg = String(bgImageUrl || d.bgImageUrl || d.templateBgUrl || "").trim();
-      const bg = existingBg ? existingBg : await generateBackgroundImage(backgroundKeyword);
+      let bg = "";
+
+      if (activePhotoMode === "template") {
+        bg = String(templateBgUrl || d.templateBgUrl || "").trim();
+        if (!bg) {
+          throw new Error("テンプレ背景が未選択です");
+        }
+      } else {
+        const aiBg = String(bgImageUrl || d.bgImageUrl || "").trim();
+        bg = aiBg ? aiBg : await generateBackgroundImage(backgroundKeyword);
+      }
 
       const understanding = resolveProductUnderstanding({
         productCategory,
@@ -2199,15 +2091,20 @@ if (!hasBase) {
         staticPurpose,
       });
 
-      /**
-       * ① 商品写真の調整値
-       * - いまは API に placement をそのまま追加
-       * - API 側が未対応でも落ちないよう値は素直に送るだけ
-       */
+      const savedPlacement = (dRef.current.placement ?? {}) as any;
+      const savedShadow = (savedPlacement.shadow ?? {}) as any;
+
       const placement = {
-        scale: clamp(Number(placementScale ?? 1), 0.4, 2.2),
-        x: clamp(Number(placementX ?? 0.5), 0, 1),
-        y: clamp(Number(placementY ?? 0.5), 0, 1),
+        scale: clamp(Number(savedPlacement.scale ?? placementScale ?? 1), 0.4, 2.2),
+        x: clamp(Number(savedPlacement.x ?? placementX ?? 0.5), 0, 1),
+        y: clamp(Number(savedPlacement.y ?? placementY ?? 0.5), 0, 1),
+        shadow: {
+          opacity: clamp(Number(savedShadow.opacity ?? shadowOpacity ?? 0.12), 0, 1),
+          blur: clamp(Number(savedShadow.blur ?? shadowBlur ?? 12), 0, 100),
+          scale: clamp(Number(savedShadow.scale ?? shadowScale ?? 1), 0.5, 2),
+          offsetX: clamp(Number(savedShadow.offsetX ?? shadowOffsetX ?? 0), -1, 1),
+          offsetY: clamp(Number(savedShadow.offsetY ?? shadowOffsetY ?? 0.02), -1, 1),
+        },
       };
 
       const r = await fetch("/api/compose-product-stage", {
@@ -2226,7 +2123,18 @@ if (!hasBase) {
           sellDirection: understanding.sellDirection,
           bgScene: understanding.bgScene,
           activePhotoMode,
-          placement,
+          placement: {
+            scale: placement.scale,
+            x: placement.x,
+            y: placement.y,
+            shadow: {
+              opacity: placement.shadow.opacity,
+              blur: placement.shadow.blur,
+              scale: placement.shadow.scale,
+              offsetX: placement.shadow.offsetX,
+              offsetY: placement.shadow.offsetY,
+            },
+          },
         }),
       });
 
@@ -2280,15 +2188,20 @@ if (!hasBase) {
       } as const;
 
       setRightTab("image");
-      setBgImageUrl(bg);
 
+      /**
+       * 重要
+       * - ここでは activePhotoMode に応じて使った背景URLを d.bgImageUrl に上書きしない
+       * - AI背景の主保存先は bgImageUrl
+       * - テンプレ背景の主保存先は templateBgUrl
+       * - 合成結果 aiImageUrl だけを更新する
+       */
       setD((prev) => ({
         ...prev,
         foregroundImageUrl: fg,
         aiImageUrl: outUrl,
         imageUrl: outUrl,
         imageSource: "ai",
-        bgImageUrl: bg,
         activePhotoMode,
         placement,
         originMeta: { ...((prev as any).originMeta ?? {}), composite: meta },
@@ -2303,7 +2216,6 @@ if (!hasBase) {
         imageUrl: outUrl,
         imageSource: "ai",
         phase: "draft",
-        bgImageUrl: bg,
         activePhotoMode,
         placement,
         originMeta: { ...((dRef.current as any).originMeta ?? {}), composite: meta },
@@ -2396,9 +2308,7 @@ if (!hasBase) {
       await scanFolder(draftBgFolder);
 
       if (found.length === 0) {
-        showMsg(
-          "この下書きの背景が見つかりませんでした（背景生成の保存先が draft/bg になっているか確認）"
-        );
+        showMsg("この下書きの背景が見つかりませんでした（背景生成の保存先が draft/bg になっているか確認）");
         return;
       }
 
@@ -2653,10 +2563,6 @@ if (!hasBase) {
   return {
     commitDraftPatch,
     renderToCanvasAndGetDataUrlSilent,
-
-    /**
-     * 既存
-     */
     cutoutCurrentBaseToReplace,
     onUploadImageFilesNew,
     promoteMaterialToBase,
@@ -2668,19 +2574,11 @@ if (!hasBase) {
     syncBgImagesFromStorage,
     syncIdeaImagesFromStorage,
     clearIdeaHistory,
-
-    /**
-     * 既存の新規
-     */
     saveProductPlacement,
     applySizeTemplate,
     generateStoryImage,
     syncStoryImagesFromStorage,
     clearStoryHistory,
-
-    /**
-     * STEP5 テンプレ背景
-     */
     generateTemplateBackground,
     fetchTemplateRecommendations,
     selectTemplateBackground,

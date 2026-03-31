@@ -144,24 +144,44 @@ export default function NewDraftPage() {
   const bgScene = c.bgScene as BgScene;
   const setBgScene = c.setBgScene as React.Dispatch<React.SetStateAction<BgScene>>;
 
-  /**
-   * ① 商品写真の配置調整関連
-   */
-  const activePhotoMode = c.activePhotoMode as ProductPhotoMode;
-  const setActivePhotoMode =
-    c.setActivePhotoMode as React.Dispatch<React.SetStateAction<ProductPhotoMode>>;
+/**
+ * ① 商品写真の配置調整関連
+ */
+const activePhotoMode = c.activePhotoMode as ProductPhotoMode;
+const setActivePhotoMode =
+  c.setActivePhotoMode as React.Dispatch<React.SetStateAction<ProductPhotoMode>>;
 
-  const placementScale = Number(c.placementScale ?? 1);
-  const setPlacementScale =
-    c.setPlacementScale as React.Dispatch<React.SetStateAction<number>>;
+const placementScale = Number(c.placementScale ?? 1);
+const setPlacementScale =
+  c.setPlacementScale as React.Dispatch<React.SetStateAction<number>>;
 
-  const placementX = Number(c.placementX ?? 0.5);
-  const setPlacementX =
-    c.setPlacementX as React.Dispatch<React.SetStateAction<number>>;
+const placementX = Number(c.placementX ?? 0.5);
+const setPlacementX =
+  c.setPlacementX as React.Dispatch<React.SetStateAction<number>>;
 
-  const placementY = Number(c.placementY ?? 0.5);
-  const setPlacementY =
-    c.setPlacementY as React.Dispatch<React.SetStateAction<number>>;
+const placementY = Number(c.placementY ?? 0.5);
+const setPlacementY =
+  c.setPlacementY as React.Dispatch<React.SetStateAction<number>>;
+
+const shadowOpacity = Number(c.shadowOpacity ?? 0.12);
+const setShadowOpacity =
+  c.setShadowOpacity as React.Dispatch<React.SetStateAction<number>>;
+
+const shadowBlur = Number(c.shadowBlur ?? 12);
+const setShadowBlur =
+  c.setShadowBlur as React.Dispatch<React.SetStateAction<number>>;
+
+const shadowScale = Number(c.shadowScale ?? 1);
+const setShadowScale =
+  c.setShadowScale as React.Dispatch<React.SetStateAction<number>>;
+
+const shadowOffsetX = Number(c.shadowOffsetX ?? 0);
+const setShadowOffsetX =
+  c.setShadowOffsetX as React.Dispatch<React.SetStateAction<number>>;
+
+const shadowOffsetY = Number(c.shadowOffsetY ?? 0.02);
+const setShadowOffsetY =
+  c.setShadowOffsetY as React.Dispatch<React.SetStateAction<number>>;
 
   /**
    * ③ サイズテンプレ
@@ -174,6 +194,11 @@ export default function NewDraftPage() {
    * ⑤ ストーリー画像表示URL
    */
   const storyDisplayUrl = String(c.storyDisplayUrl ?? "");
+
+  const bgDisplayUrl =
+  activePhotoMode === "template"
+    ? String(c.templateBgUrl ?? "")
+    : String(c.bgDisplayUrl ?? "");
 
   return (
     <>
@@ -331,83 +356,88 @@ export default function NewDraftPage() {
                   画像タブ
               ========================= */}
               {c.rightTab === "image" ? (
-                <ImageTabPanel
-                  d={c.d}
-                  uid={c.uid}
-                  busy={c.busy}
-                  cutoutBusy={c.cutoutBusy}
-                  cutoutReason={c.cutoutReason}
-                  overlayPreviewDataUrl={c.overlayPreviewDataUrl}
-                  baseCandidates={c.baseCandidates}
-                  currentSlot={c.currentSlot}
-                  formStyle={formStyle}
-                  defaultTextOverlay={c.DEFAULT_TEXT_OVERLAY}
-                  staticPurpose={c.staticPurpose}
-                  setStaticPurpose={c.setStaticPurpose}
-                  productCategory={productCategory}
-                  setProductCategory={setProductCategory}
-                  productSize={productSize}
-                  setProductSize={setProductSize}
-                  groundingType={groundingType}
-                  setGroundingType={setGroundingType}
-                  sellDirection={sellDirection}
-                  setSellDirection={setSellDirection}
-                  bgScene={bgScene}
-                  setBgScene={setBgScene}
-                  staticRecommendation={c.staticRecommendation}
-                  staticVariants={c.staticVariants}
-                  staticBusy={c.staticBusy}
-                  purposeLabel={PURPOSE_LABEL}
-                  bgSceneLabel={BG_SCENE_LABEL}
-                  bgDisplayUrl={c.bgDisplayUrl}
-                  backgroundKeyword={c.backgroundKeyword}
-                  setBackgroundKeyword={c.setBackgroundKeyword}
-                  canGenerate={c.canGenerate}
-                  isCompositeFresh={c.isCompositeFresh}
-                  onGenerateStaticVariants={c.generateStaticVariants}
-                  onSelectStaticVariant={c.selectStaticVariant}
-                  onUploadImageFilesNew={c.onUploadImageFilesNew}
-                  onCutoutCurrentBaseToReplace={c.cutoutCurrentBaseToReplace}
-                  onPromoteMaterialToBase={c.promoteMaterialToBase}
-                  onSaveCompositeAsImageUrl={c.saveCompositeAsImageUrl}
-                  onSaveDraft={() => {
-                    void c.saveDraft();
-                  }}
-                  onGenerateBackgroundImage={c.generateBackgroundImage}
-                  onReplaceBackgroundAndSaveToAiImage={c.replaceBackgroundAndSaveToAiImage}
-                  onSyncBgImagesFromStorage={c.syncBgImagesFromStorage}
-                  onClearBgHistory={c.clearBgHistory}
-                  onGenerateAiImage={c.generateAiImage}
-                  onSyncIdeaImagesFromStorage={c.syncIdeaImagesFromStorage}
-                  onClearIdeaHistory={c.clearIdeaHistory}
-                  setBgImageUrl={c.setBgImageUrl}
-                  setD={c.setD}
-                  saveDraft={c.saveDraft}
-                  showMsg={c.showMsg}
-                  activePhotoMode={activePhotoMode}
-                  setActivePhotoMode={setActivePhotoMode}
-                  placementScale={placementScale}
-                  setPlacementScale={setPlacementScale}
-                  placementX={placementX}
-                  setPlacementX={setPlacementX}
-                  placementY={placementY}
-                  setPlacementY={setPlacementY}
-                  onSavePlacement={c.savePlacement}
-                  sizeTemplateType={sizeTemplateType}
-                  setSizeTemplateType={setSizeTemplateType}
-                  storyDisplayUrl={storyDisplayUrl}
-                  onGenerateStoryImage={c.generateStoryImage}
-                  /**
-                   * ここが今回の修正ポイントです。
-                   * テンプレ背景用の3つの処理を ImageTabPanel へ渡します。
-                   * これを渡さないと、BackgroundPanel 側の
-                   * 「テンプレ背景を生成」「おすすめ取得」「候補選択」
-                   * が実体関数まで届きません。
-                   */
-                  generateTemplateBackground={c.generateTemplateBackground}
-                  fetchTemplateRecommendations={c.fetchTemplateRecommendations}
-                  selectTemplateBackground={c.selectTemplateBackground}
-                />
+<ImageTabPanel
+  d={c.d}
+  uid={c.uid}
+  busy={c.busy}
+  cutoutBusy={c.cutoutBusy}
+  cutoutReason={c.cutoutReason}
+  overlayPreviewDataUrl={c.overlayPreviewDataUrl}
+  baseCandidates={c.baseCandidates}
+  currentSlot={c.currentSlot}
+  formStyle={formStyle}
+  defaultTextOverlay={c.DEFAULT_TEXT_OVERLAY}
+  staticPurpose={c.staticPurpose}
+  setStaticPurpose={c.setStaticPurpose}
+  productCategory={productCategory}
+  setProductCategory={setProductCategory}
+  productSize={productSize}
+  setProductSize={setProductSize}
+  groundingType={groundingType}
+  setGroundingType={setGroundingType}
+  sellDirection={sellDirection}
+  setSellDirection={setSellDirection}
+  bgScene={bgScene}
+  setBgScene={setBgScene}
+  staticRecommendation={c.staticRecommendation}
+  staticVariants={c.staticVariants}
+  staticBusy={c.staticBusy}
+  purposeLabel={PURPOSE_LABEL}
+  bgSceneLabel={BG_SCENE_LABEL}
+  bgDisplayUrl={bgDisplayUrl}
+  backgroundKeyword={c.backgroundKeyword}
+  setBackgroundKeyword={c.setBackgroundKeyword}
+  canGenerate={c.canGenerate}
+  isCompositeFresh={c.isCompositeFresh}
+  onGenerateStaticVariants={c.generateStaticVariants}
+  onSelectStaticVariant={c.selectStaticVariant}
+  onUploadImageFilesNew={c.onUploadImageFilesNew}
+  onCutoutCurrentBaseToReplace={c.cutoutCurrentBaseToReplace}
+  onPromoteMaterialToBase={c.promoteMaterialToBase}
+  onSaveCompositeAsImageUrl={c.saveCompositeAsImageUrl}
+  onSaveDraft={() => {
+    void c.saveDraft();
+  }}
+  onGenerateBackgroundImage={c.generateBackgroundImage}
+  onReplaceBackgroundAndSaveToAiImage={c.replaceBackgroundAndSaveToAiImage}
+  onSyncBgImagesFromStorage={c.syncBgImagesFromStorage}
+  onClearBgHistory={c.clearBgHistory}
+  onGenerateAiImage={c.generateAiImage}
+  onSyncIdeaImagesFromStorage={c.syncIdeaImagesFromStorage}
+  onClearIdeaHistory={c.clearIdeaHistory}
+  setBgImageUrl={c.setBgImageUrl}
+  setD={c.setD}
+  saveDraft={c.saveDraft}
+  showMsg={c.showMsg}
+  activePhotoMode={activePhotoMode}
+  setActivePhotoMode={setActivePhotoMode}
+  placementScale={placementScale}
+  setPlacementScale={setPlacementScale}
+  placementX={placementX}
+  setPlacementX={setPlacementX}
+  placementY={placementY}
+  setPlacementY={setPlacementY}
+  shadowOpacity={shadowOpacity}
+  setShadowOpacity={setShadowOpacity}
+  shadowBlur={shadowBlur}
+  setShadowBlur={setShadowBlur}
+  shadowScale={shadowScale}
+  setShadowScale={setShadowScale}
+  shadowOffsetX={shadowOffsetX}
+  setShadowOffsetX={setShadowOffsetX}
+  shadowOffsetY={shadowOffsetY}
+  setShadowOffsetY={setShadowOffsetY}
+  onSavePlacement={c.savePlacement}
+  sizeTemplateType={sizeTemplateType}
+  setSizeTemplateType={setSizeTemplateType}
+  storyDisplayUrl={storyDisplayUrl}
+  onGenerateStoryImage={c.generateStoryImage}
+  generateTemplateBackground={c.generateTemplateBackground}
+  fetchTemplateRecommendations={c.fetchTemplateRecommendations}
+  selectTemplateBackground={c.selectTemplateBackground}
+  templateBgUrl={String(c.templateBgUrl ?? "")}
+  templateBgUrls={Array.isArray(c.templateBgUrls) ? c.templateBgUrls : []}
+/>
               ) : null}
 
               {/* =========================

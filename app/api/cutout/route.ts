@@ -8,42 +8,32 @@ export const runtime = "nodejs";
  * AOI FLOW
  * cutout API
  *
- * このAPIの役割
- * - 画像ファイルを受け取る
- * - 外部 cutout サーバーへ転送する
- * - 成功時は透過PNGを返す
+ * このAPIの目的
+ * - クライアントから受けた画像を cutout サーバーへ渡す
+ * - 成功時は透過PNGをそのまま返す
+ * - 失敗時は「失敗した」と明確に返す
  *
- * 今回の重要修正
- * - HEIC / HEIF を含む入力画像を、先にサーバー側で PNG に正規化してから upstream へ渡す
- * - localhost:8080 に接続できない時でも、そのまま 500 で落とさず PNG を返す
- * - これにより、新規下書きの最初の1枚アップロード停止を避ける
- *
- * 注意
- * - fallback 時は「透過」ではなく「PNG化」です
- * - つまり背景は消えません
- * - ただし作業が完全停止するより安全です
+ * 今回の重要ポイント
+ * - もう「見た目は成功だが実際は透過されていない」を避ける
+ * - upstream が失敗したら fallback PNG を返さず、エラーを返す
+ * - これで UI 側でも本当に透過できたか / 失敗したか が分かる
  */
 
-/**
- * cutout サーバーURL
- *
- * 優先順
- * 1. CUTOUT_API_URL
- * 2. localhost:8080/cutout
- */
 function getCutoutApiUrl() {
   const envUrl = String(process.env.CUTOUT_API_URL || "").trim();
   if (envUrl) return envUrl;
+
+  /**
+   * cutout サーバーの実URL
+   * Swagger で確認した /cutout を既定値にする
+   */
   return "http://localhost:8080/cutout";
 }
 
 /**
- * 受け取った画像を upstream 用に PNG 正規化する
- *
- * 重要
- * - HEIC / HEIF / JPEG / PNG などを一旦 PNG にそろえる
- * - rotate() でスマホ撮影の向き崩れを防ぐ
- * - alpha が無い画像でも、そのまま PNG 化して upstream に渡す
+ * 入力画像を upstream 用に PNG 正規化
+ * - HEIC / HEIF / JPEG / PNG を一旦 PNG に統一
+ * - rotate() でスマホ画像の向きずれを補正
  */
 async function normalizeInputForCutout(input: Buffer) {
   return await sharp(input, { failOn: "none" })
@@ -53,17 +43,39 @@ async function normalizeInputForCutout(input: Buffer) {
 }
 
 /**
- * 受け取った画像を最低限 PNG に正規化して返す
+ * 透過画像かどうかを簡易チェック
+ * - alpha チャンネルがあるか
+ * - 完全不透明以外の画素があるか
  *
- * 用途
- * - cutout サーバーが死んでいる時のフォールバック
- * - upstream に渡す前の入力正規化が済んでいれば、その PNG をそのまま返してもよい
+ * 目的
+ * - upstream が「ただの PNG」を返してきた時に見抜く
  */
-async function fallbackAsPng(input: Buffer) {
-  return await sharp(input, { failOn: "none" })
-    .rotate()
-    .png({ compressionLevel: 9, adaptiveFiltering: true })
-    .toBuffer();
+async function inspectAlphaState(input: Buffer) {
+  const image = sharp(input, { failOn: "none" }).ensureAlpha();
+  const meta = await image.metadata();
+
+  const { data, info } = await image
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+
+  const channels = info.channels;
+  const alphaIndex = channels - 1;
+
+  let hasTransparentPixel = false;
+
+  for (let i = alphaIndex; i < data.length; i += channels) {
+    if (data[i] < 255) {
+      hasTransparentPixel = true;
+      break;
+    }
+  }
+
+  return {
+    width: meta.width ?? info.width,
+    height: meta.height ?? info.height,
+    channels,
+    hasTransparentPixel,
+  };
 }
 
 export async function POST(req: Request) {
@@ -72,96 +84,128 @@ export async function POST(req: Request) {
     const file = form.get("file");
 
     if (!file || !(file instanceof File)) {
-      return NextResponse.json({ error: "fileなし" }, { status: 400 });
+      return NextResponse.json(
+        { error: "fileなし" },
+        { status: 400 }
+      );
     }
 
     const raw = Buffer.from(await file.arrayBuffer());
 
     if (!raw.length) {
-      return NextResponse.json({ error: "empty file" }, { status: 400 });
+      return NextResponse.json(
+        { error: "empty file" },
+        { status: 400 }
+      );
     }
 
-    /**
-     * ここが今回の本命修正
-     * - クライアント側 canvas/JPEG 変換に頼らず
-     * - サーバー側で HEIC を含む入力を PNG に正規化する
-     *
-     * これで
-     * - HEIC のまま upstream に渡して失敗
-     * - JPEG 化で境界が崩れる
-     * という問題を減らす
-     */
     let normalizedInput: Buffer;
 
     try {
       normalizedInput = await normalizeInputForCutout(raw);
     } catch (e) {
-      console.error("[cutout] normalize failed, fallback to raw:", e);
-      normalizedInput = raw;
+      console.error("[cutout] normalize failed:", e);
+
+      return NextResponse.json(
+        { error: "入力画像の正規化に失敗しました" },
+        { status: 500 }
+      );
     }
 
-    /**
-     * upstream には PNG として送る
-     * - ファイル名は見た目上わかりやすく .png にしておく
-     * - MIME も image/png に固定
-     */
-    const safeBaseName = String(file.name || "upload")
-      .replace(/\.[^.]+$/, "")
-      .trim() || "upload";
+    const safeBaseName =
+      String(file.name || "upload").replace(/\.[^.]+$/, "").trim() || "upload";
 
-const upstreamFile = new File(
-  [new Uint8Array(normalizedInput)],
-  `${safeBaseName}.png`,
-  {
-    type: "image/png",
-  }
-);
+    const upstreamFile = new File(
+      [new Uint8Array(normalizedInput)],
+      `${safeBaseName}.png`,
+      {
+        type: "image/png",
+      }
+    );
 
     const fwd = new FormData();
     fwd.append("file", upstreamFile);
 
     const cutoutUrl = getCutoutApiUrl();
 
+    let upstreamRes: Response;
+
     try {
-      const res = await fetch(cutoutUrl, {
+      upstreamRes = await fetch(cutoutUrl, {
         method: "POST",
         body: fwd,
-      });
-
-      if (!res.ok) {
-        throw new Error(`cutout upstream failed (${res.status})`);
-      }
-
-      const buf = await res.arrayBuffer();
-
-      return new Response(new Uint8Array(buf), {
-        status: 200,
-        headers: {
-          "Content-Type": "image/png",
-          "Cache-Control": "no-store",
-        },
+        cache: "no-store",
       });
     } catch (e) {
-      console.error("[cutout] upstream unavailable, fallback to png:", e);
+      console.error("[cutout] upstream connection failed:", e);
 
-      /**
-       * upstream が死んでいても、PNG を返して先へ進める
-       *
-       * 重要
-       * - まずは normalizedInput をそのまま返せば十分
-       * - ただし safety のため fallbackAsPng() を通して再度 PNG 保証する
-       */
-      const fallbackPng = await fallbackAsPng(normalizedInput);
-
-      return new Response(new Uint8Array(fallbackPng), {
-        status: 200,
-        headers: {
-          "Content-Type": "image/png",
-          "X-Cutout-Fallback": "true",
-          "Cache-Control": "no-store",
-        },
-      });
+      return NextResponse.json(
+        { error: "cutoutサーバーに接続できませんでした" },
+        { status: 502 }
+      );
     }
+
+    if (!upstreamRes.ok) {
+      const text = await upstreamRes.text().catch(() => "");
+
+      console.error("[cutout] upstream bad response:", upstreamRes.status, text);
+
+      return NextResponse.json(
+        {
+          error: `cutout upstream failed (${upstreamRes.status})`,
+          detail: text || "upstream error",
+        },
+        { status: 502 }
+      );
+    }
+
+    const upstreamArrayBuffer = await upstreamRes.arrayBuffer();
+    const upstreamBuffer = Buffer.from(upstreamArrayBuffer);
+
+    if (!upstreamBuffer.length) {
+      return NextResponse.json(
+        { error: "cutoutサーバーから空レスポンスが返りました" },
+        { status: 502 }
+      );
+    }
+
+    /**
+     * 本当に透過されているか確認
+     * - 透過画素が1つも無いなら失敗扱い
+     */
+    let alphaInfo: Awaited<ReturnType<typeof inspectAlphaState>>;
+
+    try {
+      alphaInfo = await inspectAlphaState(upstreamBuffer);
+    } catch (e) {
+      console.error("[cutout] alpha inspect failed:", e);
+
+      return NextResponse.json(
+        { error: "cutout結果の検証に失敗しました" },
+        { status: 502 }
+      );
+    }
+
+    if (!alphaInfo.hasTransparentPixel) {
+      console.error("[cutout] upstream returned png but no transparent pixel");
+
+      return NextResponse.json(
+        {
+          error: "透過画像ではありませんでした",
+          detail: "cutoutサーバーは応答しましたが、背景が消えていません",
+        },
+        { status: 502 }
+      );
+    }
+
+    return new Response(new Uint8Array(upstreamBuffer), {
+      status: 200,
+      headers: {
+        "Content-Type": "image/png",
+        "Cache-Control": "no-store",
+        "X-Cutout-Verified": "true",
+      },
+    });
   } catch (e: any) {
     console.error("[cutout] fatal:", e);
 

@@ -1,4 +1,4 @@
-// /app/flow/drafts/new/hooks/useDraftEditorController.ts
+//app/flow/drafts/new/hooks/useDraftEditorController.ts
 "use client";
 
 import { useEffect } from "react";
@@ -38,6 +38,11 @@ import useDraftPricing from "./useDraftPricing";
  * - template 背景専用 state を state.d から local state に同期する
  * - ブランド切替時に template 背景専用 local state も初期化する
  * - TypeScript が null を混ぜないように型ガードを入れる
+ *
+ * 今回の本質修正
+ * - shadow 系 state / setter を controller の return に追加する
+ * - savePlacement で shadow 系も保存できるようにする
+ * - Firestore 読込時に shadow 系 local state も同期する
  */
 
 type Params = {
@@ -349,11 +354,19 @@ export default function useDraftEditorController(params: Params) {
 
   /**
    * ① 商品写真の位置・サイズ保存
+   *
+   * 今回の修正
+   * - shadow 系も partial で受け取って保存する
    */
   async function savePlacement(partial?: {
     scale?: number;
     x?: number;
     y?: number;
+    shadowOpacity?: number;
+    shadowBlur?: number;
+    shadowScale?: number;
+    shadowOffsetX?: number;
+    shadowOffsetY?: number;
     activePhotoMode?: ProductPhotoMode;
   }) {
     if (typeof (imageActions as any).saveProductPlacement === "function") {
@@ -365,21 +378,66 @@ export default function useDraftEditorController(params: Params) {
       typeof partial?.scale === "number" ? partial.scale : state.placementScale;
     const nextX = typeof partial?.x === "number" ? partial.x : state.placementX;
     const nextY = typeof partial?.y === "number" ? partial.y : state.placementY;
+
+    const nextShadowOpacity =
+      typeof partial?.shadowOpacity === "number"
+        ? partial.shadowOpacity
+        : state.shadowOpacity;
+
+    const nextShadowBlur =
+      typeof partial?.shadowBlur === "number"
+        ? partial.shadowBlur
+        : state.shadowBlur;
+
+    const nextShadowScale =
+      typeof partial?.shadowScale === "number"
+        ? partial.shadowScale
+        : state.shadowScale;
+
+    const nextShadowOffsetX =
+      typeof partial?.shadowOffsetX === "number"
+        ? partial.shadowOffsetX
+        : state.shadowOffsetX;
+
+    const nextShadowOffsetY =
+      typeof partial?.shadowOffsetY === "number"
+        ? partial.shadowOffsetY
+        : state.shadowOffsetY;
+
     const nextMode = partial?.activePhotoMode ?? state.activePhotoMode;
 
     state.setPlacementScale(nextScale);
     state.setPlacementX(nextX);
     state.setPlacementY(nextY);
+
+    state.setShadowOpacity(nextShadowOpacity);
+    state.setShadowBlur(nextShadowBlur);
+    state.setShadowScale(nextShadowScale);
+    state.setShadowOffsetX(nextShadowOffsetX);
+    state.setShadowOffsetY(nextShadowOffsetY);
+
     state.setActivePhotoMode(nextMode);
 
-    const patch: Partial<DraftDoc> = {
-      activePhotoMode: nextMode,
-      placement: {
-        scale: nextScale,
-        x: nextX,
-        y: nextY,
-      },
-    };
+const patch: Partial<DraftDoc> = {
+  activePhotoMode: nextMode,
+  placement: {
+    scale: nextScale,
+    x: nextX,
+    y: nextY,
+    shadow: {
+      opacity: nextShadowOpacity,
+      blur: nextShadowBlur,
+      scale: nextShadowScale,
+      offsetX: nextShadowOffsetX,
+      offsetY: nextShadowOffsetY,
+    },
+  },
+  shadowOpacity: nextShadowOpacity,
+  shadowBlur: nextShadowBlur,
+  shadowScale: nextShadowScale,
+  shadowOffsetX: nextShadowOffsetX,
+  shadowOffsetY: nextShadowOffsetY,
+};
 
     commitDraftPatch(patch);
     await persistence.saveDraft(patch);
@@ -446,12 +504,18 @@ export default function useDraftEditorController(params: Params) {
    * ここで正規化して返す。
    */
   async function fetchTemplateRecommendations(): Promise<TemplateRecommendResultForPanel> {
-    const rawList =
-      typeof (imageActions as any).recommendTemplateBackgrounds === "function"
-        ? await (imageActions as any).recommendTemplateBackgrounds()
-        : [];
+    const rawResult =
+      typeof (imageActions as any).fetchTemplateRecommendations === "function"
+        ? await (imageActions as any).fetchTemplateRecommendations()
+        : typeof (imageActions as any).recommendTemplateBackgrounds === "function"
+          ? await (imageActions as any).recommendTemplateBackgrounds()
+          : [];
 
-    const safeList = Array.isArray(rawList) ? rawList : [];
+    const safeList = Array.isArray(rawResult)
+      ? rawResult
+      : Array.isArray((rawResult as any)?.recommended)
+        ? (rawResult as any).recommended
+        : [];
 
     const normalizedRecommended = safeList
       .map((item: any): TemplateBgRecommendItem | null => {
@@ -472,10 +536,12 @@ export default function useDraftEditorController(params: Params) {
       })
       .filter(isTemplateBgRecommendItem);
 
-    const topReason =
-      normalizedRecommended.length > 0
-        ? String(normalizedRecommended[0]?.reason || "").trim()
-        : "";
+    const topReason = String(
+      (rawResult as any)?.topReason ||
+        (rawResult as any)?.picked?.reason ||
+        normalizedRecommended[0]?.reason ||
+        ""
+    ).trim();
 
     /**
      * controller 正規化後の結果を local state にも反映
@@ -625,6 +691,8 @@ export default function useDraftEditorController(params: Params) {
    * Firestore 読込 → ローカル state 同期
    *
    * template 背景専用 state もここで同期する
+   * 今回の修正:
+   * - shadow 系 state も同期する
    */
   useEffect(() => {
     const nextPhotoMode = (state.d.activePhotoMode ?? "ai_bg") as ProductPhotoMode;
@@ -659,6 +727,83 @@ export default function useDraftEditorController(params: Params) {
         );
       }
     }
+
+/**
+ * 影パラメータ同期
+ * - まず placement.shadow を優先
+ * - 無ければ旧 root 値を使う
+ */
+const placementShadow = (state.d as any)?.placement?.shadow ?? {};
+
+const nextShadowOpacity =
+  typeof placementShadow.opacity === "number" && Number.isFinite(placementShadow.opacity)
+    ? placementShadow.opacity
+    : typeof (state.d as any).shadowOpacity === "number" &&
+        Number.isFinite((state.d as any).shadowOpacity)
+      ? (state.d as any).shadowOpacity
+      : undefined;
+
+if (typeof nextShadowOpacity === "number") {
+  state.setShadowOpacity((prev) =>
+    prev !== nextShadowOpacity ? nextShadowOpacity : prev
+  );
+}
+
+const nextShadowBlur =
+  typeof placementShadow.blur === "number" && Number.isFinite(placementShadow.blur)
+    ? placementShadow.blur
+    : typeof (state.d as any).shadowBlur === "number" &&
+        Number.isFinite((state.d as any).shadowBlur)
+      ? (state.d as any).shadowBlur
+      : undefined;
+
+if (typeof nextShadowBlur === "number") {
+  state.setShadowBlur((prev) =>
+    prev !== nextShadowBlur ? nextShadowBlur : prev
+  );
+}
+
+const nextShadowScale =
+  typeof placementShadow.scale === "number" && Number.isFinite(placementShadow.scale)
+    ? placementShadow.scale
+    : typeof (state.d as any).shadowScale === "number" &&
+        Number.isFinite((state.d as any).shadowScale)
+      ? (state.d as any).shadowScale
+      : undefined;
+
+if (typeof nextShadowScale === "number") {
+  state.setShadowScale((prev) =>
+    prev !== nextShadowScale ? nextShadowScale : prev
+  );
+}
+
+const nextShadowOffsetX =
+  typeof placementShadow.offsetX === "number" && Number.isFinite(placementShadow.offsetX)
+    ? placementShadow.offsetX
+    : typeof (state.d as any).shadowOffsetX === "number" &&
+        Number.isFinite((state.d as any).shadowOffsetX)
+      ? (state.d as any).shadowOffsetX
+      : undefined;
+
+if (typeof nextShadowOffsetX === "number") {
+  state.setShadowOffsetX((prev) =>
+    prev !== nextShadowOffsetX ? nextShadowOffsetX : prev
+  );
+}
+
+const nextShadowOffsetY =
+  typeof placementShadow.offsetY === "number" && Number.isFinite(placementShadow.offsetY)
+    ? placementShadow.offsetY
+    : typeof (state.d as any).shadowOffsetY === "number" &&
+        Number.isFinite((state.d as any).shadowOffsetY)
+      ? (state.d as any).shadowOffsetY
+      : undefined;
+
+if (typeof nextShadowOffsetY === "number") {
+  state.setShadowOffsetY((prev) =>
+    prev !== nextShadowOffsetY ? nextShadowOffsetY : prev
+  );
+}
 
     /**
      * テンプレ背景URL
@@ -773,6 +918,16 @@ export default function useDraftEditorController(params: Params) {
     placementX: state.placementX,
     placementY: state.placementY,
 
+    /**
+     * 今回の修正:
+     * shadow 系 state を page.tsx へ返す
+     */
+    shadowOpacity: state.shadowOpacity,
+    shadowBlur: state.shadowBlur,
+    shadowScale: state.shadowScale,
+    shadowOffsetX: state.shadowOffsetX,
+    shadowOffsetY: state.shadowOffsetY,
+
     templateBgUrl: state.templateBgUrl,
     templateBgUrls: state.templateBgUrls,
     templateBgRecommend: state.templateBgRecommend,
@@ -847,6 +1002,16 @@ export default function useDraftEditorController(params: Params) {
     setPlacementScale: state.setPlacementScale,
     setPlacementX: state.setPlacementX,
     setPlacementY: state.setPlacementY,
+
+    /**
+     * 今回の修正:
+     * shadow 系 setter を page.tsx へ返す
+     */
+    setShadowOpacity: state.setShadowOpacity,
+    setShadowBlur: state.setShadowBlur,
+    setShadowScale: state.setShadowScale,
+    setShadowOffsetX: state.setShadowOffsetX,
+    setShadowOffsetY: state.setShadowOffsetY,
 
     setTemplateBgUrl: state.setTemplateBgUrl,
     setTemplateBgUrls: state.setTemplateBgUrls,

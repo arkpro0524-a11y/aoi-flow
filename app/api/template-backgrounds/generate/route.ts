@@ -1,10 +1,10 @@
-// /app/api/template-backgrounds/generate/route.ts
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 import { NextResponse } from "next/server";
 import crypto from "crypto";
 import { getStorage } from "firebase-admin/storage";
+import sharp from "sharp";
 
 import { requireUserFromAuthHeader } from "@/app/api/_firebase/admin";
 import { getAdminDb } from "@/firebaseAdmin";
@@ -13,27 +13,20 @@ import { getAdminDb } from "@/firebaseAdmin";
  * AOI FLOW
  * テンプレ背景 生成API
  *
- * このAPIの役割
- * - EC販売向けの「商品を主役にしやすいテンプレ背景」を生成する
- * - AI背景（キーワード空間生成）とは別物として扱う
- * - 商品切り抜き画像 / ブランド / Vision / Keywords を参照する
- * - 生成した画像を Storage に保存する
- * - draft に templateBgUrl / templateBgUrls を保存できるようにする
+ * 目的
+ * - EC / メルカリ / marketplace 向けの「商品を際立たせる背景」を生成する
+ * - 商品そのものは絶対に描かない
+ * - 元写真の背景を引きずらない
+ * - AI背景（使用イメージ背景）とは別責務
  *
- * 重要
- * - 人物、手、文字、ロゴ、看板は禁止
- * - 商品そのものは背景に描かない
- * - 中央に商品を置ける余白を強く要求する
- * - 販売向けの安定した「壁＋床 / 壁＋天板」構図を優先する
- *
- * 今回は STEP3
- * - まず生成と保存を成立させる
- * - おすすめロジックは STEP4 で別API化する
+ * 今回の修正
+ * - referenceImageUrl は受け取るが、OpenAI へ画像として渡さない
+ * - images/generations を使う
+ * - 生成後の画像に対して暗さ判定を行う
+ * - 必要なら軽い明度補正をかける
+ * - 暗すぎる画像は弾く
+ * - 黒背景キャッシュ再利用を避けるため version を更新
  */
-
-/* -------------------------------------------------- */
-/* 型 */
-/* -------------------------------------------------- */
 
 type TemplateBgCategory = "light" | "white" | "dark" | "wood" | "studio";
 type ProductCategory = "furniture" | "goods" | "apparel" | "small" | "other";
@@ -47,7 +40,6 @@ type TemplateGenerateBody = {
   vision?: unknown;
   keywords?: unknown;
   referenceImageUrl?: unknown;
-
   templateCategory?: unknown;
   productCategory?: unknown;
   productSize?: unknown;
@@ -55,15 +47,16 @@ type TemplateGenerateBody = {
   sellDirection?: unknown;
 };
 
-type TemplateBgRecommendation = {
-  id: string;
-  score: number;
-  reason: string;
-};
+const TEMPLATE_BG_VERSION = "v3_brightness_guard";
 
-/* -------------------------------------------------- */
-/* 小関数 */
-/* -------------------------------------------------- */
+type ImageLightAnalysis = {
+  mean: number;
+  minChannelMean: number;
+  darkPixelRatio: number;
+  nearBlackPixelRatio: number;
+  width: number;
+  height: number;
+};
 
 function bad(msg: string, status = 400) {
   return NextResponse.json({ ok: false, error: msg }, { status });
@@ -75,7 +68,6 @@ function asTrimmedString(v: unknown): string {
 
 function compactKeywords(input: unknown): string[] {
   if (!Array.isArray(input)) return [];
-
   return input
     .map((v) => String(v ?? "").trim())
     .filter(Boolean)
@@ -135,10 +127,8 @@ function uniqKeepOrder(input: string[], limit = 30): string[] {
     const s = String(item ?? "").trim();
     if (!s) continue;
     if (seen.has(s)) continue;
-
     seen.add(s);
     out.push(s);
-
     if (out.length >= limit) break;
   }
 
@@ -184,28 +174,31 @@ function buildTemplateCategoryRules(category: TemplateBgCategory): string[] {
       "Use a bright neutral wall and calm floor.",
       "Prefer soft daylight feel.",
       "Keep the overall tone clean and sell-friendly.",
-      "Do not make the wall pure white; keep slight material realism.",
-      "Use generous negative space in the center.",
+      "Use wide negative space in the center.",
+      "Do not create lifestyle clutter.",
+      "The image should feel marketplace-ready rather than magazine-like.",
     ];
   }
 
   if (category === "white") {
     return [
-      "Use a clean white or near-white wall and white/very light floor or tabletop.",
-      "Prioritize minimal EC product listing style.",
+      "Use a clean white or near-white wall and very light floor or tabletop.",
+      "Prioritize marketplace and ecommerce listing usability.",
       "Keep shadows soft and controlled.",
-      "Avoid decorative texture that competes with the product.",
-      "The result should feel simple, clinical, and commercially usable.",
+      "Avoid decorative textures that compete with the product.",
+      "The output should feel simple, reliable, and commercially safe.",
+      "Do not add visible room personality.",
     ];
   }
 
   if (category === "dark") {
     return [
       "Use a darker premium wall tone with controlled contrast.",
-      "Keep the center readable; do not crush shadows.",
-      "Support high-end product presentation.",
-      "Use elegant low-noise material surfaces.",
-      "Maintain strong product separation from the background.",
+      "Keep the center readable and open.",
+      "Support premium presentation without becoming dramatic.",
+      "Use elegant and low-noise material surfaces.",
+      "Maintain strong future product separation from the background.",
+      "Avoid cinematic lighting.",
     ];
   }
 
@@ -216,6 +209,7 @@ function buildTemplateCategoryRules(category: TemplateBgCategory): string[] {
       "Keep the wood tone believable and not too orange.",
       "Avoid rustic clutter and avoid lifestyle props.",
       "The center must remain wide and open for product placement.",
+      "The result should feel like a clean selling template, not a staged room photo.",
     ];
   }
 
@@ -225,6 +219,7 @@ function buildTemplateCategoryRules(category: TemplateBgCategory): string[] {
     "Keep the scene neutral, balanced, and product-first.",
     "Avoid dramatic perspective.",
     "Keep the center area fully usable.",
+    "Do not make the image look like a real-room snapshot.",
   ];
 }
 
@@ -236,6 +231,7 @@ function buildProductCategoryRules(category: ProductCategory): string[] {
       "Prefer readable wall-floor structure.",
       "Avoid cramped corners and tiny rooms.",
       "The center area must support larger product placement naturally.",
+      "Do not create multiple furniture objects in the background.",
     ];
   }
 
@@ -246,6 +242,7 @@ function buildProductCategoryRules(category: ProductCategory): string[] {
       "Keep scale believable for a retail listing photo.",
       "Avoid clutter and decorative props.",
       "Support silhouette clarity.",
+      "Do not place hero objects near the center.",
     ];
   }
 
@@ -256,6 +253,7 @@ function buildProductCategoryRules(category: ProductCategory): string[] {
       "Do not create busy interiors.",
       "Keep the wall plane stable and front-facing.",
       "Maintain a retail-clean feeling.",
+      "Do not add visible mannequins, hangers, racks, or styling props unless extremely faint.",
     ];
   }
 
@@ -266,6 +264,7 @@ function buildProductCategoryRules(category: ProductCategory): string[] {
       "Protect silhouette readability strongly.",
       "Avoid over-textured surfaces.",
       "Keep composition extremely stable.",
+      "Avoid environmental storytelling.",
     ];
   }
 
@@ -350,6 +349,7 @@ function buildSellDirectionRules(direction: SellDirection): string[] {
       "Allow refined atmosphere but keep the background secondary.",
       "Do not sacrifice selling clarity.",
       "Avoid noisy artistic decisions.",
+      "Do not become editorial or lifestyle-first.",
     ];
   }
 
@@ -359,6 +359,7 @@ function buildSellDirectionRules(direction: SellDirection): string[] {
       "Prioritize clarity, cleanliness, and honesty.",
       "Avoid dramatic light and excessive mood.",
       "The background must feel reliable and commercially safe.",
+      "Prefer plain and clean presentation.",
     ];
   }
 
@@ -368,6 +369,7 @@ function buildSellDirectionRules(direction: SellDirection): string[] {
       "Allow subtle atmosphere only.",
       "Do not introduce props or narrative clutter.",
       "The product must remain the future hero.",
+      "Keep the background usable for marketplace sale.",
     ];
   }
 
@@ -376,6 +378,7 @@ function buildSellDirectionRules(direction: SellDirection): string[] {
     "Prioritize conversion-friendly background design.",
     "Keep the scene simple, readable, and product-first.",
     "Do not distract from the future product.",
+    "This should feel suitable for marketplaces like Mercari.",
   ];
 }
 
@@ -392,6 +395,12 @@ function buildCoreHardRules(): string[] {
     "Support a product occupying roughly 30 to 50 percent of frame width.",
     "This image is for ecommerce selling, not lifestyle storytelling.",
     "The background must stay secondary to the future product.",
+    "Do not make the image look like a photo taken with the product already present.",
+    "Do not inherit or reinterpret any original photo background.",
+    "Lighting must be bright and clear.",
+    "Avoid dark or moody lighting.",
+    "Background should be well-lit for ecommerce use.",
+    "No black or near-black backgrounds.",
   ];
 }
 
@@ -411,15 +420,179 @@ function buildTemplateTags(args: {
       sellDirection,
       "template-background",
       "ec",
+      "mercari",
       "product-first",
     ],
     12
   );
 }
 
-/* -------------------------------------------------- */
-/* 本体 */
-/* -------------------------------------------------- */
+function buildPrompt(args: {
+  brandId: string;
+  brandName: string;
+  vision: string;
+  keywords: string[];
+  styleText: string;
+  templateCategory: TemplateBgCategory;
+  productCategory: ProductCategory;
+  productSize: ProductSize;
+  groundingType: GroundingType;
+  sellDirection: SellDirection;
+  hardRules: string[];
+}) {
+  const {
+    brandId,
+    brandName,
+    vision,
+    keywords,
+    styleText,
+    templateCategory,
+    productCategory,
+    productSize,
+    groundingType,
+    sellDirection,
+    hardRules,
+  } = args;
+
+  return [
+    "Generate a clean template background only for later product compositing.",
+    "This is NOT a usage-scene background.",
+    "This is a selling background for ecommerce and marketplace listing use.",
+    "The product itself must not appear.",
+    "Do not reinterpret any original product photo background.",
+    "Design the output as a controlled selling template where the future product is the hero.",
+    "Prioritize readability, empty center space, grounding safety, and commercial usability.",
+    "The result should work well for marketplaces such as Mercari.",
+    "",
+    `Brand: ${brandName || brandId}`,
+    `Vision: ${vision}`,
+    keywords.length ? `Keywords: ${keywords.join(", ")}` : "",
+    styleText ? `Brand style: ${styleText}` : "",
+    `Template category: ${templateCategory}`,
+    `Product category: ${productCategory}`,
+    `Product size: ${productSize}`,
+    `Grounding type: ${groundingType}`,
+    `Selling direction: ${sellDirection}`,
+    "",
+    "Strict rules:",
+    ...hardRules.map((rule) => `- ${rule}`),
+    "",
+    "Return one square image suitable for later product listing compositing.",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+async function analyzeImageLight(buf: Buffer): Promise<ImageLightAnalysis> {
+  const image = sharp(buf, { failOn: "none" });
+  const meta = await image.metadata();
+
+  const { data, info } = await image
+    .removeAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+
+  const width = Number(info.width || meta.width || 0);
+  const height = Number(info.height || meta.height || 0);
+  const channels = Number(info.channels || 3);
+  const totalPixels = Math.max(1, width * height);
+
+  let sum = 0;
+  let darkCount = 0;
+  let nearBlackCount = 0;
+
+  for (let i = 0; i < data.length; i += channels) {
+    const r = data[i] ?? 0;
+    const g = data[i + 1] ?? 0;
+    const b = data[i + 2] ?? 0;
+
+    const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    sum += luminance;
+
+    if (luminance < 58) darkCount += 1;
+    if (luminance < 28) nearBlackCount += 1;
+  }
+
+  const stats = await image.removeAlpha().stats();
+  const rMean = stats.channels[0]?.mean ?? 0;
+  const gMean = stats.channels[1]?.mean ?? 0;
+  const bMean = stats.channels[2]?.mean ?? 0;
+
+  return {
+    mean: sum / totalPixels,
+    minChannelMean: Math.min(rMean, gMean, bMean),
+    darkPixelRatio: darkCount / totalPixels,
+    nearBlackPixelRatio: nearBlackCount / totalPixels,
+    width,
+    height,
+  };
+}
+
+function isTooDarkImage(a: ImageLightAnalysis): boolean {
+  return (
+    a.mean < 88 ||
+    a.minChannelMean < 72 ||
+    a.darkPixelRatio > 0.42 ||
+    a.nearBlackPixelRatio > 0.12
+  );
+}
+
+async function brightenBackgroundImage(
+  buf: Buffer,
+  mode: "ai" | "template"
+): Promise<Buffer> {
+  const firstPass = await sharp(buf, { failOn: "none" })
+    .removeAlpha()
+    .modulate({
+      brightness: mode === "template" ? 1.2 : 1.16,
+      saturation: mode === "template" ? 0.96 : 0.98,
+    })
+    .linear(1.05, 8)
+    .png()
+    .toBuffer();
+
+  const firstAnalysis = await analyzeImageLight(firstPass);
+  if (!isTooDarkImage(firstAnalysis)) return firstPass;
+
+  return await sharp(firstPass, { failOn: "none" })
+    .removeAlpha()
+    .modulate({
+      brightness: mode === "template" ? 1.12 : 1.1,
+      saturation: 0.98,
+    })
+    .linear(1.03, 10)
+    .png()
+    .toBuffer();
+}
+
+async function ensureAcceptableBackground(
+  buf: Buffer,
+  mode: "ai" | "template"
+): Promise<{
+  buffer: Buffer;
+  before: ImageLightAnalysis;
+  after: ImageLightAnalysis;
+}> {
+  const before = await analyzeImageLight(buf);
+  const fixed = await brightenBackgroundImage(buf, mode);
+  const after = await analyzeImageLight(fixed);
+
+  if (isTooDarkImage(after)) {
+    throw new Error(
+      `generated background too dark (mean=${after.mean.toFixed(
+        1
+      )}, darkRatio=${after.darkPixelRatio.toFixed(
+        3
+      )}, nearBlackRatio=${after.nearBlackPixelRatio.toFixed(3)})`
+    );
+  }
+
+  return {
+    buffer: fixed,
+    before,
+    after,
+  };
+}
 
 export async function POST(req: Request) {
   try {
@@ -440,17 +613,8 @@ export async function POST(req: Request) {
     const groundingType = normalizeGroundingType(body.groundingType);
     const sellDirection = normalizeSellDirection(body.sellDirection);
 
-    if (!draftId) {
-      return bad("draftId is required");
-    }
-
-    if (!vision) {
-      return bad("vision is required");
-    }
-
-    if (!referenceImageUrl) {
-      return bad("referenceImageUrl is required");
-    }
+    if (!draftId) return bad("draftId is required");
+    if (!vision) return bad("vision is required");
 
     const brand = await loadBrand(uid, brandId);
     if (!brand) {
@@ -461,9 +625,7 @@ export async function POST(req: Request) {
     const draftRef = db.collection("drafts").doc(draftId);
     const draftSnap = await draftRef.get();
 
-    if (!draftSnap.exists) {
-      return bad("draft not found", 404);
-    }
+    if (!draftSnap.exists) return bad("draft not found", 404);
 
     const draftData = draftSnap.data() || {};
     if (String(draftData.userId || "") !== uid) {
@@ -483,32 +645,19 @@ export async function POST(req: Request) {
       ...brandRules,
     ];
 
-    const prompt = [
-      "Generate a background image only for later product compositing.",
-      "This is a template background for ecommerce product selling.",
-      "Do not include the actual product in the output.",
-      "Use the reference image only to infer product scale, category fit, grounding logic, and selling context.",
-      "The final output must look like a clean sales template background where a product can be placed later.",
-      "",
-      `Brand: ${String((brand as any).name ?? brandId)}`,
-      `Vision: ${vision}`,
-      keywords.length ? `Keywords: ${keywords.join(", ")}` : "",
-      styleText ? `Brand style: ${styleText}` : "",
-      `Template category: ${templateCategory}`,
-      `Product category: ${productCategory}`,
-      `Product size: ${productSize}`,
-      `Grounding type: ${groundingType}`,
-      `Selling direction: ${sellDirection}`,
-      "",
-      "Strict rules:",
-      ...hardRules.map((rule) => `- ${rule}`),
-      "",
-      "The result must feel calm, professional, and commercially usable.",
-      "The center area should be intentionally left open for a later product.",
-      "Return one square image suitable for product listing use.",
-    ]
-      .filter(Boolean)
-      .join("\n");
+    const prompt = buildPrompt({
+      brandId,
+      brandName: String((brand as any).name ?? brandId),
+      vision,
+      keywords,
+      styleText,
+      templateCategory,
+      productCategory,
+      productSize,
+      groundingType,
+      sellDirection,
+      hardRules,
+    });
 
     const hash = stableHash({
       uid,
@@ -516,7 +665,6 @@ export async function POST(req: Request) {
       brandId,
       vision,
       keywords,
-      referenceImageUrl,
       templateCategory,
       productCategory,
       productSize,
@@ -524,8 +672,9 @@ export async function POST(req: Request) {
       sellDirection,
       styleText,
       hardRules,
-      type: "template_background_generate_v1",
+      type: "template_background_generate_v3_no_reference_image_brightness_guard",
       size: "1024x1024",
+      version: TEMPLATE_BG_VERSION,
     });
 
     const bucket = getStorage().bucket();
@@ -587,39 +736,29 @@ export async function POST(req: Request) {
         templateCategory,
         tags,
         templateId: `${templateCategory}_${hash}`,
+        meta: {
+          purpose: "template_background",
+          version: TEMPLATE_BG_VERSION,
+          referenceImageAccepted: !!referenceImageUrl,
+          referenceImageUsedForGeneration: false,
+        },
       });
     }
 
     const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) {
-      return bad("OPENAI_API_KEY missing", 500);
-    }
+    if (!apiKey) return bad("OPENAI_API_KEY missing", 500);
 
-    const referenceRes = await fetch(referenceImageUrl, {
-      method: "GET",
-      cache: "no-store" as RequestCache,
-    });
-
-    if (!referenceRes.ok) {
-      return bad("failed to fetch reference image", 400);
-    }
-
-    const referenceBuf = Buffer.from(await referenceRes.arrayBuffer());
-    const referenceType = referenceRes.headers.get("content-type") || "image/png";
-    const referenceFile = new File([referenceBuf], "reference.png", { type: referenceType });
-
-    const form = new FormData();
-    form.append("model", "gpt-image-1");
-    form.append("prompt", prompt);
-    form.append("size", "1024x1024");
-    form.append("image", referenceFile);
-
-    const openaiRes = await fetch("https://api.openai.com/v1/images/edits", {
+    const openaiRes = await fetch("https://api.openai.com/v1/images/generations", {
       method: "POST",
       headers: {
+        "content-type": "application/json",
         Authorization: `Bearer ${apiKey}`,
       },
-      body: form,
+      body: JSON.stringify({
+        model: "gpt-image-1",
+        prompt,
+        size: "1024x1024",
+      }),
     });
 
     const openaiJson = await openaiRes.json().catch(() => ({} as any));
@@ -633,15 +772,26 @@ export async function POST(req: Request) {
       return bad("no image returned", 500);
     }
 
-    const buf = Buffer.from(b64, "base64");
+    const rawBuf = Buffer.from(b64, "base64");
+    const ensured = await ensureAcceptableBackground(rawBuf, "template");
+
     const token = crypto.randomUUID();
 
-    await fileRef.save(buf, {
+    await fileRef.save(ensured.buffer, {
       contentType: "image/png",
       resumable: false,
       metadata: {
         metadata: {
           firebaseStorageDownloadTokens: token,
+          templateBackgroundVersion: TEMPLATE_BG_VERSION,
+          referenceImageAccepted: String(!!referenceImageUrl),
+          referenceImageUsedForGeneration: "false",
+          lightMeanBefore: ensured.before.mean.toFixed(2),
+          lightMeanAfter: ensured.after.mean.toFixed(2),
+          darkPixelRatioBefore: ensured.before.darkPixelRatio.toFixed(4),
+          darkPixelRatioAfter: ensured.after.darkPixelRatio.toFixed(4),
+          nearBlackPixelRatioBefore: ensured.before.nearBlackPixelRatio.toFixed(4),
+          nearBlackPixelRatioAfter: ensured.after.nearBlackPixelRatio.toFixed(4),
         },
       },
     });
@@ -678,6 +828,14 @@ export async function POST(req: Request) {
       templateCategory,
       tags,
       templateId: `${templateCategory}_${hash}`,
+      meta: {
+        purpose: "template_background",
+        version: TEMPLATE_BG_VERSION,
+        referenceImageAccepted: !!referenceImageUrl,
+        referenceImageUsedForGeneration: false,
+        lightBefore: ensured.before,
+        lightAfter: ensured.after,
+      },
     });
   } catch (e: any) {
     console.error("[template-backgrounds/generate] error:", e);

@@ -17,11 +17,6 @@
  *   ③ サイズ        : テンプレ
  *   ④ ディテール    : 元写真
  *   ⑤ ストーリー    : AI再生成
- *
- * 今回の STEP 1 追加
- * - テンプレ背景を「AI背景」と分けて扱うための型を追加
- * - まだ API / save / get は未対応
- * - まずは型だけ安全に追加して、次の STEP で保存読込を通す
  */
 
 // =========================
@@ -50,11 +45,19 @@ export type ImagePurpose = "sales" | "branding" | "trust" | "story";
 // 商品画像
 // =========================
 
+export type DraftImageRole =
+  | "product"
+  | "material"
+  | "detail"
+  | "context"
+  | "other"
+  | string;
+
 export type DraftImage = {
   id: string;
   url: string;
   createdAt?: number;
-  role?: "product" | "material" | "detail" | "other" | string;
+  role?: DraftImageRole;
 };
 
 export type DraftImages = {
@@ -75,24 +78,6 @@ export type ShortCopy = {
 // overlay
 // =========================
 
-/**
- * 旧シンプル型と、新 overlay 型の両対応
- *
- * 今の hook 群では
- * - lines
- * - lineHeight
- * - x
- * - color
- * - background
- * を使っている
- *
- * 一方、保存の正式意味としては
- * - textEnabled
- * - textSize
- * - textY
- * - bandOpacity
- * も使う
- */
 export type TextOverlay = {
   // 新UIで使う本体
   lines?: string[];
@@ -200,30 +185,8 @@ export type BgPickLog = {
 // テンプレ背景
 // =========================
 
-/**
- * 背景選択UIで今どちらを触っているか
- *
- * - template_bg : EC向けテンプレ背景
- * - ai_bg       : キーワードから作るAI背景
- *
- * 注意
- * - これは UI の選択状態
- * - 既存の activePhotoMode（template / ai_bg）とは役割が少し違う
- * - activePhotoMode は「合成プレビューで何を使うか」
- * - backgroundSourceTab は「背景選択UIで何を編集しているか」
- */
 export type BackgroundSourceTab = "template_bg" | "ai_bg";
 
-/**
- * テンプレ背景のおすすめ結果1件分
- *
- * 今回は最小構成
- * - id
- * - score
- * - reason
- *
- * 将来必要なら category / tags / matchedRules などを追加可能
- */
 export type TemplateBgRecommendation = {
   id: string;
   score: number;
@@ -297,40 +260,33 @@ export type CmVideo = {
 // 新仕様: 商品配置調整
 // =========================
 
-/**
- * ① 商品写真の最終調整UIで使う
- * - scale : 商品の大きさ
- * - x     : 左右位置（0.5 が中央）
- * - y     : 上下位置（0.5 が中央）
- */
 export type ProductPlacement = {
   scale: number;
   x: number;
   y: number;
+  shadow?: {
+    opacity: number;
+    blur: number;
+    scale: number;
+    offsetX: number;
+    offsetY: number;
+  };
 };
 
 // =========================
 // 新仕様: 写真モード
 // =========================
 
-/**
- * ① 商品写真で何を使うかの選択
- * - template : テンプレ背景
- * - ai_bg    : AI背景
- */
 export type ProductPhotoMode = "template" | "ai_bg";
 
 // =========================
 // 新仕様: サイズテンプレ
 // =========================
 
-/**
- * ③ サイズで使うテンプレ種別
- * まずは最小構成だけ持つ
- */
 export type SizeTemplateType =
   | "simple"
   | "compare"
+  | "measure"
   | "with_label"
   | "square_note"
   | string;
@@ -352,7 +308,6 @@ export type DraftDoc = {
 
   /**
    * 画面互換系
-   * - 既存 hook / page.tsx が brand を直接使っているため残す
    */
   brand?: BrandId;
 
@@ -361,7 +316,6 @@ export type DraftDoc = {
   // =================
 
   title?: string;
-
   vision: string;
 
   /**
@@ -375,13 +329,11 @@ export type DraftDoc = {
   keywordsText?: string;
 
   memo?: string;
-
   voice?: string;
   ban?: string;
   must?: string;
   purpose?: string;
   platform?: string;
-
   videoButtonId?: string;
 
   // =================
@@ -453,64 +405,24 @@ export type DraftDoc = {
   // 新仕様: ① 商品写真
   // =================
 
-  /**
-   * ① 商品写真の背景選択モード
-   * - template : テンプレ背景
-   * - ai_bg    : AI背景
-   */
   activePhotoMode?: ProductPhotoMode;
-
-  /**
-   * ① 商品写真の最終配置
-   */
   placement?: ProductPlacement;
-
-  /**
-   * 背景選択UIで今どちらを編集しているか
-   * - template_bg : テンプレ背景
-   * - ai_bg       : AI背景
-   */
+  shadowOpacity?: number;
+  shadowBlur?: number;
+  shadowScale?: number;
+  shadowOffsetX?: number;
+  shadowOffsetY?: number;
   backgroundSourceTab?: BackgroundSourceTab;
-
-  /**
-   * ① テンプレ背景URL
-   * - 現在選択中のテンプレ背景
-   */
   templateBgUrl?: string;
-
-  /**
-   * ① テンプレ背景候補
-   * - この下書き内で保持するテンプレ背景候補一覧
-   */
   templateBgUrls?: string[];
-
-  /**
-   * ① 現在選択中のテンプレ背景ID
-   * - URLだけでは後でおすすめや理由と紐づけにくいのでIDも持つ
-   */
   templateBgSelectedId?: string;
-
-  /**
-   * ① おすすめ結果のID並び
-   * - UIで「上からおすすめ順」に出したい時に使う
-   */
   templateBgRecommendedIds?: string[];
-
-  /**
-   * ① おすすめ結果の詳細
-   * - reason を保存しておくと「根拠付きおすすめ」を再表示できる
-   */
   templateBgRecommendations?: TemplateBgRecommendation[];
 
   // =================
   // 新仕様: ② 使用シーン
   // =================
 
-  /**
-   * 元画像からAIで再生成した「使用シーン」
-   * 今回は既存の imageIdeaUrl / imageIdeaUrls も互換として残すが、
-   * 正式名も追加しておく
-   */
   useSceneImageUrl?: string;
   useSceneImageUrls?: string[];
 

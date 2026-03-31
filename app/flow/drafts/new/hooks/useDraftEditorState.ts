@@ -171,7 +171,19 @@ export const DEFAULT_DRAFT: DraftDoc = {
     scale: 1,
     x: 0.5,
     y: 0.5,
+    shadow: {
+      opacity: 0.12,
+      blur: 12,
+      scale: 1,
+      offsetX: 0,
+      offsetY: 0.02,
+    },
   },
+  shadowOpacity: 0.12,
+  shadowBlur: 12,
+  shadowScale: 1,
+  shadowOffsetX: 0,
+  shadowOffsetY: 0.02,
 
   /**
    * テンプレ背景
@@ -404,6 +416,11 @@ export default function useDraftEditorState(id: string | null) {
   const [placementScale, setPlacementScale] = useState(1);
   const [placementX, setPlacementX] = useState(0.5);
   const [placementY, setPlacementY] = useState(0.5);
+  const [shadowOpacity, setShadowOpacity] = useState(0.12);
+  const [shadowBlur, setShadowBlur] = useState(12);
+  const [shadowScale, setShadowScale] = useState(1);
+  const [shadowOffsetX, setShadowOffsetX] = useState(0);
+  const [shadowOffsetY, setShadowOffsetY] = useState(0.02);
 
   /**
    * テンプレ背景専用 state
@@ -725,6 +742,21 @@ export default function useDraftEditorState(id: string | null) {
 
     placementY,
     setPlacementY,
+
+    shadowOpacity,
+    setShadowOpacity,
+
+    shadowBlur,
+    setShadowBlur,
+
+    shadowScale,
+    setShadowScale,
+
+    shadowOffsetX,
+    setShadowOffsetX,
+
+    shadowOffsetY,
+    setShadowOffsetY,
 
     /**
      * テンプレ背景専用

@@ -1,4 +1,4 @@
-// app/api/compose-product-stage/route.ts
+//app/api/compose-product-stage/route.ts
 import { NextResponse } from "next/server";
 import sharp from "sharp";
 
@@ -6,32 +6,13 @@ export const runtime = "nodejs";
 
 /**
  * AOI FLOW
- * 商品 + 背景 合成API（placement反映版）
+ * 商品 + 背景 合成API
  *
- * このAPIの役割
- * - 前景（商品透過PNG）と背景画像を受け取る
- * - placement.scale / x / y を完成画像に反映する
- * - 商品サイズと位置を決定する
- * - 接地影を生成する
- * - 背景 -5% 明度
- * - 商品 +3% 明度
- * - 色温度ズレを軽く補正する
- * - 浮き感を減らすための接地補助を入れる
- *
- * 今回の重要修正
- * - 以前は placement を受け取っても実際の合成に使っていなかった
- * - 今回は placement を left / top / 商品サイズに反映する
- * - これで「配置を保存」→「合成を作り直す」で AI背景完成画像に反映される
- *
- * 重要
- * - 商品形状は変えない
- * - 強い変形や強演出はしない
- * - 自然に置いて見えることを優先する
+ * 今回の整理
+ * - 背景生成の主犯ではないが、
+ *   テンプレ背景時は「商品を主役に見せる」寄せ方を少し強める
+ * - AI背景時は世界観を少し残す
  */
-
-/* =========================
- * 型
- * ========================= */
 
 type LightDirection = "left" | "center" | "right";
 type ProductCategory = "furniture" | "goods" | "apparel" | "small" | "other";
@@ -39,37 +20,31 @@ type ProductSize = "large" | "medium" | "small";
 type GroundingType = "floor" | "table" | "hanging" | "wall";
 type SellDirection = "sales" | "branding" | "trust" | "story";
 type BgScene = "studio" | "lifestyle" | "scale" | "detail";
+type ProductPhotoMode = "template" | "ai_bg";
 
 type PlacementInput = {
   scale: number;
   x: number;
   y: number;
+  shadow?: {
+    opacity: number;
+    blur: number;
+    scale: number;
+    offsetX: number;
+    offsetY: number;
+  };
 };
 
-/**
- * sharp.recomb() 用の 3x3 行列型
- * - TypeScript が「ただの配列」と誤認しないように固定長タプルで定義
- */
 type Matrix3x3 = [
   [number, number, number],
   [number, number, number],
   [number, number, number]
 ];
 
-/* =========================
- * 小関数
- * ========================= */
-
-/**
- * 数値を範囲内に収める
- */
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
 }
 
-/**
- * 画像取得
- */
 async function fetchImageBuffer(url: string): Promise<Buffer> {
   const res = await fetch(url, { cache: "no-store" as RequestCache });
   if (!res.ok) {
@@ -78,36 +53,32 @@ async function fetchImageBuffer(url: string): Promise<Buffer> {
   return Buffer.from(await res.arrayBuffer());
 }
 
-/**
- * 商品横幅比率
- * - AOI FLOW仕様の基準値
- */
 function normalizeProductWidthRatio(input: unknown): number {
   const n = Number(input);
   if (!Number.isFinite(n)) return 0.42;
   return clamp(n, 0.3, 0.45);
 }
 
-/**
- * placement を正規化する
- *
- * 保存単位
- * - scale: 0.4〜2.2
- * - x/y  : 0〜1
- */
 function normalizePlacement(input: unknown): PlacementInput {
-  const raw = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+  const raw = input && typeof input === "object" ? (input as Record<string, any>) : {};
+
+  const shadowRaw =
+    raw.shadow && typeof raw.shadow === "object" ? (raw.shadow as Record<string, any>) : {};
 
   return {
     scale: clamp(Number(raw.scale ?? 1), 0.4, 2.2),
     x: clamp(Number(raw.x ?? 0.5), 0, 1),
     y: clamp(Number(raw.y ?? 0.5), 0, 1),
+    shadow: {
+      opacity: clamp(Number(shadowRaw.opacity ?? 0.12), 0, 1),
+      blur: clamp(Number(shadowRaw.blur ?? 10), 0, 100),
+      scale: clamp(Number(shadowRaw.scale ?? 1), 0.5, 2),
+      offsetX: clamp(Number(shadowRaw.offsetX ?? 0), -1, 1),
+      offsetY: clamp(Number(shadowRaw.offsetY ?? 0.02), -1, 1),
+    },
   };
 }
 
-/**
- * 光方向
- */
 function normalizeLight(input: unknown): LightDirection {
   const s = String(input ?? "").trim();
   if (s === "left") return "left";
@@ -115,9 +86,6 @@ function normalizeLight(input: unknown): LightDirection {
   return "center";
 }
 
-/**
- * 商品カテゴリ
- */
 function normalizeProductCategory(input: unknown): ProductCategory {
   const s = String(input ?? "").trim();
   if (s === "furniture") return "furniture";
@@ -127,9 +95,6 @@ function normalizeProductCategory(input: unknown): ProductCategory {
   return "other";
 }
 
-/**
- * 商品サイズ
- */
 function normalizeProductSize(input: unknown): ProductSize {
   const s = String(input ?? "").trim();
   if (s === "large") return "large";
@@ -137,9 +102,6 @@ function normalizeProductSize(input: unknown): ProductSize {
   return "medium";
 }
 
-/**
- * 接地タイプ
- */
 function normalizeGroundingType(input: unknown): GroundingType {
   const s = String(input ?? "").trim();
   if (s === "table") return "table";
@@ -148,9 +110,6 @@ function normalizeGroundingType(input: unknown): GroundingType {
   return "floor";
 }
 
-/**
- * 売り方向
- */
 function normalizeSellDirection(input: unknown): SellDirection {
   const s = String(input ?? "").trim();
   if (s === "branding") return "branding";
@@ -159,9 +118,6 @@ function normalizeSellDirection(input: unknown): SellDirection {
   return "sales";
 }
 
-/**
- * 背景方向
- */
 function normalizeBgScene(input: unknown): BgScene {
   const s = String(input ?? "").trim();
   if (s === "lifestyle") return "lifestyle";
@@ -170,39 +126,45 @@ function normalizeBgScene(input: unknown): BgScene {
   return "studio";
 }
 
-/**
- * 背景を少し暗くして、彩度を少し整える
- * - 仕様: 背景 -5% 明度
- */
-async function tuneBackground(buf: Buffer): Promise<Buffer> {
+function normalizePhotoMode(input: unknown): ProductPhotoMode {
+  const s = String(input ?? "").trim();
+  if (s === "template") return "template";
+  return "ai_bg";
+}
+
+async function tuneBackground(
+  buf: Buffer,
+  mode: ProductPhotoMode,
+  sellDirection: SellDirection
+): Promise<Buffer> {
+  const brightness =
+    mode === "template" ? 0.97 : sellDirection === "branding" ? 0.96 : 0.95;
+
+  const saturation =
+    mode === "template" ? 0.94 : sellDirection === "branding" ? 1.0 : 0.98;
+
   return await sharp(buf, { failOn: "none" })
     .resize(1024, 1024, {
       fit: "cover",
       position: "centre",
     })
     .modulate({
-      brightness: 0.95,
-      saturation: 0.98,
+      brightness,
+      saturation,
     })
-    .linear(1.02, -4)
+    .linear(mode === "template" ? 1.015 : 1.02, mode === "template" ? -3 : -4)
     .png()
     .toBuffer();
 }
 
-/**
- * 商品の見え方を少し持ち上げる
- * - 仕様: 商品 +3% 明度
- * - 軽いコントラスト補正
- */
 async function tuneForeground(
   buf: Buffer,
   targetWidth: number,
-  productSize: ProductSize
+  productSize: ProductSize,
+  mode: ProductPhotoMode
 ): Promise<Buffer> {
   const maxHeight =
-    productSize === "large" ? 840 :
-    productSize === "small" ? 680 :
-    780;
+    productSize === "large" ? 840 : productSize === "small" ? 680 : 780;
 
   return await sharp(buf, { failOn: "none" })
     .ensureAlpha()
@@ -214,18 +176,14 @@ async function tuneForeground(
       withoutEnlargement: true,
     })
     .modulate({
-      brightness: 1.03,
-      saturation: 1.01,
+      brightness: mode === "template" ? 1.04 : 1.03,
+      saturation: mode === "template" ? 1.0 : 1.01,
     })
-    .linear(1.03, -2)
+    .linear(mode === "template" ? 1.035 : 1.03, -2)
     .png()
     .toBuffer();
 }
 
-/**
- * 背景の平均色をざっくり取る
- * - 色温度補正のために使う
- */
 async function getBackgroundAverageColor(buf: Buffer) {
   const stats = await sharp(buf, { failOn: "none" })
     .resize(32, 32, { fit: "cover", position: "centre" })
@@ -239,9 +197,6 @@ async function getBackgroundAverageColor(buf: Buffer) {
   };
 }
 
-/**
- * 商品の平均色をざっくり取る
- */
 async function getForegroundAverageColor(buf: Buffer) {
   const stats = await sharp(buf, { failOn: "none" })
     .resize(32, 32, { fit: "inside" })
@@ -256,9 +211,6 @@ async function getForegroundAverageColor(buf: Buffer) {
   };
 }
 
-/**
- * 色温度ズレを弱く補正する
- */
 async function applyWeakColorTemperatureMatch(
   fgBuf: Buffer,
   bgBuf: Buffer
@@ -301,10 +253,6 @@ async function applyWeakColorTemperatureMatch(
   };
 }
 
-/**
- * 接地影を作る
- * - 商品の実配置に合わせて出す
- */
 async function makeGroundShadow(
   canvasSize: number,
   shadowWidth: number,
@@ -312,98 +260,8 @@ async function makeGroundShadow(
   contactY: number,
   light: LightDirection,
   groundingType: GroundingType,
-  bgScene: BgScene
-): Promise<Buffer> {
-  const effectiveWidth =
-    groundingType === "hanging" ? shadowWidth * 0.18 :
-    groundingType === "wall" ? shadowWidth * 0.35 :
-    groundingType === "table" ? shadowWidth * 0.74 :
-    shadowWidth * 0.86;
-
-  const w = Math.max(60, Math.round(effectiveWidth));
-  const h = Math.max(12, Math.round(w * 0.11));
-
-  const shiftX = light === "left" ? 8 : light === "right" ? -8 : 0;
-
-  const baseOpacity =
-    groundingType === "hanging" ? 0.12 :
-    groundingType === "wall" ? 0.18 :
-    groundingType === "table" ? 0.22 :
-    0.27;
-
-  const opacity = bgScene === "studio" ? baseOpacity + 0.01 : baseOpacity;
-
-  const cy =
-    groundingType === "table" ? contactY - 8 :
-    groundingType === "hanging" ? contactY + 22 :
-    groundingType === "wall" ? contactY + 14 :
-    contactY + 10;
-
-  const cx = clamp(Math.round(centerX + shiftX), 0, canvasSize);
-
-  const svg = `
-    <svg width="${canvasSize}" height="${canvasSize}" xmlns="http://www.w3.org/2000/svg">
-      <defs>
-        <filter id="blur">
-          <feGaussianBlur stdDeviation="10" />
-        </filter>
-      </defs>
-      <ellipse
-        cx="${cx}"
-        cy="${clamp(Math.round(cy), 0, canvasSize)}"
-        rx="${w / 2}"
-        ry="${h / 2}"
-        fill="rgba(0,0,0,${opacity})"
-        filter="url(#blur)"
-      />
-    </svg>
-  `;
-
-  return await sharp(Buffer.from(svg)).png().toBuffer();
-}
-
-/**
- * depth 補助
- * - 商品の下半分側にごく弱い陰影を足して背景との分離感を上げる
- */
-async function makeDepthOverlay(
-  width: number,
-  height: number,
-  groundingType: GroundingType
-): Promise<Buffer> {
-  const opacity =
-    groundingType === "hanging" ? 0.04 :
-    groundingType === "wall" ? 0.05 :
-    0.08;
-
-  const svg = `
-    <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
-      <defs>
-        <linearGradient id="g" x1="0" x2="0" y1="0" y2="1">
-          <stop offset="0%" stop-color="rgba(0,0,0,0)" />
-          <stop offset="70%" stop-color="rgba(0,0,0,0)" />
-          <stop offset="100%" stop-color="rgba(0,0,0,${opacity})" />
-        </linearGradient>
-      </defs>
-      <rect x="0" y="0" width="${width}" height="${height}" fill="url(#g)" />
-    </svg>
-  `;
-
-  return await sharp(Buffer.from(svg)).png().toBuffer();
-}
-
-/**
- * 接地感補助
- * - 商品の実配置に合わせて出す
- */
-async function makeContactShadow(
-  canvasSize: number,
-  fgWidth: number,
-  centerX: number,
-  contactY: number,
-  light: LightDirection,
-  groundingType: GroundingType,
-  bgScene: BgScene
+  shadow: PlacementInput["shadow"],
+  mode: ProductPhotoMode
 ): Promise<Buffer> {
   if (groundingType === "hanging") {
     return await sharp({
@@ -418,36 +276,38 @@ async function makeContactShadow(
       .toBuffer();
   }
 
-  const shiftX = light === "left" ? 6 : light === "right" ? -6 : 0;
+  const baseScale =
+    groundingType === "wall" ? 0.35 : groundingType === "table" ? 0.5 : 0.6;
 
-  const baseOpacity =
-    groundingType === "wall" ? 0.08 :
-    groundingType === "table" ? 0.12 :
-    0.13;
+  const scale = shadow?.scale ?? 1;
 
-  const opacity = bgScene === "studio" ? baseOpacity + 0.01 : baseOpacity;
+  const w = Math.max(60, Math.round(shadowWidth * baseScale * scale));
+  const h = Math.max(8, Math.round(w * 0.08));
 
-  const rx = Math.max(40, Math.round(fgWidth * 0.30));
-  const ry = Math.max(6, Math.round(fgWidth * 0.03));
-  const cy =
-    groundingType === "table" ? contactY - 11 : contactY + 6;
+  const lightShiftX = light === "left" ? 8 : light === "right" ? -8 : 0;
+  const cx = Math.round(centerX + lightShiftX + (shadow?.offsetX ?? 0) * 40);
+  const cy = Math.round(contactY + 2 + (shadow?.offsetY ?? 0.02) * 40);
 
-  const cx = clamp(Math.round(centerX + shiftX), 0, canvasSize);
+  const baseOpacity = mode === "template" ? 0.10 : 0.12;
+  const maxOpacity = mode === "template" ? 0.34 : 0.5;
+
+  const opacity = clamp(baseOpacity + (shadow?.opacity ?? 0.12) * 0.5, 0, maxOpacity);
+  const blurStd = Math.max(1, (shadow?.blur ?? 10) * (mode === "template" ? 0.72 : 0.8));
 
   const svg = `
     <svg width="${canvasSize}" height="${canvasSize}" xmlns="http://www.w3.org/2000/svg">
       <defs>
-        <filter id="blur2">
-          <feGaussianBlur stdDeviation="4" />
+        <filter id="blur">
+          <feGaussianBlur stdDeviation="${blurStd}" />
         </filter>
       </defs>
       <ellipse
         cx="${cx}"
-        cy="${clamp(Math.round(cy), 0, canvasSize)}"
-        rx="${rx}"
-        ry="${ry}"
+        cy="${cy}"
+        rx="${w / 2}"
+        ry="${h / 2}"
         fill="rgba(0,0,0,${opacity})"
-        filter="url(#blur2)"
+        filter="url(#blur)"
       />
     </svg>
   `;
@@ -455,70 +315,36 @@ async function makeContactShadow(
   return await sharp(Buffer.from(svg)).png().toBuffer();
 }
 
-/**
- * 床・卓上の薄い接地帯
- * - 浮き感を少し減らすための補助
- * - hanging / wall では使わない
- */
-async function makeAmbientGroundBand(
-  canvasSize: number,
-  groundingType: GroundingType,
-  bgScene: BgScene
-): Promise<Buffer> {
-  if (groundingType === "hanging" || groundingType === "wall") {
-    return await sharp({
-      create: {
-        width: canvasSize,
-        height: canvasSize,
-        channels: 4,
-        background: { r: 0, g: 0, b: 0, alpha: 0 },
-      },
-    })
-      .png()
-      .toBuffer();
-  }
-
-  const opacity =
-    bgScene === "studio"
-      ? groundingType === "table"
-        ? 0.045
-        : 0.055
-      : groundingType === "table"
-        ? 0.035
-        : 0.045;
-
-  const y =
-    groundingType === "table" ? canvasSize - 244 : canvasSize - 168;
-
-  const h = groundingType === "table" ? 34 : 44;
-
-  const svg = `
-    <svg width="${canvasSize}" height="${canvasSize}" xmlns="http://www.w3.org/2000/svg">
-      <defs>
-        <linearGradient id="band" x1="0" x2="0" y1="0" y2="1">
-          <stop offset="0%" stop-color="rgba(0,0,0,0)" />
-          <stop offset="100%" stop-color="rgba(0,0,0,${opacity})" />
-        </linearGradient>
-      </defs>
-      <rect x="0" y="${y}" width="${canvasSize}" height="${h}" fill="url(#band)" />
-    </svg>
-  `;
-
-  return await sharp(Buffer.from(svg)).png().toBuffer();
+async function makeDepthOverlay(width: number, height: number): Promise<Buffer> {
+  return await sharp({
+    create: {
+      width: Math.max(1, width),
+      height: Math.max(1, height),
+      channels: 4,
+      background: { r: 0, g: 0, b: 0, alpha: 0 },
+    },
+  })
+    .png()
+    .toBuffer();
 }
 
-/**
- * data URL 化
- */
+async function makeEmptyLayer(canvasSize: number): Promise<Buffer> {
+  return await sharp({
+    create: {
+      width: Math.max(1, canvasSize),
+      height: Math.max(1, canvasSize),
+      channels: 4,
+      background: { r: 0, g: 0, b: 0, alpha: 0 },
+    },
+  })
+    .png()
+    .toBuffer();
+}
+
 function toPngDataUrl(buf: Buffer) {
   return `data:image/png;base64,${buf.toString("base64")}`;
 }
 
-/**
- * bottom margin を接地タイプごとに調整
- *
- * placement が初期値に近い時の自然位置用
- */
 function resolveBottomMargin(
   groundingType: GroundingType,
   productCategory: ProductCategory,
@@ -530,17 +356,11 @@ function resolveBottomMargin(
   if (groundingType === "wall") return 165;
 
   const base =
-    productCategory === "furniture" ? 118 :
-    productSize === "large" ? 122 :
-    productSize === "small" ? 136 :
-    130;
+    productCategory === "furniture" ? 118 : productSize === "large" ? 122 : productSize === "small" ? 136 : 130;
 
   return bgScene === "studio" ? base - 4 : base;
 }
 
-/**
- * placement から left / top を解決する
- */
 function resolvePlacementRect(args: {
   canvas: number;
   fgWidth: number;
@@ -562,23 +382,11 @@ function resolvePlacementRect(args: {
     bgScene,
   } = args;
 
-  const baseBottomMargin = resolveBottomMargin(
-    groundingType,
-    productCategory,
-    productSize,
-    bgScene
-  );
+  const baseBottomMargin = resolveBottomMargin(groundingType, productCategory, productSize, bgScene);
 
-  /**
-   * 従来の自然位置
-   */
   const defaultLeft = Math.round((canvas - fgWidth) / 2);
   const defaultTop = Math.max(30, canvas - fgHeight - baseBottomMargin);
 
-  /**
-   * ユーザー指定位置
-   * - x / y は商品の中心位置として扱う
-   */
   let left = Math.round(placement.x * canvas - fgWidth / 2);
   let top = Math.round(placement.y * canvas - fgHeight / 2);
 
@@ -593,9 +401,6 @@ function resolvePlacementRect(args: {
 
   top = clamp(top, 0, Math.max(0, maxTop));
 
-  /**
-   * 初期値付近なら従来位置を優先
-   */
   const isNearDefaultX = Math.abs(placement.x - 0.5) <= 0.03;
   const isNearDefaultY = Math.abs(placement.y - 0.5) <= 0.03;
 
@@ -623,10 +428,6 @@ function resolvePlacementRect(args: {
   };
 }
 
-/**
- * 品質判定を返す
- * - placement 対応後は許容範囲を広げる
- */
 function evaluateCompositeQuality(args: {
   productWidthRatio: number;
   left: number;
@@ -640,8 +441,7 @@ function evaluateCompositeQuality(args: {
 
   const centered = Math.abs(left - Math.round((canvas - fgWidth) / 2)) <= 6;
   const ratioOk = productWidthRatio >= 0.18 && productWidthRatio <= 0.82;
-  const insideCanvas =
-    left >= 0 && top >= 0 && left + fgWidth <= canvas && top + fgHeight <= canvas;
+  const insideCanvas = left >= 0 && top >= 0 && left + fgWidth <= canvas && top + fgHeight <= canvas;
 
   const groundingLikelyOk =
     groundingType === "hanging"
@@ -650,11 +450,7 @@ function evaluateCompositeQuality(args: {
         ? top + fgHeight <= canvas - 20
         : top + fgHeight <= canvas - 4;
 
-  const score =
-    (centered ? 20 : 0) +
-    (ratioOk ? 30 : 0) +
-    (insideCanvas ? 30 : 0) +
-    (groundingLikelyOk ? 20 : 0);
+  const score = (centered ? 20 : 0) + (ratioOk ? 30 : 0) + (insideCanvas ? 30 : 0) + (groundingLikelyOk ? 20 : 0);
 
   return {
     score,
@@ -662,46 +458,26 @@ function evaluateCompositeQuality(args: {
     ratioOk,
     insideCanvas,
     groundingLikelyOk,
-    verdict:
-      score >= 90 ? "excellent" :
-      score >= 75 ? "good" :
-      score >= 50 ? "fair" :
-      "weak",
+    verdict: score >= 90 ? "excellent" : score >= 75 ? "good" : score >= 50 ? "fair" : "weak",
   };
 }
-
-/* =========================
- * 本体
- * ========================= */
 
 export async function POST(req: Request) {
   try {
     const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
 
-    const foregroundUrl =
-      typeof body.foregroundUrl === "string" ? body.foregroundUrl.trim() : "";
-    const backgroundUrl =
-      typeof body.backgroundUrl === "string" ? body.backgroundUrl.trim() : "";
+    const foregroundUrl = typeof body.foregroundUrl === "string" ? body.foregroundUrl.trim() : "";
+    const backgroundUrl = typeof body.backgroundUrl === "string" ? body.backgroundUrl.trim() : "";
 
     if (!foregroundUrl) {
-      return NextResponse.json(
-        { ok: false, error: "foregroundUrl is required" },
-        { status: 400 }
-      );
+      return NextResponse.json({ ok: false, error: "foregroundUrl is required" }, { status: 400 });
     }
 
     if (!backgroundUrl) {
-      return NextResponse.json(
-        { ok: false, error: "backgroundUrl is required" },
-        { status: 400 }
-      );
+      return NextResponse.json({ ok: false, error: "backgroundUrl is required" }, { status: 400 });
     }
 
     const light = normalizeLight(body.light);
-
-    /**
-     * 基本サイズ
-     */
     const baseProductWidthRatio = normalizeProductWidthRatio(body.productWidthRatio);
 
     const productCategory = normalizeProductCategory(body.productCategory);
@@ -709,68 +485,36 @@ export async function POST(req: Request) {
     const groundingType = normalizeGroundingType(body.groundingType);
     const sellDirection = normalizeSellDirection(body.sellDirection);
     const bgScene = normalizeBgScene(body.bgScene);
+    const activePhotoMode = normalizePhotoMode(body.activePhotoMode);
 
-    /**
-     * 今回の本丸
-     * - 保存済み placement を読み取る
-     */
     const placement = normalizePlacement(body.placement);
 
     const CANVAS = 1024;
 
-    /**
-     * 画像取得
-     */
     const [foregroundRaw, backgroundRaw] = await Promise.all([
       fetchImageBuffer(foregroundUrl),
       fetchImageBuffer(backgroundUrl),
     ]);
 
-    /**
-     * 背景調整
-     */
-    const backgroundTuned = await tuneBackground(backgroundRaw);
+    const backgroundTuned = await tuneBackground(backgroundRaw, activePhotoMode, sellDirection);
 
-    /**
-     * 商品サイズ決定
-     * - placement.scale を実際の完成画像に反映
-     */
-    const effectiveProductWidthRatio = clamp(
-      baseProductWidthRatio * placement.scale,
-      0.18,
-      0.82
-    );
-
+    const effectiveProductWidthRatio = clamp(baseProductWidthRatio * placement.scale, 0.18, 0.82);
     const productTargetWidth = Math.round(CANVAS * effectiveProductWidthRatio);
 
-    /**
-     * 商品調整
-     */
     let foregroundTuned = await tuneForeground(
       foregroundRaw,
       productTargetWidth,
-      productSize
+      productSize,
+      activePhotoMode
     );
 
-    /**
-     * 色温度補正
-     */
-    const colorMatched = await applyWeakColorTemperatureMatch(
-      foregroundTuned,
-      backgroundTuned
-    );
+    const colorMatched = await applyWeakColorTemperatureMatch(foregroundTuned, backgroundTuned);
     foregroundTuned = colorMatched.buffer;
 
-    /**
-     * 商品メタ
-     */
     const fgMeta = await sharp(foregroundTuned).metadata();
     const fgWidth = fgMeta.width || productTargetWidth;
     const fgHeight = fgMeta.height || productTargetWidth;
 
-    /**
-     * placement 反映
-     */
     const rect = resolvePlacementRect({
       canvas: CANVAS,
       fgWidth,
@@ -785,18 +529,12 @@ export async function POST(req: Request) {
     const left = rect.left;
     const top = rect.top;
 
-    /**
-     * depth 補助
-     */
-    const depthOverlay = await makeDepthOverlay(fgWidth, fgHeight, groundingType);
+    const depthOverlay = await makeDepthOverlay(fgWidth, fgHeight);
     const foregroundWithDepth = await sharp(foregroundTuned)
       .composite([{ input: depthOverlay, top: 0, left: 0 }])
       .png()
       .toBuffer();
 
-    /**
-     * 接地影
-     */
     const groundShadow = await makeGroundShadow(
       CANVAS,
       fgWidth * 0.82,
@@ -804,72 +542,40 @@ export async function POST(req: Request) {
       rect.contactY,
       light,
       groundingType,
-      bgScene
+      placement.shadow,
+      activePhotoMode
     );
 
-    /**
-     * 接地点補助
-     */
-    const contactShadow = await makeContactShadow(
-      CANVAS,
-      fgWidth,
-      rect.centerX,
-      rect.contactY,
-      light,
-      groundingType,
-      bgScene
-    );
+    const contactShadow = await makeEmptyLayer(CANVAS);
+    const ambientGroundBand = await makeEmptyLayer(CANVAS);
 
-    /**
-     * 浮き感を減らす薄い接地帯
-     */
-    const ambientGroundBand = await makeAmbientGroundBand(
-      CANVAS,
-      groundingType,
-      bgScene
-    );
-
-    /**
-     * 合成
-     */
     const composed = await sharp(backgroundTuned)
       .composite([
-        {
-          input: ambientGroundBand,
-          top: 0,
-          left: 0,
-        },
-        {
-          input: groundShadow,
-          top: 0,
-          left: 0,
-        },
-        {
-          input: contactShadow,
-          top: 0,
-          left: 0,
-        },
-        {
-          input: foregroundWithDepth,
-          top,
-          left,
-        },
+        { input: ambientGroundBand, top: 0, left: 0 },
+        { input: groundShadow, top: 0, left: 0 },
+        { input: contactShadow, top: 0, left: 0 },
+        { input: foregroundWithDepth, top, left },
       ])
       .png()
       .toBuffer();
 
-    /**
-     * 最終微調整
-     */
     const finalBrightness =
-      sellDirection === "trust" ? 1.005 :
-      sellDirection === "branding" ? 1.0 :
-      1.0;
+      activePhotoMode === "template"
+        ? 1.01
+        : sellDirection === "trust"
+          ? 1.005
+          : sellDirection === "branding"
+            ? 1.0
+            : 1.0;
 
     const finalSaturation =
-      sellDirection === "branding" ? 1.01 :
-      sellDirection === "trust" ? 0.995 :
-      1.0;
+      activePhotoMode === "template"
+        ? 0.995
+        : sellDirection === "branding"
+          ? 1.01
+          : sellDirection === "trust"
+            ? 0.995
+            : 1.0;
 
     const finalPng = await sharp(composed)
       .modulate({
@@ -907,6 +613,7 @@ export async function POST(req: Request) {
         groundingType,
         sellDirection,
         bgScene,
+        activePhotoMode,
         colorTemperature: {
           warmthShift: colorMatched.warmthShift,
         },
