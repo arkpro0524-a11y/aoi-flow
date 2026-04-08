@@ -6,6 +6,10 @@ import AuthGate from "@/components/AuthGate";
 export const metadata = {
   title: "AOI FLOW",
   applicationName: "AOI FLOW",
+};
+
+// ✅ ここに移動（これが正解）
+export const viewport = {
   themeColor: "#0A1020",
 };
 
