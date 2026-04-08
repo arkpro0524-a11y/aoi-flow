@@ -17,7 +17,13 @@ export const runtime = "nodejs";
 type LightDirection = "left" | "center" | "right";
 type ProductCategory = "furniture" | "goods" | "apparel" | "small" | "other";
 type ProductSize = "large" | "medium" | "small";
-type GroundingType = "floor" | "table" | "hanging" | "wall";
+type GroundingType =
+  | "floor"
+  | "table"
+  | "shelf"
+  | "display"
+  | "hanging"
+  | "wall";
 type SellDirection = "sales" | "branding" | "trust" | "story";
 type BgScene = "studio" | "lifestyle" | "scale" | "detail";
 type ProductPhotoMode = "template" | "ai_bg";
@@ -55,8 +61,8 @@ async function fetchImageBuffer(url: string): Promise<Buffer> {
 
 function normalizeProductWidthRatio(input: unknown): number {
   const n = Number(input);
-  if (!Number.isFinite(n)) return 0.42;
-  return clamp(n, 0.3, 0.45);
+  if (!Number.isFinite(n)) return 0.5;
+  return clamp(n, 0.36, 0.62);
 }
 
 function normalizePlacement(input: unknown): PlacementInput {
@@ -70,11 +76,11 @@ function normalizePlacement(input: unknown): PlacementInput {
     x: clamp(Number(raw.x ?? 0.5), 0, 1),
     y: clamp(Number(raw.y ?? 0.5), 0, 1),
     shadow: {
-      opacity: clamp(Number(shadowRaw.opacity ?? 0.12), 0, 1),
-      blur: clamp(Number(shadowRaw.blur ?? 10), 0, 100),
-      scale: clamp(Number(shadowRaw.scale ?? 1), 0.5, 2),
+      opacity: clamp(Number(shadowRaw.opacity ?? 0.2), 0, 1),
+      blur: clamp(Number(shadowRaw.blur ?? 14), 0, 100),
+      scale: clamp(Number(shadowRaw.scale ?? 1.05), 0.5, 2),
       offsetX: clamp(Number(shadowRaw.offsetX ?? 0), -1, 1),
-      offsetY: clamp(Number(shadowRaw.offsetY ?? 0.02), -1, 1),
+      offsetY: clamp(Number(shadowRaw.offsetY ?? 0.03), -1, 1),
     },
   };
 }
@@ -105,6 +111,8 @@ function normalizeProductSize(input: unknown): ProductSize {
 function normalizeGroundingType(input: unknown): GroundingType {
   const s = String(input ?? "").trim();
   if (s === "table") return "table";
+  if (s === "shelf") return "shelf";
+  if (s === "display") return "display";
   if (s === "hanging") return "hanging";
   if (s === "wall") return "wall";
   return "floor";
@@ -277,22 +285,55 @@ async function makeGroundShadow(
   }
 
   const baseScale =
-    groundingType === "wall" ? 0.35 : groundingType === "table" ? 0.5 : 0.6;
+    groundingType === "wall"
+      ? 0.35
+      : groundingType === "table"
+        ? 0.5
+        : groundingType === "shelf"
+          ? 0.42
+          : groundingType === "display"
+            ? 0.4
+            : 0.6;
 
   const scale = shadow?.scale ?? 1;
 
   const w = Math.max(60, Math.round(shadowWidth * baseScale * scale));
-  const h = Math.max(8, Math.round(w * 0.08));
+  const h =
+    groundingType === "shelf" || groundingType === "display"
+      ? Math.max(10, Math.round(w * 0.06))
+      : Math.max(8, Math.round(w * 0.08));
 
   const lightShiftX = light === "left" ? 8 : light === "right" ? -8 : 0;
   const cx = Math.round(centerX + lightShiftX + (shadow?.offsetX ?? 0) * 40);
-  const cy = Math.round(contactY + 2 + (shadow?.offsetY ?? 0.02) * 40);
+  const cy =
+    groundingType === "shelf" || groundingType === "display"
+      ? Math.round(contactY + 1 + (shadow?.offsetY ?? 0.03) * 30)
+      : Math.round(contactY + 2 + (shadow?.offsetY ?? 0.02) * 40);
 
-  const baseOpacity = mode === "template" ? 0.10 : 0.12;
-  const maxOpacity = mode === "template" ? 0.34 : 0.5;
+  const baseOpacity =
+    groundingType === "shelf" || groundingType === "display"
+      ? mode === "template"
+        ? 0.16
+        : 0.18
+      : mode === "template"
+        ? 0.10
+        : 0.12;
 
-  const opacity = clamp(baseOpacity + (shadow?.opacity ?? 0.12) * 0.5, 0, maxOpacity);
-  const blurStd = Math.max(1, (shadow?.blur ?? 10) * (mode === "template" ? 0.72 : 0.8));
+  const maxOpacity =
+    groundingType === "shelf" || groundingType === "display"
+      ? mode === "template"
+        ? 0.42
+        : 0.56
+      : mode === "template"
+        ? 0.34
+        : 0.5;
+
+  const opacity = clamp(baseOpacity + (shadow?.opacity ?? 0.2) * 0.5, 0, maxOpacity);
+
+  const blurStd =
+    groundingType === "shelf" || groundingType === "display"
+      ? Math.max(1, (shadow?.blur ?? 14) * (mode === "template" ? 0.58 : 0.66))
+      : Math.max(1, (shadow?.blur ?? 10) * (mode === "template" ? 0.72 : 0.8));
 
   const svg = `
     <svg width="${canvasSize}" height="${canvasSize}" xmlns="http://www.w3.org/2000/svg">
@@ -352,6 +393,8 @@ function resolveBottomMargin(
   bgScene: BgScene
 ) {
   if (groundingType === "table") return 208;
+  if (groundingType === "shelf") return 250;
+  if (groundingType === "display") return 262;
   if (groundingType === "hanging") return 220;
   if (groundingType === "wall") return 165;
 
@@ -385,10 +428,20 @@ function resolvePlacementRect(args: {
   const baseBottomMargin = resolveBottomMargin(groundingType, productCategory, productSize, bgScene);
 
   const defaultLeft = Math.round((canvas - fgWidth) / 2);
-  const defaultTop = Math.max(30, canvas - fgHeight - baseBottomMargin);
+
+  const defaultTop =
+    groundingType === "shelf"
+      ? Math.max(30, canvas - fgHeight - baseBottomMargin)
+      : groundingType === "display"
+        ? Math.max(30, canvas - fgHeight - baseBottomMargin)
+        : Math.max(30, canvas - fgHeight - baseBottomMargin);
 
   let left = Math.round(placement.x * canvas - fgWidth / 2);
   let top = Math.round(placement.y * canvas - fgHeight / 2);
+
+  if (groundingType === "shelf" || groundingType === "display") {
+    left = Math.round(defaultLeft + (placement.x - 0.5) * 120);
+  }
 
   left = clamp(left, 0, Math.max(0, canvas - fgWidth));
 
@@ -401,8 +454,15 @@ function resolvePlacementRect(args: {
 
   top = clamp(top, 0, Math.max(0, maxTop));
 
-  const isNearDefaultX = Math.abs(placement.x - 0.5) <= 0.03;
-  const isNearDefaultY = Math.abs(placement.y - 0.5) <= 0.03;
+  const isNearDefaultX =
+    groundingType === "shelf" || groundingType === "display"
+      ? Math.abs(placement.x - 0.5) <= 0.08
+      : Math.abs(placement.x - 0.5) <= 0.03;
+
+  const isNearDefaultY =
+    groundingType === "shelf" || groundingType === "display"
+      ? Math.abs(placement.y - 0.5) <= 0.08
+      : Math.abs(placement.y - 0.5) <= 0.03;
 
   if (isNearDefaultX) {
     left = clamp(defaultLeft, 0, Math.max(0, canvas - fgWidth));
@@ -448,7 +508,9 @@ function evaluateCompositeQuality(args: {
       ? true
       : groundingType === "wall"
         ? top + fgHeight <= canvas - 20
-        : top + fgHeight <= canvas - 4;
+        : groundingType === "shelf" || groundingType === "display"
+          ? top + fgHeight <= canvas - 40
+          : top + fgHeight <= canvas - 4;
 
   const score = (centered ? 20 : 0) + (ratioOk ? 30 : 0) + (insideCanvas ? 30 : 0) + (groundingLikelyOk ? 20 : 0);
 
@@ -498,7 +560,13 @@ export async function POST(req: Request) {
 
     const backgroundTuned = await tuneBackground(backgroundRaw, activePhotoMode, sellDirection);
 
-    const effectiveProductWidthRatio = clamp(baseProductWidthRatio * placement.scale, 0.18, 0.82);
+    const effectiveProductWidthRatio = clamp(
+      baseProductWidthRatio *
+        placement.scale *
+        (groundingType === "shelf" ? 1.18 : groundingType === "display" ? 1.22 : 1),
+      0.18,
+      0.82
+    );
     const productTargetWidth = Math.round(CANVAS * effectiveProductWidthRatio);
 
     let foregroundTuned = await tuneForeground(
@@ -537,7 +605,7 @@ export async function POST(req: Request) {
 
     const groundShadow = await makeGroundShadow(
       CANVAS,
-      fgWidth * 0.82,
+      fgWidth * (groundingType === "shelf" || groundingType === "display" ? 0.72 : 0.82),
       rect.centerX,
       rect.contactY,
       light,
