@@ -16,12 +16,7 @@
     "jsx": "react-jsx",
 
     "incremental": true,
-
-    // ❗ここ追加（警告を止める）
     "ignoreDeprecations": "6.0",
-
-    // ❗baseUrlは削除
-    // "baseUrl": ".",
 
     "paths": {
       "@/*": ["./*"]
@@ -38,6 +33,7 @@
 
   "include": [
     "next-env.d.ts",
+    "**/*.d.ts",
     "**/*.ts",
     "**/*.tsx",
     ".next/types/**/*.ts",
