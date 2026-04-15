@@ -25,6 +25,8 @@ type Props = {
   onUploadImageFilesNew: (files: File[]) => Promise<void> | void;
   onCutoutCurrentBaseToReplace: () => Promise<void> | void;
   onPromoteMaterialToBase: (url: string) => Promise<void> | void;
+  onRemoveBaseOrMaterialImage: (url: string) => Promise<void> | void;
+  onSyncBaseAndMaterialImagesFromStorage: () => Promise<void> | void;
   onSaveCompositeAsImageUrl: () => Promise<void> | void;
   onSaveDraft: () => Promise<void> | void;
   showMsg: (msg: string) => void;
@@ -78,6 +80,8 @@ export default function BaseImagePanel(props: Props) {
     onUploadImageFilesNew,
     onCutoutCurrentBaseToReplace,
     onPromoteMaterialToBase,
+    onRemoveBaseOrMaterialImage,
+    onSyncBaseAndMaterialImagesFromStorage,
     onSaveCompositeAsImageUrl,
     onSaveDraft,
     showMsg,
@@ -462,6 +466,28 @@ export default function BaseImagePanel(props: Props) {
               </Btn>
 
               <Btn
+                variant="danger"
+                disabled={!d.baseImageUrl || busy || cutoutBusy || editorBusy}
+                onClick={() => {
+                  void onRemoveBaseOrMaterialImage(String(d.baseImageUrl || "").trim());
+                }}
+                title="画面上と下書き上だけから外します。Storageの本体は消しません"
+              >
+                元画像を外す
+              </Btn>
+
+              <Btn
+                variant="secondary"
+                disabled={!uid || busy || cutoutBusy || editorBusy}
+                onClick={() => {
+                  void onSyncBaseAndMaterialImagesFromStorage();
+                }}
+                title="Storage から元画像 / 素材画像を復活します"
+              >
+                元画像を同期
+              </Btn>
+
+              <Btn
                 variant="secondary"
                 disabled={!d.baseImageUrl || busy || cutoutBusy || editorBusy}
                 onClick={() => {
@@ -612,38 +638,80 @@ export default function BaseImagePanel(props: Props) {
 
         {baseCandidates.length > 1 ? (
           <div className="mt-2">
-            <div className="text-white/70 font-bold" style={{ fontSize: 12 }}>
-              元画像を選ぶ（タップで①に反映）
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-white/70 font-bold" style={{ fontSize: 12 }}>
+                元画像を選ぶ（タップで①に反映）
+              </div>
+
+              <Btn
+                variant="secondary"
+                disabled={!uid || busy || editorBusy}
+                onClick={() => {
+                  void onSyncBaseAndMaterialImagesFromStorage();
+                }}
+                title="Storage から元画像 / 素材画像を復活します"
+              >
+                同期
+              </Btn>
             </div>
 
-            <div className="mt-2 grid grid-cols-4 gap-2">
+            <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
               {baseCandidates.map((u) => {
                 const isActive = String(d.baseImageUrl || "").trim() === u;
 
                 return (
-                  <button
+                  <div
                     key={u}
-                    type="button"
-                    disabled={!uid || busy}
-                    onClick={() => {
-                      void onPromoteMaterialToBase(u);
-                    }}
                     className={[
                       "rounded-xl border p-1 transition",
                       isActive
                         ? "border-white/70 bg-white/10"
-                        : "border-white/15 bg-black/20 hover:bg-white/5",
-                      !uid || busy ? "opacity-40" : "",
+                        : "border-white/15 bg-black/20",
                     ].join(" ")}
-                    title={isActive ? "現在の元画像" : "この画像を元画像（①）にする"}
                   >
-                    <img
-                      src={u}
-                      alt="base-candidate"
-                      className="w-full rounded-lg"
-                      style={{ aspectRatio: "1 / 1", objectFit: "cover" }}
-                    />
-                  </button>
+                    <button
+                      type="button"
+                      disabled={!uid || busy}
+                      onClick={() => {
+                        void onPromoteMaterialToBase(u);
+                      }}
+                      className={[
+                        "block w-full rounded-lg transition",
+                        !uid || busy ? "opacity-40" : "hover:bg-white/5",
+                      ].join(" ")}
+                      title={isActive ? "現在の元画像" : "この画像を元画像（①）にする"}
+                    >
+                      <img
+                        src={u}
+                        alt="base-candidate"
+                        className="w-full rounded-lg"
+                        style={{ aspectRatio: "1 / 1", objectFit: "cover" }}
+                      />
+                    </button>
+
+                    <div className="mt-2 flex gap-2">
+                      <Btn
+                        variant="secondary"
+                        disabled={!uid || busy}
+                        onClick={() => {
+                          void onPromoteMaterialToBase(u);
+                        }}
+                      >
+                        使う
+                      </Btn>
+
+                      <Btn
+                        variant="danger"
+                        disabled={!uid || busy}
+                        onClick={() => {
+                          void onRemoveBaseOrMaterialImage(u);
+                        }}
+                        title="画面上と下書き上だけから外します。Storageの本体は消しません"
+                      >
+                        外す
+                      </Btn>
+                    </div>
+                  </div>
                 );
               })}
             </div>

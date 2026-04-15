@@ -356,6 +356,82 @@ async function loadImageAsObjectUrl(src: string) {
   }
 }
 
+/**
+ * Storage 内の複数フォルダを走査して、
+ * 画像URLを新しい順で返す共通関数です。
+ *
+ * 重要
+ * - 実ファイルは消さず、参照復活だけに使います
+ * - フォルダが存在しない場合はそのままスキップします
+ */
+async function scanImageUrlsFromStorageFolders(input: {
+  folders: string[];
+  limit?: number;
+}) {
+  const { folders, limit = 20 } = input;
+
+  const found: { url: string; t: number }[] = [];
+
+  async function scanFolder(path: string): Promise<void> {
+    const folderRef = ref(storage, path);
+    const listed = await listAll(folderRef).catch(() => ({
+      items: [] as Awaited<ReturnType<typeof listAll>>["items"],
+      prefixes: [] as Awaited<ReturnType<typeof listAll>>["prefixes"],
+    }));
+
+    for (const itemRef of listed.items) {
+      const name = String(itemRef.name || "").toLowerCase();
+
+      if (
+        !(
+          name.endsWith(".png") ||
+          name.endsWith(".jpg") ||
+          name.endsWith(".jpeg") ||
+          name.endsWith(".webp")
+        )
+      ) {
+        continue;
+      }
+
+      try {
+        const meta = await getMetadata(itemRef);
+        const t = meta?.timeCreated ? new Date(meta.timeCreated).getTime() : 0;
+        const url = await getDownloadURL(itemRef);
+
+        if (typeof url === "string" && url.trim()) {
+          found.push({ url, t });
+        }
+      } catch {
+        //
+      }
+    }
+
+    for (const p of listed.prefixes) {
+      await scanFolder(p.fullPath);
+    }
+  }
+
+  for (const folder of folders) {
+    const path = String(folder || "").trim();
+    if (!path) continue;
+    await scanFolder(path);
+  }
+
+  const seen = new Set<string>();
+
+  return found
+    .slice()
+    .sort((a, b) => (b.t ?? 0) - (a.t ?? 0))
+    .map((x) => String(x.url || "").trim())
+    .filter(Boolean)
+    .filter((u) => {
+      if (seen.has(u)) return false;
+      seen.add(u);
+      return true;
+    })
+    .slice(0, limit);
+}
+
 function normalizeMaterialImages(input: unknown): DraftImage[] {
   const list = Array.isArray(input) ? input : [];
   const out: DraftImage[] = [];
@@ -1155,6 +1231,187 @@ export default function useDraftImageActions(params: Params) {
     } catch (e: any) {
       console.error(e);
       showMsg(`テンプレ背景同期に失敗しました：${e?.message || "不明"}`);
+    } finally {
+      setBusy(false);
+      inFlightRef.current[key] = false;
+    }
+  }
+
+  /**
+   * ① 元画像 / 素材画像を Storage から復活させます。
+   *
+   * 注意
+   * - upload/image の保存先がプロジェクト側で異なる場合は、
+   *   folders 配列だけ合わせてください
+   */
+  async function syncBaseAndMaterialImagesFromStorage() {
+    if (!uid) return;
+
+    const ensuredDraftId = draftId ?? (await saveDraft());
+    if (!ensuredDraftId) {
+      showMsg("下書きIDの確定に失敗しました");
+      return;
+    }
+
+    const key = "syncBaseMaterials";
+    if (inFlightRef.current[key]) return;
+    inFlightRef.current[key] = true;
+
+    setBusy(true);
+
+    try {
+      const nextUrls = await scanImageUrlsFromStorageFolders({
+        folders: [
+          `users/${uid}/drafts/${ensuredDraftId}/images`,
+          `users/${uid}/drafts/${ensuredDraftId}/materials`,
+          `users/${uid}/drafts/${ensuredDraftId}/uploads`,
+          `users/${uid}/drafts/${ensuredDraftId}/base`,
+        ],
+        limit: 20,
+      });
+
+      if (nextUrls.length === 0) {
+        showMsg("元画像 / 素材画像が見つかりませんでした");
+        return;
+      }
+
+      const head = nextUrls[0] ?? "";
+      const materialUrls = nextUrls.slice(1);
+      const currentMaterials = normalizeMaterialImages(dRef.current.images?.materials);
+      const nextMaterials = buildMaterialImagesFromUrls(materialUrls, currentMaterials);
+
+      const patch: Partial<DraftDoc> = {
+        baseImageUrl: head || undefined,
+        foregroundImageUrl: undefined,
+        detailImageUrl: head || undefined,
+        images: {
+          ...(dRef.current.images ?? { primary: null, materials: [] }),
+          primary: head ? makePrimary(head) : null,
+          materials: nextMaterials,
+        },
+      };
+
+      commitDraftPatch(patch);
+      await saveDraft(patch);
+
+      showMsg(`元画像 / 素材画像を同期しました：${nextUrls.length}件`);
+    } catch (e: any) {
+      console.error(e);
+      showMsg(`元画像 / 素材画像の同期に失敗しました：${e?.message || "不明"}`);
+    } finally {
+      setBusy(false);
+      inFlightRef.current[key] = false;
+    }
+  }
+
+  /**
+   * ④ 合成画像を Storage から復活させます。
+   */
+  async function syncCompositeImagesFromStorage() {
+    if (!uid) return;
+
+    const ensuredDraftId = draftId ?? (await saveDraft());
+    if (!ensuredDraftId) {
+      showMsg("下書きIDの確定に失敗しました");
+      return;
+    }
+
+    const key = "syncComposites";
+    if (inFlightRef.current[key]) return;
+    inFlightRef.current[key] = true;
+
+    setBusy(true);
+
+    try {
+      const nextUrls = await scanImageUrlsFromStorageFolders({
+        folders: [
+          `users/${uid}/drafts/${ensuredDraftId}/composites`,
+        ],
+        limit: 20,
+      });
+
+      if (nextUrls.length === 0) {
+        showMsg("合成画像が見つかりませんでした");
+        return;
+      }
+
+      const head = nextUrls[0] ?? undefined;
+
+      const patch = {
+        aiImageUrl: head,
+        compositeImageUrl: head,
+        imageUrl: head,
+        compositeImageUrls: nextUrls,
+      } as any;
+
+      commitDraftPatch(patch);
+      await saveDraft(patch);
+
+      setRightTab("image");
+      setPreviewMode("composite");
+      setPreviewReason("");
+
+      showMsg(`合成画像を同期しました：${nextUrls.length}件`);
+    } catch (e: any) {
+      console.error(e);
+      showMsg(`合成画像の同期に失敗しました：${e?.message || "不明"}`);
+    } finally {
+      setBusy(false);
+      inFlightRef.current[key] = false;
+    }
+  }
+
+  /**
+   * ④ 文字入り保存画像を Storage から復活させます。
+   *
+   * 注意
+   * - 現在の保存処理が /api/upload/image 経由のため、
+   *   実保存先が別なら folders 配列を合わせてください
+   */
+  async function syncCompositeTextImagesFromStorage() {
+    if (!uid) return;
+
+    const ensuredDraftId = draftId ?? (await saveDraft());
+    if (!ensuredDraftId) {
+      showMsg("下書きIDの確定に失敗しました");
+      return;
+    }
+
+    const key = "syncCompositeTexts";
+    if (inFlightRef.current[key]) return;
+    inFlightRef.current[key] = true;
+
+    setBusy(true);
+
+    try {
+      const nextUrls = await scanImageUrlsFromStorageFolders({
+        folders: [
+          `users/${uid}/drafts/${ensuredDraftId}/composite-text`,
+          `users/${uid}/drafts/${ensuredDraftId}/composite_text`,
+          `users/${uid}/drafts/${ensuredDraftId}/compositeText`,
+        ],
+        limit: 20,
+      });
+
+      if (nextUrls.length === 0) {
+        showMsg("文字入り保存画像が見つかりませんでした");
+        return;
+      }
+
+      const head = nextUrls[0] ?? undefined;
+
+      const patch = {
+        compositeTextImageUrl: head,
+        compositeTextImageUrls: nextUrls,
+      } as any;
+
+      commitDraftPatch(patch);
+      await saveDraft(patch);
+
+      showMsg(`文字入り保存画像を同期しました：${nextUrls.length}件`);
+    } catch (e: any) {
+      console.error(e);
+      showMsg(`文字入り保存画像の同期に失敗しました：${e?.message || "不明"}`);
     } finally {
       setBusy(false);
       inFlightRef.current[key] = false;
@@ -2714,6 +2971,247 @@ async function saveCompositeTextImageFromCompositeSlot() {
     showMsg("ストーリー履歴をクリアしました");
   }
 
+  /**
+   * ブラウザ上だけで画像を消す共通ルール
+   *
+   * 重要
+   * - Firebase Storage の実ファイルは消さない
+   * - Firestore / 画面の参照だけ外す
+   */
+
+  async function removeBaseOrMaterialImage(targetUrl: string) {
+    const target = String(targetUrl || "").trim();
+    if (!target) return;
+
+    const currentBaseUrl = String(dRef.current.baseImageUrl || "").trim();
+    const currentMaterials = normalizeMaterialImages(dRef.current.images?.materials);
+
+    const remainingMaterials = currentMaterials.filter(
+      (item) => String(item.url || "").trim() !== target
+    );
+
+    let nextBaseUrl = currentBaseUrl;
+    let nextMaterials = remainingMaterials;
+
+    if (currentBaseUrl === target) {
+      const promoted = remainingMaterials[0];
+      nextBaseUrl = promoted ? String(promoted.url || "").trim() : "";
+
+      nextMaterials = promoted
+        ? remainingMaterials.filter(
+            (item) => String(item.url || "").trim() !== nextBaseUrl
+          )
+        : [];
+    }
+
+    const patch: Partial<DraftDoc> = {
+      baseImageUrl: nextBaseUrl || undefined,
+      foregroundImageUrl: undefined,
+      detailImageUrl: nextBaseUrl || undefined,
+      images: {
+        ...(dRef.current.images ?? { primary: null, materials: [] }),
+        primary: nextBaseUrl ? makePrimary(nextBaseUrl) : null,
+        materials: nextMaterials,
+      },
+    };
+
+    commitDraftPatch(patch);
+    await saveDraft(patch);
+
+    if (currentBaseUrl === target) {
+      if (nextBaseUrl) {
+        showMsg("元画像を外しました。素材画像を①へ繰り上げました");
+      } else {
+        showMsg("元画像を外しました");
+      }
+    } else {
+      showMsg("素材画像を一覧から外しました");
+    }
+  }
+
+  async function removeIdeaImage(targetUrl: string) {
+    const target = String(targetUrl || "").trim();
+    if (!target) return;
+
+    const nextIdeaUrls = (
+      Array.isArray(dRef.current.imageIdeaUrls) ? dRef.current.imageIdeaUrls : []
+    )
+      .map((u) => String(u || "").trim())
+      .filter((u) => u && u !== target);
+
+    const nextUseSceneUrls = (
+      Array.isArray(dRef.current.useSceneImageUrls) ? dRef.current.useSceneImageUrls : []
+    )
+      .map((u) => String(u || "").trim())
+      .filter((u) => u && u !== target);
+
+    const currentIdeaUrl = String(dRef.current.imageIdeaUrl || "").trim();
+    const currentUseSceneUrl = String(dRef.current.useSceneImageUrl || "").trim();
+
+    const nextIdeaUrl =
+      currentIdeaUrl === target ? nextIdeaUrls[0] || undefined : currentIdeaUrl || undefined;
+
+    const nextUseSceneUrl =
+      currentUseSceneUrl === target
+        ? nextUseSceneUrls[0] || undefined
+        : currentUseSceneUrl || undefined;
+
+    setUseSceneImageUrl(nextUseSceneUrl ?? null);
+    setUseSceneImageUrls(nextUseSceneUrls);
+
+    const patch: Partial<DraftDoc> = {
+      imageIdeaUrl: nextIdeaUrl,
+      imageIdeaUrls: nextIdeaUrls,
+      useSceneImageUrl: nextUseSceneUrl,
+      useSceneImageUrls: nextUseSceneUrls,
+    };
+
+    commitDraftPatch(patch);
+    await saveDraft(patch);
+
+    showMsg("使用シーン画像を一覧から外しました");
+  }
+
+  async function removeStoryImage(targetUrl: string) {
+    const target = String(targetUrl || "").trim();
+    if (!target) return;
+
+    const nextStoryUrls = (
+      Array.isArray(dRef.current.storyImageUrls) ? dRef.current.storyImageUrls : []
+    )
+      .map((u) => String(u || "").trim())
+      .filter((u) => u && u !== target);
+
+    const currentStoryUrl = String(dRef.current.storyImageUrl || "").trim();
+
+    const nextStoryUrl =
+      currentStoryUrl === target ? nextStoryUrls[0] || undefined : currentStoryUrl || undefined;
+
+    setStoryImageUrl(nextStoryUrl ?? null);
+    setStoryImageUrls(nextStoryUrls);
+
+    const patch: Partial<DraftDoc> = {
+      storyImageUrl: nextStoryUrl,
+      storyImageUrls: nextStoryUrls,
+    };
+
+    commitDraftPatch(patch);
+    await saveDraft(patch);
+
+    showMsg("ストーリー画像を一覧から外しました");
+  }
+
+  async function removeTemplateBgImage(targetUrl: string) {
+    const target = String(targetUrl || "").trim();
+    if (!target) return;
+
+    const nextUrls = (
+      Array.isArray(dRef.current.templateBgUrls) ? dRef.current.templateBgUrls : []
+    )
+      .map((u) => String(u || "").trim())
+      .filter((u) => u && u !== target);
+
+    const currentUrl = String(dRef.current.templateBgUrl || "").trim();
+    const nextUrl = currentUrl === target ? nextUrls[0] || undefined : currentUrl || undefined;
+
+    if (typeof setTemplateBgUrl === "function") {
+      setTemplateBgUrl(nextUrl ?? null);
+    }
+
+    if (typeof setTemplateBgUrls === "function") {
+      setTemplateBgUrls(nextUrls);
+    }
+
+    const patch: Partial<DraftDoc> = {
+      templateBgUrl: nextUrl,
+      templateBgUrls: nextUrls,
+    };
+
+    commitDraftPatch(patch);
+    await saveDraft(patch);
+
+    showMsg("テンプレ背景を一覧から外しました");
+  }
+
+  async function removeAiBgImage(targetUrl: string) {
+    const target = String(targetUrl || "").trim();
+    if (!target) return;
+
+    const nextUrls = (
+      Array.isArray(dRef.current.bgImageUrls) ? dRef.current.bgImageUrls : []
+    )
+      .map((u) => String(u || "").trim())
+      .filter((u) => u && u !== target);
+
+    const currentUrl = String(dRef.current.bgImageUrl || "").trim();
+    const nextUrl = currentUrl === target ? nextUrls[0] || undefined : currentUrl || undefined;
+
+    setBgImageUrl(nextUrl ?? null);
+
+    const patch: Partial<DraftDoc> = {
+      bgImageUrl: nextUrl,
+      bgImageUrls: nextUrls,
+    };
+
+    commitDraftPatch(patch);
+    await saveDraft(patch);
+
+    showMsg("AI背景を一覧から外しました");
+  }
+
+  async function removeCompositeImage(targetUrl?: string) {
+    const target = String(targetUrl || "").trim();
+
+    const currentAiImageUrl = String(dRef.current.aiImageUrl || "").trim();
+    const currentCompositeImageUrl = String(dRef.current.compositeImageUrl || "").trim();
+    const currentImageUrl = String(dRef.current.imageUrl || "").trim();
+
+    const hasTarget =
+      !target ||
+      currentAiImageUrl === target ||
+      currentCompositeImageUrl === target ||
+      currentImageUrl === target;
+
+    if (!hasTarget) return;
+
+    const patch: Partial<DraftDoc> = {
+      aiImageUrl: undefined,
+      compositeImageUrl: undefined,
+      imageUrl: undefined,
+    };
+
+    commitDraftPatch(patch);
+    await saveDraft(patch);
+
+    showMsg("合成画像を画面上から外しました");
+  }
+
+  async function removeCompositeTextImage(targetUrl: string) {
+    const target = String(targetUrl || "").trim();
+    if (!target) return;
+
+    const currentUrl = String((dRef.current as any).compositeTextImageUrl || "").trim();
+    const nextUrls = (
+      Array.isArray((dRef.current as any).compositeTextImageUrls)
+        ? (dRef.current as any).compositeTextImageUrls
+        : []
+    )
+      .map((u: unknown) => String(u || "").trim())
+      .filter((u: string) => u && u !== target);
+
+    const nextUrl = currentUrl === target ? nextUrls[0] || undefined : currentUrl || undefined;
+
+    const patch = {
+      compositeTextImageUrl: nextUrl,
+      compositeTextImageUrls: nextUrls,
+    } as any;
+
+    commitDraftPatch(patch);
+    await saveDraft(patch);
+
+    showMsg("文字焼き込み画像を画面上から外しました");
+  }
+
   return {
     commitDraftPatch,
     renderToCanvasAndGetDataUrlSilent,
@@ -2727,6 +3225,9 @@ async function saveCompositeTextImageFromCompositeSlot() {
     saveCompositeTextImageFromCompositeSlot,
     clearBgHistory,
     syncBgImagesFromStorage,
+    syncBaseAndMaterialImagesFromStorage,
+    syncCompositeImagesFromStorage,
+    syncCompositeTextImagesFromStorage,
     syncIdeaImagesFromStorage,
     clearIdeaHistory,
     saveProductPlacement,
@@ -2739,5 +3240,13 @@ async function saveCompositeTextImageFromCompositeSlot() {
     selectTemplateBackground,
     syncTemplateBgImagesFromStorage,
     clearTemplateBgHistory,
+
+    removeBaseOrMaterialImage,
+    removeIdeaImage,
+    removeStoryImage,
+    removeTemplateBgImage,
+    removeAiBgImage,
+    removeCompositeImage,
+    removeCompositeTextImage,
   };
 }

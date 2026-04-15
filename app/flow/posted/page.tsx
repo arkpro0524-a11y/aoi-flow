@@ -3,7 +3,14 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { collection, onSnapshot, orderBy, query, where } from "firebase/firestore";
+import {
+  collection,
+  onSnapshot,
+  orderBy,
+  query,
+  where,
+  type DocumentData,
+} from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import { db, auth } from "@/firebase";
 import { useToast } from "@/components/ToastProvider";
@@ -15,7 +22,13 @@ type Draft = {
   phase: "draft" | "ready" | "posted";
   vision: string;
   caption_final: string;
+
+  /**
+   * 一覧で表示するサムネURL
+   * - 通常合成画像を最優先
+   */
   imageUrl?: string;
+
   updatedAt?: any;
 };
 
@@ -34,6 +47,39 @@ const UI = {
   thumbBox: 130,
   titlePx: 20,
 };
+
+/**
+ * 一覧表示用サムネURLを安全に決める関数
+ *
+ * 優先順
+ * 1. compositeImageUrl ・・・通常合成画像
+ * 2. aiImageUrl
+ * 3. imageUrl
+ */
+function resolveListImageUrl(data: DocumentData): string | undefined {
+  const compositeImageUrl =
+    typeof data.compositeImageUrl === "string" ? data.compositeImageUrl.trim() : "";
+
+  if (compositeImageUrl) {
+    return compositeImageUrl;
+  }
+
+  const aiImageUrl =
+    typeof data.aiImageUrl === "string" ? data.aiImageUrl.trim() : "";
+
+  if (aiImageUrl) {
+    return aiImageUrl;
+  }
+
+  const imageUrl =
+    typeof data.imageUrl === "string" ? data.imageUrl.trim() : "";
+
+  if (imageUrl) {
+    return imageUrl;
+  }
+
+  return undefined;
+}
 
 export default function PostedPage() {
   const toast = useToast();
@@ -74,7 +120,33 @@ export default function PostedPage() {
     const unsub = onSnapshot(
       qy,
       (snap) => {
-        const list: Draft[] = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+        const list: Draft[] = snap.docs.map((docSnap) => {
+          const data = docSnap.data() as DocumentData;
+
+          return {
+            id: docSnap.id,
+            userId: typeof data.userId === "string" ? data.userId : uid,
+            brand: data.brand === "riva" ? "riva" : "vento",
+            phase:
+              data.phase === "ready"
+                ? "ready"
+                : data.phase === "posted"
+                  ? "posted"
+                  : "draft",
+            vision: typeof data.vision === "string" ? data.vision : "",
+            caption_final:
+              typeof data.caption_final === "string" ? data.caption_final : "",
+
+            /**
+             * 今回の修正
+             * - 一覧表示は通常合成画像を優先する
+             */
+            imageUrl: resolveListImageUrl(data),
+
+            updatedAt: data.updatedAt,
+          };
+        });
+
         setRows(list);
         setLoading(false);
       },
@@ -171,7 +243,7 @@ export default function PostedPage() {
                         style={{
                           width: "100%",
                           height: "100%",
-                          objectFit: "cover",
+                          objectFit: "contain",
                           display: "block",
                         }}
                       />

@@ -404,6 +404,8 @@ export default function NewDraftPage() {
   onUploadImageFilesNew={c.onUploadImageFilesNew}
   onCutoutCurrentBaseToReplace={c.cutoutCurrentBaseToReplace}
   onPromoteMaterialToBase={c.promoteMaterialToBase}
+  onRemoveBaseOrMaterialImage={c.removeBaseOrMaterialImage}
+  onSyncBaseAndMaterialImagesFromStorage={c.syncBaseAndMaterialImagesFromStorage}
   onSaveCompositeAsImageUrl={c.saveCompositeAsImageUrl}
   onSaveCompositeTextImageFromCompositeSlot={c.saveCompositeTextImageFromCompositeSlot}
   onSaveDraft={() => {
@@ -412,10 +414,18 @@ export default function NewDraftPage() {
   onGenerateBackgroundImage={c.generateBackgroundImage}
   onReplaceBackgroundAndSaveToAiImage={c.replaceBackgroundAndSaveToAiImage}
   onSyncBgImagesFromStorage={c.syncBgImagesFromStorage}
+  onSyncTemplateBgImagesFromStorage={c.syncTemplateBgImagesFromStorage}
+  onSyncCompositeImagesFromStorage={c.syncCompositeImagesFromStorage}
+  onSyncCompositeTextImagesFromStorage={c.syncCompositeTextImagesFromStorage}
   onClearBgHistory={c.clearBgHistory}
+  onRemoveTemplateBgImage={c.removeTemplateBgImage}
+  onRemoveAiBgImage={c.removeAiBgImage}
+  onRemoveCompositeImage={c.removeCompositeImage}
+  onRemoveCompositeTextImage={c.removeCompositeTextImage}
   onGenerateAiImage={c.generateAiImage}
   onSyncIdeaImagesFromStorage={c.syncIdeaImagesFromStorage}
   onClearIdeaHistory={c.clearIdeaHistory}
+  onSyncStoryImagesFromStorage={c.syncStoryImagesFromStorage}
   setBgImageUrl={c.setBgImageUrl}
   setD={c.setD}
   saveDraft={c.saveDraft}

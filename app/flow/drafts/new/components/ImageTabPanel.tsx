@@ -129,6 +129,8 @@ type Props = {
   onUploadImageFilesNew: (files: File[]) => Promise<void> | void;
   onCutoutCurrentBaseToReplace: () => Promise<void> | void;
   onPromoteMaterialToBase: (url: string) => Promise<void> | void;
+  onRemoveBaseOrMaterialImage: (url: string) => Promise<void> | void;
+  onSyncBaseAndMaterialImagesFromStorage: () => Promise<void> | void;
   onSaveCompositeAsImageUrl: () => Promise<void> | void;
   onSaveCompositeTextImageFromCompositeSlot: () => Promise<void> | void;
   onSaveDraft: () => void | Promise<void>;
@@ -136,11 +138,19 @@ type Props = {
   onGenerateBackgroundImage: (keyword: string) => Promise<string>;
   onReplaceBackgroundAndSaveToAiImage: () => Promise<void>;
   onSyncBgImagesFromStorage: () => Promise<void>;
+  onSyncTemplateBgImagesFromStorage: () => Promise<void> | void;
+  onSyncCompositeImagesFromStorage: () => Promise<void> | void;
+  onSyncCompositeTextImagesFromStorage: () => Promise<void> | void;
   onClearBgHistory: () => Promise<void>;
+  onRemoveTemplateBgImage?: (url: string) => Promise<void> | void;
+  onRemoveAiBgImage?: (url: string) => Promise<void> | void;
+  onRemoveCompositeImage?: (url?: string) => Promise<void> | void;
+  onRemoveCompositeTextImage?: (url: string) => Promise<void> | void;
 
   onGenerateAiImage: () => Promise<void>;
   onSyncIdeaImagesFromStorage: () => Promise<void>;
   onClearIdeaHistory: () => void;
+  onSyncStoryImagesFromStorage?: () => Promise<void> | void;
 
   /**
    * テンプレ背景の正式な親state
@@ -255,6 +265,8 @@ export default function ImageTabPanel({
   onUploadImageFilesNew,
   onCutoutCurrentBaseToReplace,
   onPromoteMaterialToBase,
+  onRemoveBaseOrMaterialImage,
+  onSyncBaseAndMaterialImagesFromStorage,
   onSaveCompositeAsImageUrl,
   onSaveCompositeTextImageFromCompositeSlot,
   onSaveDraft,
@@ -262,11 +274,19 @@ export default function ImageTabPanel({
   onGenerateBackgroundImage,
   onReplaceBackgroundAndSaveToAiImage,
   onSyncBgImagesFromStorage,
+  onSyncTemplateBgImagesFromStorage,
+  onSyncCompositeImagesFromStorage,
+  onSyncCompositeTextImagesFromStorage,
   onClearBgHistory,
+  onRemoveTemplateBgImage,
+  onRemoveAiBgImage,
+  onRemoveCompositeImage,
+  onRemoveCompositeTextImage,
 
   onGenerateAiImage,
   onSyncIdeaImagesFromStorage,
   onClearIdeaHistory,
+  onSyncStoryImagesFromStorage,
 
   templateBgUrl,
   templateBgUrls,
@@ -321,6 +341,7 @@ export default function ImageTabPanel({
   void bgSceneLabel;
   void onGenerateStaticVariants;
   void onSelectStaticVariant;
+  void onSyncStoryImagesFromStorage;
 
   return (
     <div className="flex flex-col gap-3">
@@ -344,6 +365,8 @@ export default function ImageTabPanel({
         onUploadImageFilesNew={onUploadImageFilesNew}
         onCutoutCurrentBaseToReplace={onCutoutCurrentBaseToReplace}
         onPromoteMaterialToBase={onPromoteMaterialToBase}
+        onRemoveBaseOrMaterialImage={onRemoveBaseOrMaterialImage}
+        onSyncBaseAndMaterialImagesFromStorage={onSyncBaseAndMaterialImagesFromStorage}
         onSaveCompositeAsImageUrl={onSaveCompositeAsImageUrl}
         onSaveDraft={onSaveDraft}
         showMsg={showMsg}
@@ -373,7 +396,14 @@ export default function ImageTabPanel({
   generateBackgroundImage={onGenerateBackgroundImage}
   replaceBackgroundAndSaveToAiImage={onReplaceBackgroundAndSaveToAiImage}
   syncBgImagesFromStorage={onSyncBgImagesFromStorage}
+  syncTemplateBgImagesFromStorage={onSyncTemplateBgImagesFromStorage}
+  syncCompositeImagesFromStorage={onSyncCompositeImagesFromStorage}
+  syncCompositeTextImagesFromStorage={onSyncCompositeTextImagesFromStorage}
   clearBgHistory={onClearBgHistory}
+  onRemoveTemplateBgImage={onRemoveTemplateBgImage}
+  onRemoveAiBgImage={onRemoveAiBgImage}
+  onRemoveCompositeImage={onRemoveCompositeImage}
+  onRemoveCompositeTextImage={onRemoveCompositeTextImage}
   generateTemplateBackground={generateTemplateBackground}
   fetchTemplateRecommendations={fetchTemplateRecommendations}
   selectTemplateBackground={selectTemplateBackground}

@@ -1217,6 +1217,11 @@ export default function useDraftEditorController(params: Params) {
     cutoutCurrentBaseToReplace: imageActions.cutoutCurrentBaseToReplace,
     onUploadImageFilesNew: imageActions.onUploadImageFilesNew,
     promoteMaterialToBase: imageActions.promoteMaterialToBase,
+    removeBaseOrMaterialImage: (imageActions as any).removeBaseOrMaterialImage,
+    removeTemplateBgImage: (imageActions as any).removeTemplateBgImage,
+    removeAiBgImage: (imageActions as any).removeAiBgImage,
+    removeCompositeImage: (imageActions as any).removeCompositeImage,
+    removeCompositeTextImage: (imageActions as any).removeCompositeTextImage,
 
     generateStaticVariants: staticOptimization.generateStaticVariants,
     selectStaticVariant: staticOptimization.selectStaticVariant,
@@ -1232,15 +1237,25 @@ export default function useDraftEditorController(params: Params) {
     replaceBackgroundAndSaveToAiImage: imageActions.replaceBackgroundAndSaveToAiImage,
     clearBgHistory: imageActions.clearBgHistory,
     syncBgImagesFromStorage: imageActions.syncBgImagesFromStorage,
+    syncBaseAndMaterialImagesFromStorage:
+      (imageActions as any).syncBaseAndMaterialImagesFromStorage,
+    syncCompositeImagesFromStorage:
+      (imageActions as any).syncCompositeImagesFromStorage,
+    syncCompositeTextImagesFromStorage:
+      (imageActions as any).syncCompositeTextImagesFromStorage,
     syncIdeaImagesFromStorage: imageActions.syncIdeaImagesFromStorage,
     clearIdeaHistory: imageActions.clearIdeaHistory,
 
     generateTemplateBackground: (imageActions as any).generateTemplateBackground,
     fetchTemplateRecommendations,
     selectTemplateBackground: (imageActions as any).selectTemplateBackground,
+    syncTemplateBgImagesFromStorage:
+      (imageActions as any).syncTemplateBgImagesFromStorage,
 
     savePlacement,
     generateStoryImage,
+    syncStoryImagesFromStorage:
+      (imageActions as any).syncStoryImagesFromStorage,
 
     syncVideosFromStorage: videoActions.syncVideosFromStorage,
     saveNonAiVideoToDraft: videoActions.saveNonAiVideoToDraft,

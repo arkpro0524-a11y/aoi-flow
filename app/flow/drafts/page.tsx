@@ -26,7 +26,16 @@ type DraftRow = {
   phase: Phase;
   vision: string;
   caption_final: string;
+
+  /**
+   * 一覧で表示するサムネURL
+   *
+   * 今回の修正ポイント
+   * - 「通常合成画像」を最優先にする
+   * - 旧データとの互換のため fallback も残す
+   */
   imageUrl?: string;
+
   updatedAt?: any;
 };
 
@@ -46,6 +55,39 @@ const COL_GAP = 14;
 
 const PLATE_CLASS =
   "rounded-xl bg-gradient-to-b from-[#f2f2f2] via-[#cfcfcf] to-[#9b9b9b] border border-black/25 shadow-[inset_0_1px_0_rgba(255,255,255,0.7),inset_0_-10px_22px_rgba(0,0,0,0.25),0_8px_18px_rgba(0,0,0,0.25)] flex items-center justify-center";
+
+/**
+ * 一覧表示用サムネURLを安全に決める関数
+ *
+ * 優先順
+ * 1. compositeImageUrl ・・・通常合成画像
+ * 2. aiImageUrl         ・・・旧保存との互換
+ * 3. imageUrl           ・・・さらに旧保存との互換
+ */
+function resolveListImageUrl(data: DocumentData): string | undefined {
+  const compositeImageUrl =
+    typeof data.compositeImageUrl === "string" ? data.compositeImageUrl.trim() : "";
+
+  if (compositeImageUrl) {
+    return compositeImageUrl;
+  }
+
+  const aiImageUrl =
+    typeof data.aiImageUrl === "string" ? data.aiImageUrl.trim() : "";
+
+  if (aiImageUrl) {
+    return aiImageUrl;
+  }
+
+  const imageUrl =
+    typeof data.imageUrl === "string" ? data.imageUrl.trim() : "";
+
+  if (imageUrl) {
+    return imageUrl;
+  }
+
+  return undefined;
+}
 
 export default function DraftsPage() {
   const toast = useToast();
@@ -87,10 +129,13 @@ export default function DraftsPage() {
             vision: typeof data.vision === "string" ? data.vision : "",
             caption_final:
               typeof data.caption_final === "string" ? data.caption_final : "",
-            imageUrl:
-              typeof data.imageUrl === "string" && data.imageUrl
-                ? data.imageUrl
-                : undefined,
+
+            /**
+             * 今回の修正
+             * - 一覧表示は通常合成画像を優先する
+             */
+            imageUrl: resolveListImageUrl(data),
+
             updatedAt: data.updatedAt,
           };
         });

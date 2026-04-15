@@ -85,7 +85,14 @@ type Props = {
   generateBackgroundImage: (keyword: string) => Promise<string>;
   replaceBackgroundAndSaveToAiImage: () => Promise<void>;
   syncBgImagesFromStorage: () => Promise<void>;
+  syncTemplateBgImagesFromStorage?: () => Promise<void> | void;
+  syncCompositeImagesFromStorage?: () => Promise<void> | void;
+  syncCompositeTextImagesFromStorage?: () => Promise<void> | void;
   clearBgHistory: () => Promise<void>;
+  onRemoveTemplateBgImage?: (url: string) => Promise<void> | void;
+  onRemoveAiBgImage?: (url: string) => Promise<void> | void;
+  onRemoveCompositeImage?: (url?: string) => Promise<void> | void;
+  onRemoveCompositeTextImage?: (url: string) => Promise<void> | void;
 
   templateBgUrl?: string;
   templateBgUrls?: string[];
@@ -570,7 +577,14 @@ export default function BackgroundPanel({
   generateBackgroundImage,
   replaceBackgroundAndSaveToAiImage,
   syncBgImagesFromStorage,
+  syncTemplateBgImagesFromStorage,
+  syncCompositeImagesFromStorage,
+  syncCompositeTextImagesFromStorage,
   clearBgHistory,
+  onRemoveTemplateBgImage,
+  onRemoveAiBgImage,
+  onRemoveCompositeImage,
+  onRemoveCompositeTextImage,
 
   templateBgUrl = "",
   templateBgUrls: templateBgUrlsFromParent = [],
@@ -1185,6 +1199,16 @@ export default function BackgroundPanel({
 
                 <Btn
                   variant="secondary"
+                  disabled={!uid || busy || typeof syncTemplateBgImagesFromStorage !== "function"}
+                  onClick={() => {
+                    void syncTemplateBgImagesFromStorage?.();
+                  }}
+                >
+                  テンプレ背景を同期
+                </Btn>
+
+                <Btn
+                  variant="secondary"
                   disabled={!uid || busy || templateBgUrls.length === 0 || templateRecommendBusy}
                   onClick={handleFetchTemplateRecommendations}
                 >
@@ -1276,14 +1300,9 @@ export default function BackgroundPanel({
                       );
 
                       return (
-                        <button
+                        <div
                           key={`${u}-${index}`}
-                          type="button"
-                          onClick={() => {
-                            setActivePhotoMode("template");
-                            void handleSelectTemplateBackground(u);
-                          }}
-                          className="rounded-xl border px-3 py-3 text-left transition hover:bg-white/5"
+                          className="rounded-xl border px-3 py-3 text-left"
                           style={{
                             borderColor: isCurrentTemplate
                               ? "rgba(255,255,255,0.34)"
@@ -1294,36 +1313,69 @@ export default function BackgroundPanel({
                             color: "rgba(255,255,255,0.82)",
                           }}
                         >
-                          <div className="flex items-center justify-between gap-2">
-                            <div className="font-semibold" style={{ fontSize: 12 }}>
-                              テンプレ背景 {index + 1}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setActivePhotoMode("template");
+                              void handleSelectTemplateBackground(u);
+                            }}
+                            className="block w-full text-left transition hover:bg-white/5"
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="font-semibold" style={{ fontSize: 12 }}>
+                                テンプレ背景 {index + 1}
+                              </div>
+
+                              <div className="flex flex-wrap items-center gap-2">
+                                {recommendedItem ? (
+                                  <SmallBadge active={false} label="おすすめ候補" />
+                                ) : null}
+                                <SmallBadge
+                                  active={isCurrentTemplate}
+                                  label={isCurrentTemplate ? "選択中" : "未選択"}
+                                />
+                              </div>
                             </div>
 
-                            <div className="flex flex-wrap items-center gap-2">
-                              {recommendedItem ? (
-                                <SmallBadge active={false} label="おすすめ候補" />
-                              ) : null}
-                              <SmallBadge
-                                active={isCurrentTemplate}
-                                label={isCurrentTemplate ? "選択中" : "未選択"}
-                              />
+                            <div className="mt-2 text-white/55" style={{ fontSize: 12 }}>
+                              {u.slice(0, 72)}
+                              {u.length > 72 ? "…" : ""}
                             </div>
-                          </div>
 
-                          <div className="mt-2 text-white/55" style={{ fontSize: 12 }}>
-                            {u.slice(0, 72)}
-                            {u.length > 72 ? "…" : ""}
-                          </div>
+                            {recommendedItem?.reason ? (
+                              <div
+                                className="mt-2 rounded-lg border border-white/10 bg-black/20 px-2 py-2 text-white/60"
+                                style={{ fontSize: 11, lineHeight: 1.5 }}
+                              >
+                                理由：{recommendedItem.reason}
+                              </div>
+                            ) : null}
+                          </button>
 
-                          {recommendedItem?.reason ? (
-                            <div
-                              className="mt-2 rounded-lg border border-white/10 bg-black/20 px-2 py-2 text-white/60"
-                              style={{ fontSize: 11, lineHeight: 1.5 }}
+                          <div className="mt-2 flex gap-2">
+                            <Btn
+                              variant="secondary"
+                              disabled={!uid || busy}
+                              onClick={() => {
+                                setActivePhotoMode("template");
+                                void handleSelectTemplateBackground(u);
+                              }}
                             >
-                              理由：{recommendedItem.reason}
-                            </div>
-                          ) : null}
-                        </button>
+                              使う
+                            </Btn>
+
+                            <Btn
+                              variant="danger"
+                              disabled={!uid || busy || typeof onRemoveTemplateBgImage !== "function"}
+                              onClick={() => {
+                                void onRemoveTemplateBgImage?.(u);
+                              }}
+                              title="画面上と下書き上だけから外します。Storageの本体は消しません"
+                            >
+                              外す
+                            </Btn>
+                          </div>
+                        </div>
                       );
                     })}
                   </div>
@@ -1459,14 +1511,9 @@ export default function BackgroundPanel({
 
                   <div className="flex flex-col gap-2">
                     {aiBgUrls.slice(0, 6).map((u: string) => (
-                      <button
+                      <div
                         key={u}
-                        type="button"
-                        onClick={() => {
-                          setActivePhotoMode("ai_bg");
-                          void handleSelectAiBackground(u);
-                        }}
-                        className="rounded-xl border px-3 py-2 text-left transition"
+                        className="rounded-xl border px-3 py-2"
                         style={{
                           borderColor: "rgba(255,255,255,0.10)",
                           background: "rgba(0,0,0,0.15)",
@@ -1474,9 +1521,42 @@ export default function BackgroundPanel({
                           fontSize: 12,
                         }}
                       >
-                        {u.slice(0, 60)}
-                        {u.length > 60 ? "…" : ""}
-                      </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActivePhotoMode("ai_bg");
+                            void handleSelectAiBackground(u);
+                          }}
+                          className="block w-full text-left transition hover:bg-white/5"
+                        >
+                          {u.slice(0, 60)}
+                          {u.length > 60 ? "…" : ""}
+                        </button>
+
+                        <div className="mt-2 flex gap-2">
+                          <Btn
+                            variant="secondary"
+                            disabled={!uid || busy}
+                            onClick={() => {
+                              setActivePhotoMode("ai_bg");
+                              void handleSelectAiBackground(u);
+                            }}
+                          >
+                            使う
+                          </Btn>
+
+                          <Btn
+                            variant="danger"
+                            disabled={!uid || busy || typeof onRemoveAiBgImage !== "function"}
+                            onClick={() => {
+                              void onRemoveAiBgImage?.(u);
+                            }}
+                            title="画面上と下書き上だけから外します。Storageの本体は消しません"
+                          >
+                            外す
+                          </Btn>
+                        </div>
+                      </div>
                     ))}
                   </div>
                 </div>
@@ -1489,49 +1569,104 @@ export default function BackgroundPanel({
             合成タブ
         ========================= */}
         {innerTab === "composite" ? (
-<ProductPlacementEditor
-  baseImageUrl={d.baseImageUrl}
-  foregroundImageUrl={d.foregroundImageUrl}
-  bgImageUrl={String(d.bgImageUrl || "").trim()}
-  aiImageUrl={aiImageUrl}
-  compositeTextImageUrl={String(compositeTextImageUrl || (d as any).compositeTextImageUrl || "").trim()}
-  onSaveCompositeTextImageFromCompositeSlot={onSaveCompositeTextImageFromCompositeSlot}
-  templateBgUrl={templateBgUrl}
-  templateBgUrls={templateBgUrls}
-  aiBgUrls={aiBgUrls}
-  templateRecommended={templateRecommended}
-  templateRecommendTopReason={templateRecommendTopReason}
-  isCompositeFresh={isCompositeFresh}
-  productCategory={productCategory}
-  productSize={productSize}
-  groundingType={groundingType}
-  bgScene={bgScene}
-  textOverlay={compositeTextOverlay}
-  activePhotoMode={activePhotoMode}
-  onChangePhotoMode={setActivePhotoMode}
-  onSelectTemplateBg={handleSelectTemplateBackground}
-  onSelectAiBg={handleSelectAiBackground}
-  onRecompose={replaceBackgroundAndSaveToAiImage}
-  placementScale={placementScale}
-  placementX={placementX}
-  placementY={placementY}
-  shadowOpacity={shadowOpacity}
-  shadowBlur={shadowBlur}
-  shadowScale={shadowScale}
-  shadowOffsetX={shadowOffsetX}
-  shadowOffsetY={shadowOffsetY}
-  setPlacementScale={setPlacementScale}
-  setPlacementX={setPlacementX}
-  setPlacementY={setPlacementY}
-  setShadowOpacity={setShadowOpacity}
-  setShadowBlur={setShadowBlur}
-  setShadowScale={setShadowScale}
-  setShadowOffsetX={setShadowOffsetX}
-  setShadowOffsetY={setShadowOffsetY}
-  onSavePlacement={onSavePlacement}
-  busy={busy}
-  showMsg={showMsg}
-/>
+          <div className="flex flex-col gap-3">
+            <ProductPlacementEditor
+              baseImageUrl={d.baseImageUrl}
+              foregroundImageUrl={d.foregroundImageUrl}
+              bgImageUrl={String(d.bgImageUrl || "").trim()}
+              aiImageUrl={aiImageUrl}
+              compositeTextImageUrl={String(compositeTextImageUrl || (d as any).compositeTextImageUrl || "").trim()}
+              onSaveCompositeTextImageFromCompositeSlot={onSaveCompositeTextImageFromCompositeSlot}
+              templateBgUrl={templateBgUrl}
+              templateBgUrls={templateBgUrls}
+              aiBgUrls={aiBgUrls}
+              templateRecommended={templateRecommended}
+              templateRecommendTopReason={templateRecommendTopReason}
+              isCompositeFresh={isCompositeFresh}
+              productCategory={productCategory}
+              productSize={productSize}
+              groundingType={groundingType}
+              bgScene={bgScene}
+              textOverlay={compositeTextOverlay}
+              activePhotoMode={activePhotoMode}
+              onChangePhotoMode={setActivePhotoMode}
+              onSelectTemplateBg={handleSelectTemplateBackground}
+              onSelectAiBg={handleSelectAiBackground}
+              onRecompose={replaceBackgroundAndSaveToAiImage}
+              placementScale={placementScale}
+              placementX={placementX}
+              placementY={placementY}
+              shadowOpacity={shadowOpacity}
+              shadowBlur={shadowBlur}
+              shadowScale={shadowScale}
+              shadowOffsetX={shadowOffsetX}
+              shadowOffsetY={shadowOffsetY}
+              setPlacementScale={setPlacementScale}
+              setPlacementX={setPlacementX}
+              setPlacementY={setPlacementY}
+              setShadowOpacity={setShadowOpacity}
+              setShadowBlur={setShadowBlur}
+              setShadowScale={setShadowScale}
+              setShadowOffsetX={setShadowOffsetX}
+              setShadowOffsetY={setShadowOffsetY}
+              onSavePlacement={onSavePlacement}
+              busy={busy}
+              showMsg={showMsg}
+            />
+
+            <div className="flex flex-wrap gap-2">
+              <Btn
+                variant="secondary"
+                disabled={!uid || busy || typeof syncCompositeImagesFromStorage !== "function"}
+                onClick={() => {
+                  void syncCompositeImagesFromStorage?.();
+                }}
+                title="Storage から合成画像を復活します"
+              >
+                合成画像を同期
+              </Btn>
+
+              <Btn
+                variant="danger"
+                disabled={!uid || busy || !String(aiImageUrl || "").trim() || typeof onRemoveCompositeImage !== "function"}
+                onClick={() => {
+                  void onRemoveCompositeImage?.(String(aiImageUrl || "").trim());
+                }}
+                title="画面上と下書き上だけから外します。Storageの本体は消しません"
+              >
+                合成画像を外す
+              </Btn>
+
+              <Btn
+                variant="secondary"
+                disabled={!uid || busy || typeof syncCompositeTextImagesFromStorage !== "function"}
+                onClick={() => {
+                  void syncCompositeTextImagesFromStorage?.();
+                }}
+                title="Storage から文字入り保存画像を復活します"
+              >
+                文字入り保存画像を同期
+              </Btn>
+
+              <Btn
+                variant="danger"
+                disabled={
+                  !uid ||
+                  busy ||
+                  !String(compositeTextImageUrl || (d as any).compositeTextImageUrl || "").trim() ||
+                  typeof onRemoveCompositeTextImage !== "function"
+                }
+                onClick={() => {
+                  void onRemoveCompositeTextImage?.(
+                    String(compositeTextImageUrl || (d as any).compositeTextImageUrl || "").trim()
+                  );
+                }}
+                title="画面上と下書き上だけから外します。Storageの本体は消しません"
+              >
+                文字入り保存画像を外す
+              </Btn>
+            </div>
+          </div>
         ) : null}
       </div>
     </details>

@@ -25,9 +25,48 @@ type DraftRow = {
   phase: Phase;
   vision: string;
   caption_final: string;
+
+  /**
+   * 一覧で表示するサムネURL
+   * - 通常合成画像を最優先
+   */
   imageUrl?: string;
+
   updatedAt?: any;
 };
+
+/**
+ * 一覧表示用サムネURLを安全に決める関数
+ *
+ * 優先順
+ * 1. compositeImageUrl ・・・通常合成画像
+ * 2. aiImageUrl
+ * 3. imageUrl
+ */
+function resolveListImageUrl(data: DocumentData): string | undefined {
+  const compositeImageUrl =
+    typeof data.compositeImageUrl === "string" ? data.compositeImageUrl.trim() : "";
+
+  if (compositeImageUrl) {
+    return compositeImageUrl;
+  }
+
+  const aiImageUrl =
+    typeof data.aiImageUrl === "string" ? data.aiImageUrl.trim() : "";
+
+  if (aiImageUrl) {
+    return aiImageUrl;
+  }
+
+  const imageUrl =
+    typeof data.imageUrl === "string" ? data.imageUrl.trim() : "";
+
+  if (imageUrl) {
+    return imageUrl;
+  }
+
+  return undefined;
+}
 
 /**
  * ✅ PC/スマホ両対応（下書き一覧と同じ見た目）
@@ -108,10 +147,13 @@ export default function InboxPage() {
             vision: typeof data.vision === "string" ? data.vision : "",
             caption_final:
               typeof data.caption_final === "string" ? data.caption_final : "",
-            imageUrl:
-              typeof data.imageUrl === "string" && data.imageUrl
-                ? data.imageUrl
-                : undefined,
+
+            /**
+             * 今回の修正
+             * - 一覧表示は通常合成画像を優先する
+             */
+            imageUrl: resolveListImageUrl(data),
+
             updatedAt: data.updatedAt,
           };
         });
@@ -266,7 +308,7 @@ export default function InboxPage() {
                             style={{
                               width: "100%",
                               height: "100%",
-                              objectFit: "contain", // ✅ 下書き一覧と同じ（暴れない）
+                              objectFit: "contain",
                               display: "block",
                             }}
                           />

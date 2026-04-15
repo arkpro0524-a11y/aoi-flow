@@ -10,18 +10,30 @@ import { Btn } from "../ui";
  * 重要
  * - 親の ImageTabPanel からは
  *   storyImageUrl / onGenerateStoryImage / busy
- *   の3つを受ける
+ *   を受ける
+ *
+ * 今回の追加
+ * - 削除後に Storage から復活できるように、
+ *   onSyncStoryImagesFromStorage を追加
+ *
+ * 方針
+ * - 既存の表示
+ * - 既存の「ストーリー画像を生成」
+ * は削除しない
+ * - 必要最小限で「同期」ボタンだけ足す
  */
 
 type Props = {
   storyImageUrl?: string | null;
   onGenerateStoryImage: () => Promise<void>;
+  onSyncStoryImagesFromStorage?: () => Promise<void> | void;
   busy?: boolean;
 };
 
 export default function StoryImagePanel({
   storyImageUrl,
   onGenerateStoryImage,
+  onSyncStoryImagesFromStorage,
   busy = false,
 }: Props) {
   return (
@@ -73,6 +85,17 @@ export default function StoryImagePanel({
             }}
           >
             ストーリー画像を生成
+          </Btn>
+
+          <Btn
+            variant="secondary"
+            disabled={busy || typeof onSyncStoryImagesFromStorage !== "function"}
+            onClick={() => {
+              void onSyncStoryImagesFromStorage?.();
+            }}
+            title="Storage からストーリー画像を復活します"
+          >
+            ストーリー画像を同期
           </Btn>
         </div>
 
