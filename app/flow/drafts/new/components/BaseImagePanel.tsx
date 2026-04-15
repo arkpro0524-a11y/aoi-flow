@@ -8,18 +8,6 @@ import ImageUploader from "@/components/upload/ImageUploader";
 import type { DraftDoc, TextOverlay } from "@/lib/types/draft";
 import { Btn, RangeControl, UI } from "../ui";
 
-/**
- * ① 元画像 + 文字（投稿用）
- *
- * 今回の追加
- * - 撮影テンプレを画面内に常時表示
- * - 手修正UI（消す / 戻す / 太さ変更 / 1手戻す / 保存して元画像に反映）
- *
- * 重要
- * - いまの AI 切り抜き結果を土台にして「人が最後に直す」方式です
- * - これが現実的に一番安定します
- */
-
 type ImageSlot = "base" | "mood" | "composite";
 
 type Props = {
@@ -51,10 +39,6 @@ function sleep(ms: number) {
   });
 }
 
-/**
- * ImageData を安全に複製します。
- * Undo 用です。
- */
 function cloneImageData(source: ImageData) {
   return new ImageData(
     new Uint8ClampedArray(source.data),
@@ -63,9 +47,6 @@ function cloneImageData(source: ImageData) {
   );
 }
 
-/**
- * マウス座標を canvas 実座標へ変換します。
- */
 function getCanvasPoint(
   canvas: HTMLCanvasElement,
   clientX: number,
@@ -103,11 +84,6 @@ export default function BaseImagePanel(props: Props) {
     setD,
   } = props;
 
-  /**
-   * ========================================
-   * 手修正UI用 state
-   * ========================================
-   */
   const [editorOpen, setEditorOpen] = React.useState(false);
   const [editorBusy, setEditorBusy] = React.useState(false);
   const [editMode, setEditMode] = React.useState<EditMode>("erase");
@@ -123,9 +99,6 @@ export default function BaseImagePanel(props: Props) {
 
   const editorSourceUrl = String(d.baseImageUrl || "").trim();
 
-  /**
-   * checker 背景
-   */
   const checkerStyle: React.CSSProperties = {
     backgroundImage: `
       linear-gradient(45deg, rgba(255,255,255,0.08) 25%, transparent 25%),
@@ -138,10 +111,6 @@ export default function BaseImagePanel(props: Props) {
     backgroundColor: "rgba(255,255,255,0.03)",
   };
 
-  /**
-   * canvas の中身を再描画します。
-   * workingImageRef の内容をそのまま表示します。
-   */
   const redrawCanvas = React.useCallback(() => {
     const canvas = canvasRef.current;
     const imageData = workingImageRef.current;
@@ -155,10 +124,6 @@ export default function BaseImagePanel(props: Props) {
     ctx.putImageData(imageData, 0, 0);
   }, []);
 
-  /**
-   * 編集画像を読み込みます。
-   * fetch -> blob -> objectURL の順にして、canvas 汚染を避けます。
-   */
   const loadEditorImage = React.useCallback(async () => {
     const src = String(editorSourceUrl || "").trim();
 
@@ -230,9 +195,6 @@ export default function BaseImagePanel(props: Props) {
     }
   }, [editorSourceUrl, redrawCanvas, showMsg]);
 
-  /**
-   * editor を開いた時だけ画像を読み込みます。
-   */
   React.useEffect(() => {
     if (!editorOpen) return;
     if (!editorSourceUrl) return;
@@ -240,9 +202,6 @@ export default function BaseImagePanel(props: Props) {
     void loadEditorImage();
   }, [editorOpen, editorSourceUrl, loadEditorImage]);
 
-  /**
-   * コンポーネント破棄時の object URL 解放
-   */
   React.useEffect(() => {
     return () => {
       if (objectUrlRef.current) {
@@ -252,11 +211,6 @@ export default function BaseImagePanel(props: Props) {
     };
   }, []);
 
-  /**
-   * ブラシ処理本体
-   * erase なら alpha=0
-   * restore なら original から画素を戻します
-   */
   const applyBrush = React.useCallback(
     (x: number, y: number, mode: EditMode) => {
       const working = workingImageRef.current;
@@ -302,10 +256,6 @@ export default function BaseImagePanel(props: Props) {
     [brushSize, redrawCanvas]
   );
 
-  /**
-   * pointer down
-   * 1回ごとに undo 用スナップショットを積みます。
-   */
   const startDraw = React.useCallback(
     (clientX: number, clientY: number) => {
       const canvas = canvasRef.current;
@@ -327,9 +277,6 @@ export default function BaseImagePanel(props: Props) {
     [applyBrush, editMode]
   );
 
-  /**
-   * pointer move
-   */
   const moveDraw = React.useCallback(
     (clientX: number, clientY: number) => {
       const canvas = canvasRef.current;
@@ -341,16 +288,10 @@ export default function BaseImagePanel(props: Props) {
     [applyBrush, editMode]
   );
 
-  /**
-   * pointer up
-   */
   const endDraw = React.useCallback(() => {
     drawingRef.current = false;
   }, []);
 
-  /**
-   * 1手戻す
-   */
   const undoOnce = React.useCallback(() => {
     const prev = historyRef.current.pop();
     if (!prev) {
@@ -363,15 +304,6 @@ export default function BaseImagePanel(props: Props) {
     showMsg("1手戻しました");
   }, [redrawCanvas, showMsg]);
 
-  /**
-   * 編集結果を PNG で保存し、そのまま元画像へ反映します。
-   *
-   * 処理の流れ
-   * 1. 先に下書きを保存して id を確定
-   * 2. canvas を PNG に変換
-   * 3. /api/upload/image に送る
-   * 4. 戻りURLを元画像として反映
-   */
   const saveEditedBaseToDraft = React.useCallback(async () => {
     if (!uid) {
       showMsg("ログインしてください");
@@ -392,10 +324,6 @@ export default function BaseImagePanel(props: Props) {
     setEditorBusy(true);
 
     try {
-      /**
-       * まず下書きを保存し、URL の id を確定させます。
-       * 新規下書きでもここで id が付く想定です。
-       */
       await onSaveDraft();
 
       let ensuredDraftId =
@@ -403,9 +331,6 @@ export default function BaseImagePanel(props: Props) {
         new URL(window.location.href).searchParams.get("id") ||
         "";
 
-      /**
-       * router.replace の反映待ち
-       */
       if (!ensuredDraftId) {
         for (let i = 0; i < 10; i++) {
           await sleep(150);
@@ -463,15 +388,9 @@ export default function BaseImagePanel(props: Props) {
         throw new Error("保存後URLが空です");
       }
 
-      /**
-       * 既存ロジックを流用して「元画像差し替え」を行います。
-       */
       await onPromoteMaterialToBase(url);
       await onSaveDraft();
 
-      /**
-       * 画面側でも即反映して見た目を安定させます。
-       */
       setD((prev) => ({
         ...prev,
         baseImageUrl: url,
@@ -496,40 +415,6 @@ export default function BaseImagePanel(props: Props) {
       </summary>
 
       <div className="p-3 pt-0">
-        {/* =========================
-            撮影テンプレ
-        ========================= */}
-        <div className="mb-3 rounded-2xl border border-white/10 bg-black/15 p-3">
-          <div className="text-white/85 font-bold" style={{ fontSize: 12 }}>
-            撮影テンプレ（これに寄せると切り抜きが安定）
-          </div>
-
-          <div className="mt-2 text-white/70" style={{ fontSize: 12, lineHeight: 1.7 }}>
-            1. 背景は
-            <span className="text-white"> 白・薄グレー・無地 </span>
-            にする
-            <br />
-            2. 商品の色と
-            <span className="text-white"> 反対寄りの背景色 </span>
-            を使う
-            <br />
-            3. 床や壁の
-            <span className="text-white"> 柄・木目・影の筋 </span>
-            を減らす
-            <br />
-            4. 商品の外周に
-            <span className="text-white"> 余白をしっかり取る </span>
-            <br />
-            5. 光は
-            <span className="text-white"> 真上より斜め前からやわらかく </span>
-            当てる
-            <br />
-            6. 商品の色が
-            <span className="text-white"> 背景に溶ける撮り方 </span>
-            は避ける
-          </div>
-        </div>
-
         {d.baseImageUrl ? (
           <img
             src={overlayPreviewDataUrl || d.baseImageUrl || ""}
@@ -600,9 +485,6 @@ export default function BaseImagePanel(props: Props) {
           </div>
         </div>
 
-        {/* =========================
-            手修正UI
-        ========================= */}
         {editorOpen ? (
           <div className="mt-3 rounded-2xl border border-white/10 bg-black/15 p-3">
             <div className="flex flex-wrap items-center justify-between gap-2">

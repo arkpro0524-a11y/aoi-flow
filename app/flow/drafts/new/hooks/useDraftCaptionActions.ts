@@ -17,6 +17,8 @@ import { splitKeywords } from "./useDraftEditorState";
  * - 本文を勝手に壊さない
  * - textOverlayBySlot が無い旧データでも安全に補完する
  * - keywordsText / keywords の両方に対応する
+ * - 文字オーバーレイは「今見ているスロット」に正しく入れる
+ * - setD の直後に saveDraft しても値ズレしないよう dRef.current も更新する
  */
 
 type Params = {
@@ -34,6 +36,70 @@ type Params = {
   saveDraft: (partial?: Partial<DraftDoc>) => Promise<string | null>;
   showMsg: (s: string) => void;
 };
+
+/**
+ * TextOverlay を安全に複製する
+ *
+ * 重要
+ * - lines 配列
+ * - background オブジェクト
+ * を毎回 clone する
+ */
+function cloneOverlay(src?: TextOverlay | null): TextOverlay {
+  return {
+    lines: Array.isArray(src?.lines) ? [...src.lines] : [],
+    fontSize: typeof src?.fontSize === "number" ? src.fontSize : 44,
+    lineHeight: typeof src?.lineHeight === "number" ? src.lineHeight : 1.15,
+    /**
+     * 重要
+     * - このプロジェクトの他UIは 0〜100 前提で扱っている
+     * - ここも 50 / 80 に合わせる
+     */
+    x: typeof src?.x === "number" ? src.x : 50,
+    y: typeof src?.y === "number" ? src.y : 80,
+    color: typeof src?.color === "string" ? src.color : "#FFFFFF",
+    bandOpacity: typeof src?.bandOpacity === "number" ? src.bandOpacity : 0.45,
+    background: src?.background
+      ? {
+          enabled: !!src.background.enabled,
+          padding:
+            typeof src.background.padding === "number" ? src.background.padding : 18,
+          color:
+            typeof src.background.color === "string"
+              ? src.background.color
+              : "rgba(0,0,0,0.45)",
+          radius:
+            typeof src.background.radius === "number" ? src.background.radius : 16,
+        }
+      : {
+          enabled: true,
+          padding: 18,
+          color: "rgba(0,0,0,0.45)",
+          radius: 16,
+        },
+  };
+}
+
+/**
+ * 現在スロット用の安全な初期オーバーレイ
+ */
+function createFallbackOverlay(): TextOverlay {
+  return {
+    lines: [],
+    fontSize: 44,
+    lineHeight: 1.15,
+    x: 50,
+    y: 80,
+    color: "#FFFFFF",
+    bandOpacity: 0.45,
+    background: {
+      enabled: true,
+      padding: 18,
+      color: "rgba(0,0,0,0.45)",
+      radius: 16,
+    },
+  };
+}
 
 export default function useDraftCaptionActions(params: Params) {
   const {
@@ -63,49 +129,59 @@ export default function useDraftCaptionActions(params: Params) {
     slot: "base" | "mood" | "composite",
     patch?: Partial<TextOverlay>
   ): DraftDoc["textOverlayBySlot"] {
-    const cur = base.textOverlayBySlot?.[slot];
+    const currentBase = base.textOverlayBySlot?.base;
+    const currentMood = base.textOverlayBySlot?.mood;
+    const currentComposite = base.textOverlayBySlot?.composite;
 
-    const next: TextOverlay = {
-      lines: Array.isArray(cur?.lines) ? cur.lines : [],
-      fontSize: typeof cur?.fontSize === "number" ? cur.fontSize : 64,
-      lineHeight: typeof cur?.lineHeight === "number" ? cur.lineHeight : 1.25,
-      x: typeof cur?.x === "number" ? cur.x : 0.5,
-      y: typeof cur?.y === "number" ? cur.y : 0.75,
-      color: typeof cur?.color === "string" ? cur.color : "rgba(255,255,255,0.95)",
-      bandOpacity: typeof cur?.bandOpacity === "number" ? cur.bandOpacity : 0.45,
-      background: cur?.background
-        ? {
-            enabled: !!cur.background.enabled,
-            padding: typeof cur.background.padding === "number" ? cur.background.padding : 24,
-            color:
-              typeof cur.background.color === "string"
-                ? cur.background.color
-                : "rgba(0,0,0,0.45)",
-            radius: typeof cur.background.radius === "number" ? cur.background.radius : 18,
-          }
-        : {
-            enabled: true,
-            padding: 24,
-            color: "rgba(0,0,0,0.45)",
-            radius: 18,
-          },
+    const currentForSlot =
+      slot === "base"
+        ? currentBase
+        : slot === "mood"
+          ? currentMood
+          : currentComposite;
+
+    const nextForSlot: TextOverlay = {
+      ...cloneOverlay(currentForSlot ?? createFallbackOverlay()),
       ...(patch ?? {}),
+      lines:
+        patch && "lines" in patch
+          ? Array.isArray(patch.lines)
+            ? [...patch.lines]
+            : []
+          : cloneOverlay(currentForSlot ?? createFallbackOverlay()).lines,
+      background:
+        patch && patch.background
+          ? {
+              ...cloneOverlay(currentForSlot ?? createFallbackOverlay()).background,
+              ...patch.background,
+            }
+          : cloneOverlay(currentForSlot ?? createFallbackOverlay()).background,
     };
 
     return {
-      ...(base.textOverlayBySlot ?? {}),
-      [slot]: next,
+      base:
+        slot === "base"
+          ? nextForSlot
+          : currentBase
+            ? cloneOverlay(currentBase)
+            : createFallbackOverlay(),
+      mood:
+        slot === "mood"
+          ? nextForSlot
+          : currentMood
+            ? cloneOverlay(currentMood)
+            : undefined,
+      composite:
+        slot === "composite"
+          ? nextForSlot
+          : currentComposite
+            ? cloneOverlay(currentComposite)
+            : undefined,
     };
   }
 
   /**
    * 指定スロットの TextOverlay を必ず1つ返す
-   *
-   * ここを使うことで
-   * - ensureSlotOverlay(...)[slot] が undefined 扱いになる問題
-   * - textOverlayBySlot が未作成な旧データ
-   *
-   * を安全に吸収する。
    */
   function getSafeSlotOverlay(
     base: DraftDoc,
@@ -113,31 +189,46 @@ export default function useDraftCaptionActions(params: Params) {
   ): TextOverlay {
     const existing = base.textOverlayBySlot?.[slot];
     if (existing) {
-      return existing;
+      return cloneOverlay(existing);
     }
 
-    const ensured = ensureSlotOverlay(base, slot);
-    const fallback = ensured?.[slot];
+    return createFallbackOverlay();
+  }
 
-    if (fallback) {
-      return fallback;
-    }
+  /**
+   * dRef.current と setD のズレを防ぐための共通関数
+   *
+   * 重要
+   * - 文字表示は「今入力した直後」に preview / save が走る
+   * - React state だけだと非同期反映になる
+   * - そのため dRef.current も同時更新する
+   */
+  function commitDraftPatch(patch: Partial<DraftDoc>) {
+    const next = {
+      ...dRef.current,
+      ...patch,
+    } as DraftDoc;
 
-    return {
-      lines: [],
-      fontSize: 48,
-      lineHeight: 1.25,
-      x: 0.5,
-      y: 0.75,
-      color: "#ffffff",
-      bandOpacity: 0.45,
-      background: {
-        enabled: true,
-        padding: 24,
-        color: "rgba(0,0,0,0.45)",
-        radius: 0,
-      },
-    };
+    dRef.current = next;
+    setD(next);
+
+    return next;
+  }
+
+  /**
+   * 現在スロットにすでに文字があるかを確認
+   */
+  function hasOverlayTextInCurrentSlot(base: DraftDoc, slot: "base" | "mood" | "composite") {
+    const overlay = base.textOverlayBySlot?.[slot];
+
+    const linesText = Array.isArray(overlay?.lines)
+      ? overlay.lines.join("\n").trim()
+      : "";
+
+    const legacyText =
+      typeof (overlay as any)?.text === "string" ? String((overlay as any).text).trim() : "";
+
+    return Boolean(linesText || legacyText);
   }
 
   /**
@@ -158,10 +249,9 @@ export default function useDraftCaptionActions(params: Params) {
     }
 
     if (busy) return;
-
     if (inFlightRef.current["captions"]) return;
-    inFlightRef.current["captions"] = true;
 
+    inFlightRef.current["captions"] = true;
     setBusy(true);
 
     try {
@@ -205,24 +295,30 @@ export default function useDraftCaptionActions(params: Params) {
       const ig3 = Array.isArray(j.ig3) ? j.ig3.map(String).slice(0, 3) : [];
 
       const slot = currentSlot;
-      const existingLines = dRef.current.textOverlayBySlot?.[slot]?.lines ?? [];
-      const hasText = Array.isArray(existingLines) && existingLines.join("\n").trim().length > 0;
+      const hasText = hasOverlayTextInCurrentSlot(dRef.current, slot);
 
       const nextTextOverlayBySlot = hasText
-        ? dRef.current.textOverlayBySlot
+        ? {
+            base: dRef.current.textOverlayBySlot?.base
+              ? cloneOverlay(dRef.current.textOverlayBySlot.base)
+              : createFallbackOverlay(),
+            mood: dRef.current.textOverlayBySlot?.mood
+              ? cloneOverlay(dRef.current.textOverlayBySlot.mood)
+              : undefined,
+            composite: dRef.current.textOverlayBySlot?.composite
+              ? cloneOverlay(dRef.current.textOverlayBySlot.composite)
+              : undefined,
+          }
         : ensureSlotOverlay(dRef.current, slot, { lines: ig ? [ig] : [] });
 
-      setD((prev) => ({
-        ...prev,
+      commitDraftPatch({
         ig,
         x,
         ig3,
         igCaption: ig,
         xCaption: x,
-        textOverlayBySlot: hasText
-          ? prev.textOverlayBySlot
-          : ensureSlotOverlay(prev, slot, { lines: ig ? [ig] : [] }),
-      }));
+        textOverlayBySlot: nextTextOverlayBySlot,
+      });
 
       await saveDraft({
         ig,
@@ -234,7 +330,25 @@ export default function useDraftCaptionActions(params: Params) {
         textOverlayBySlot: nextTextOverlayBySlot,
       } as any);
 
-      showMsg("キャプションを生成しました");
+      /**
+       * 重要
+       * - 文字を入れたスロットに応じて previewMode を切り替える
+       * - これで「文字は入っているのに見ている枠が違う」を防ぐ
+       */
+      if (slot === "base") {
+        setPreviewMode("base");
+      } else if (slot === "mood") {
+        setPreviewMode("idea");
+      } else {
+        setPreviewMode("composite");
+      }
+
+      setPreviewReason("");
+      showMsg(
+        hasText
+          ? "キャプションを生成しました（文字表示は既存を維持）"
+          : "キャプションを生成しました"
+      );
     } catch (e: any) {
       console.error(e);
       showMsg(`文章生成に失敗しました：${e?.message || "不明"}`);
@@ -254,31 +368,37 @@ export default function useDraftCaptionActions(params: Params) {
     const t = String(text ?? "").trim();
     if (!t) return;
 
-    setD((prev) => ({
-      ...prev,
-      overlayText: t,
-      textOverlayBySlot: {
-        ...(prev.textOverlayBySlot ?? {}),
-        [currentSlot]: {
-          ...getSafeSlotOverlay(prev, currentSlot),
-          lines: [t],
-        },
-      },
-    }) as any);
-
-    setPreviewReason("");
-    setPreviewMode("base");
-
     const slot = currentSlot;
 
-    await saveDraft({
-      textOverlayBySlot: {
-        ...(dRef.current.textOverlayBySlot ?? {}),
-        [slot]: {
-          ...getSafeSlotOverlay(dRef.current, slot),
-          lines: t ? [t] : [],
-        },
+    const nextTextOverlayBySlot = {
+      ...(dRef.current.textOverlayBySlot ?? {}),
+      [slot]: {
+        ...getSafeSlotOverlay(dRef.current, slot),
+        lines: [t],
       },
+    };
+
+    commitDraftPatch({
+      textOverlayBySlot: nextTextOverlayBySlot as any,
+    });
+
+    /**
+     * 重要
+     * - 今編集中のスロットへ表示を合わせる
+     * - 以前の固定 base はやめる
+     */
+    if (slot === "base") {
+      setPreviewMode("base");
+    } else if (slot === "mood") {
+      setPreviewMode("idea");
+    } else {
+      setPreviewMode("composite");
+    }
+
+    setPreviewReason("");
+
+    await saveDraft({
+      textOverlayBySlot: nextTextOverlayBySlot as any,
       phase: "draft",
     } as any);
 

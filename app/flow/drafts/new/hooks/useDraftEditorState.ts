@@ -1,4 +1,4 @@
-//app/flow/drafts/new/hooks/useDraftEditorState.ts
+// /app/flow/drafts/new/hooks/useDraftEditorState.ts
 "use client";
 
 import { useMemo, useRef, useState } from "react";
@@ -23,36 +23,16 @@ import type {
  * - API呼び出しなし
  * - controller / actions / persistence から共通利用
  *
- * 今回の重要追加
- * - 商品理解レイヤーの state を追加
- *   1. 商品カテゴリ
- *   2. サイズ感
- *   3. 接地タイプ
- *   4. 売り方向
- *   5. 背景方向
- *
- * - 新仕様の state を追加
- *   ① 商品写真      : 切り抜き + テンプレ背景 + AI背景 + 調整UI
- *   ② 使用シーン    : AI再生成
- *   ③ サイズ        : テンプレ
- *   ④ ディテール    : 元写真
- *   ⑤ ストーリー    : AI再生成
- *
- * 今回の最重要修正
- * - template 背景専用 state を正式追加
- *   - templateBgUrl
- *   - templateBgUrls
- *   - templateBgRecommend
- *   - templateBgRecommendReason
- *
- * これにより、これまで optional 逃げしていた
- * useDraftImageActions / controller / panel 側のテンプレ背景機能を
- * 正式な state として扱えるようにする
+ * 今回の修正方針
+ * - 既存機能は削除しない
+ * - 初期値オブジェクトの参照共有を避ける
+ * - textOverlayBySlot まわりの土台を安定化する
+ * - composite 文字プレビューの親側で必要になる state を崩さない
  */
 
-// =========================
-// 型
-// =========================
+/* =========================
+ * 型
+ * ========================= */
 
 export type Brand = "vento" | "riva";
 export type Phase = "draft" | "ready" | "posted";
@@ -75,10 +55,7 @@ export type SellDirection = "sales" | "branding" | "trust" | "story";
  * テンプレ背景おすすめ1件分
  *
  * 注意
- * - UIで最低限必要なのは
- *   - url
- *   - reason
- *   - score
+ * - UIで最低限必要なのは url / reason / score
  * - API互換で imageUrl が返ることもあるが、
  *   state 側では url を正式とする
  */
@@ -93,15 +70,23 @@ export type PricingTable = {
   high: { 5: number; 10: number };
 };
 
-// =========================
-// 定数
-// =========================
+/* =========================
+ * 定数
+ * ========================= */
 
 export const FALLBACK_PRICING: PricingTable = {
   standard: { 5: 180, 10: 360 },
   high: { 5: 360, 10: 720 },
 };
 
+/**
+ * 文字オーバーレイ初期値
+ *
+ * 重要
+ * - ここは「定数の元データ」
+ * - 実際に state に入れる時は clone して使う
+ * - 直接参照を流用すると、どこかで変更した時に別箇所へ波及しやすい
+ */
 export const DEFAULT_TEXT_OVERLAY: TextOverlay = {
   lines: [""],
   fontSize: 44,
@@ -119,12 +104,53 @@ export const DEFAULT_TEXT_OVERLAY: TextOverlay = {
 };
 
 /**
+ * TextOverlay を毎回安全に複製する
+ *
+ * 重要
+ * - lines 配列
+ * - background オブジェクト
+ * を毎回新しく作る
+ */
+export function cloneTextOverlay(
+  overlay?: TextOverlay | null
+): TextOverlay {
+  const src = overlay ?? DEFAULT_TEXT_OVERLAY;
+
+  return {
+    ...src,
+    lines: Array.isArray(src.lines) ? [...src.lines] : [""],
+    background: src.background
+      ? {
+          ...src.background,
+        }
+      : undefined,
+  };
+}
+
+/**
+ * textOverlayBySlot を毎回安全に作る
+ *
+ * ポイント
+ * - base は必ず存在させる
+ * - mood / composite は undefined を維持
+ * - ただし既存値がある時は clone して保持する
+ */
+export function createDefaultTextOverlayBySlot(
+  source?: DraftDoc["textOverlayBySlot"]
+): DraftDoc["textOverlayBySlot"] {
+  return {
+    base: source?.base ? cloneTextOverlay(source.base) : cloneTextOverlay(DEFAULT_TEXT_OVERLAY),
+    mood: source?.mood ? cloneTextOverlay(source.mood) : undefined,
+    composite: source?.composite ? cloneTextOverlay(source.composite) : undefined,
+  };
+}
+
+/**
  * 新仕様の初期値
  *
- * placement
- * - scale: 1 が基準サイズ
- * - x: 0.5 が中央
- * - y: 0.5 が中央
+ * 注意
+ * - この DEFAULT_DRAFT は「元データ」
+ * - state に入れる時は createDefaultDraft() で clone して使う
  */
 export const DEFAULT_DRAFT: DraftDoc = {
   userId: "",
@@ -218,6 +244,13 @@ export const DEFAULT_DRAFT: DraftDoc = {
   storyImageUrl: undefined,
   storyImageUrls: [],
 
+  /**
+   * スロット別文字オーバーレイ
+   *
+   * 重要
+   * - base は初期表示用に持つ
+   * - mood / composite は未設定で開始
+   */
   textOverlayBySlot: {
     base: DEFAULT_TEXT_OVERLAY,
     mood: undefined,
@@ -249,9 +282,67 @@ export const DEFAULT_DRAFT: DraftDoc = {
   bandOpacity: 0.45,
 };
 
-// =========================
-// util
-// =========================
+/**
+ * DraftDoc を state 用に毎回安全に複製する
+ *
+ * 重要
+ * - 配列
+ * - ネストしたオブジェクト
+ * - textOverlayBySlot
+ * の参照共有を避ける
+ */
+export function createDefaultDraft(): DraftDoc {
+  return {
+    ...DEFAULT_DRAFT,
+
+    shortCopies: [...(DEFAULT_DRAFT.shortCopies ?? [])],
+
+    bgImageUrls: [...(DEFAULT_DRAFT.bgImageUrls ?? [])],
+    imageIdeaUrls: [...(DEFAULT_DRAFT.imageIdeaUrls ?? [])],
+    templateBgUrls: [...(DEFAULT_DRAFT.templateBgUrls ?? [])],
+    templateBgRecommendedIds: [...(DEFAULT_DRAFT.templateBgRecommendedIds ?? [])],
+    templateBgRecommendations: [...(DEFAULT_DRAFT.templateBgRecommendations ?? [])],
+    useSceneImageUrls: [...(DEFAULT_DRAFT.useSceneImageUrls ?? [])],
+    detailImageUrls: [...(DEFAULT_DRAFT.detailImageUrls ?? [])],
+    storyImageUrls: [...(DEFAULT_DRAFT.storyImageUrls ?? [])],
+    ig3: [...(DEFAULT_DRAFT.ig3 ?? [])],
+    videoUrls: [...(DEFAULT_DRAFT.videoUrls ?? [])],
+    nonAiVideoUrls: [...(DEFAULT_DRAFT.nonAiVideoUrls ?? [])],
+
+    images: {
+      primary: DEFAULT_DRAFT.images?.primary ?? null,
+      materials: Array.isArray(DEFAULT_DRAFT.images?.materials)
+        ? [...DEFAULT_DRAFT.images.materials]
+        : [],
+    },
+
+    placement: {
+      scale: DEFAULT_DRAFT.placement?.scale ?? 1,
+      x: DEFAULT_DRAFT.placement?.x ?? 0.5,
+      y: DEFAULT_DRAFT.placement?.y ?? 0.5,
+      shadow: {
+        opacity: DEFAULT_DRAFT.placement?.shadow?.opacity ?? 0.12,
+        blur: DEFAULT_DRAFT.placement?.shadow?.blur ?? 12,
+        scale: DEFAULT_DRAFT.placement?.shadow?.scale ?? 1,
+        offsetX: DEFAULT_DRAFT.placement?.shadow?.offsetX ?? 0,
+        offsetY: DEFAULT_DRAFT.placement?.shadow?.offsetY ?? 0.02,
+      },
+    },
+
+    videoSettings: {
+      seconds: DEFAULT_DRAFT.videoSettings?.seconds ?? 5,
+      quality: DEFAULT_DRAFT.videoSettings?.quality ?? "standard",
+      template: DEFAULT_DRAFT.videoSettings?.template ?? "zoom",
+      size: DEFAULT_DRAFT.videoSettings?.size ?? "720x1280",
+    },
+
+    textOverlayBySlot: createDefaultTextOverlayBySlot(DEFAULT_DRAFT.textOverlayBySlot),
+  };
+}
+
+/* =========================
+ * util
+ * ========================= */
 
 export function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
@@ -345,19 +436,27 @@ export function normalizePricing(raw: any): PricingTable {
 /**
  * 文字入りプレビュー用の元画像を決める
  *
- * 優先順
- * 1. 元画像
- * 2. 使用シーン
- * 3. 旧互換の idea 画像
- * 4. 合成画像
- * 5. 文字入り保存画像
+ * 重要
+ * - この関数は「共通 fallback 用」
+ * - composite 専用の優先順は controller / imageActions 側で追加判定する
+ * - ここは土台として順序を安定化させる
  */
 export function getOverlaySourceUrlForPreview(d: DraftDoc) {
-  if (d.baseImageUrl) return d.baseImageUrl;
-  if (d.useSceneImageUrl) return d.useSceneImageUrl;
-  if (d.imageIdeaUrl) return d.imageIdeaUrl;
-  if (d.aiImageUrl) return d.aiImageUrl;
-  if (d.compositeImageUrl) return d.compositeImageUrl;
+  const base = String(d.baseImageUrl || "").trim();
+  if (base) return base;
+
+  const scene = String(d.useSceneImageUrl || "").trim();
+  if (scene) return scene;
+
+  const idea = String(d.imageIdeaUrl || "").trim();
+  if (idea) return idea;
+
+  const ai = String(d.aiImageUrl || "").trim();
+  if (ai) return ai;
+
+  const composite = String(d.compositeImageUrl || "").trim();
+  if (composite) return composite;
+
   return "";
 }
 
@@ -376,9 +475,9 @@ export function dataUrlToUint8Array(dataUrl: string): Uint8Array {
   return bytes;
 }
 
-// =========================
-// hook
-// =========================
+/* =========================
+ * hook
+ * ========================= */
 
 export default function useDraftEditorState(id: string | null) {
   const [uid, setUid] = useState<string | null>(null);
@@ -388,7 +487,13 @@ export default function useDraftEditorState(id: string | null) {
   const [loadBusy, setLoadBusy] = useState(true);
 
   const [draftId, setDraftId] = useState<string | null>(id ?? null);
-  const [d, setD] = useState<DraftDoc>({ ...DEFAULT_DRAFT });
+
+  /**
+   * 重要
+   * - DEFAULT_DRAFT をそのまま入れず、
+   *   createDefaultDraft() で毎回独立した初期値を作る
+   */
+  const [d, setD] = useState<DraftDoc>(() => createDefaultDraft());
 
   const [uiMsg, setUiMsg] = useState("");
 
@@ -424,11 +529,6 @@ export default function useDraftEditorState(id: string | null) {
 
   /**
    * テンプレ背景専用 state
-   *
-   * 今回の最重要追加
-   * - これまでは d.templateBgUrl などにしか依存しておらず、
-   *   actions 側で optional 逃げしていた
-   * - 今回ここで正式な local state を持つ
    */
   const [templateBgUrl, setTemplateBgUrl] = useState<string | null>(null);
   const [templateBgUrls, setTemplateBgUrls] = useState<string[]>([]);
@@ -501,7 +601,7 @@ export default function useDraftEditorState(id: string | null) {
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const inFlightRef = useRef<Record<string, boolean>>({});
-  const dRef = useRef<DraftDoc>({ ...DEFAULT_DRAFT });
+  const dRef = useRef<DraftDoc>(createDefaultDraft());
   const draftIdRef = useRef<string | null>(id ?? null);
   const saveQueueRef = useRef<Promise<any>>(Promise.resolve());
 
@@ -552,7 +652,9 @@ export default function useDraftEditorState(id: string | null) {
   }, [d.baseImageUrl, d.aiImageUrl, compositeFromBaseUrl]);
 
   const brandValue: Brand =
-    (String((d as any).brand ?? d.brandId ?? "vento").trim() === "riva" ? "riva" : "vento") as Brand;
+    (String((d as any).brand ?? d.brandId ?? "vento").trim() === "riva"
+      ? "riva"
+      : "vento") as Brand;
 
   const brandLabel = brandValue === "vento" ? "VENTO" : "RIVA";
 

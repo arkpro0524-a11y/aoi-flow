@@ -20,6 +20,7 @@ Draft 保存 API
 正式スキーマ
 {
   brandId
+  vision
   keywords
   igCaption
   xCaption
@@ -42,6 +43,11 @@ Draft 保存 API
   templateBgRecommendedIds
   templateBgRecommendations
 }
+
+今回の修正ポイント
+・既存コードは消さずに維持
+・vision だけ保存漏れしていたため追加
+・keywords と同じように、vision も normalizePatch で正式保存対象に入れる
 */
 
 /* ------------------------------- */
@@ -177,6 +183,17 @@ function normalizePatch(input: Record<string, unknown>, uid: string): JsonLikeOb
 
   if ("brandId" in input) {
     patch.brandId = normalizeBrandId(input.brandId);
+  }
+
+  /**
+   * 今回の本質修正
+   * - Vision がフロントから送られてきても、
+   *   これまではここで拾っていなかった
+   * - そのため DB 保存対象から落ちていた
+   * - keywords と同じく正式保存対象へ追加する
+   */
+  if ("vision" in input && typeof input.vision === "string") {
+    patch.vision = input.vision;
   }
 
   if ("keywords" in input && typeof input.keywords === "string") {

@@ -1,4 +1,4 @@
-//app/flow/drafts/new/hooks/useDraftImageActions.ts
+// /app/flow/drafts/new/hooks/useDraftImageActions.ts
 "use client";
 
 import React from "react";
@@ -506,6 +506,36 @@ function resolveSizeTemplatePreview(type: SizeTemplateType, baseUrl: string): st
   return baseUrl;
 }
 
+/**
+ * 文字合成時に、どの画像を土台に使うかを安全に決める関数
+ *
+ * 重要:
+ * - 既存の getOverlaySourceUrlForPreview() は残す
+ * - ただし currentSlot が composite の時だけ、
+ *   ④で見ている合成画像を優先する
+ * - これにより既存の ① / ② / ⑤ 系の挙動を壊さない
+ */
+function resolveOverlayRenderSourceUrl(
+  cur: DraftDoc,
+  currentSlot: "base" | "mood" | "composite"
+): string {
+  if (currentSlot === "composite") {
+const compositeCandidates = [
+  cur.aiImageUrl,
+  cur.compositeImageUrl,
+  cur.imageUrl,
+  cur.stageImageUrl,
+]            .map((v) => String(v || "").trim())
+      .filter(Boolean);
+
+    if (compositeCandidates.length > 0) {
+      return compositeCandidates[0];
+    }
+  }
+
+  return String(getOverlaySourceUrlForPreview(cur) || "").trim();
+}
+
 export default function useDraftImageActions(params: Params) {
   const {
     uid,
@@ -584,6 +614,11 @@ export default function useDraftImageActions(params: Params) {
     saveDraft,
     showMsg,
   } = params;
+
+  void useSceneImageUrl;
+  void useSceneImageUrls;
+  void storyImageUrl;
+  void templateBgRecommendReason;
 
   function commitDraftPatch(patch: Partial<DraftDoc>) {
     const next = { ...dRef.current, ...patch } as DraftDoc;
@@ -808,14 +843,14 @@ export default function useDraftImageActions(params: Params) {
       const recommended = rawRecommended
         .map((item: any, index: number) => ({
           id: String(item?.id || `rec-${index}-${Date.now()}`),
-          url: String(item?.url || item?.imageUrl || "").trim(),
+          imageUrl: String(item?.url || item?.imageUrl || "").trim(),
           category: normalizeTemplateBgCategory(item?.category),
           score: Number(item?.score || 0),
           reason: String(item?.reason || "").trim(),
           reasons: Array.isArray(item?.reasons) ? item.reasons : [],
           tags: Array.isArray(item?.tags) ? item.tags : [],
         }))
-        .filter((item: { url: string }) => item.url);
+        .filter((item: { imageUrl: string }) => item.imageUrl);
 
       const topReason =
         typeof json?.picked?.reason === "string" && json.picked.reason.trim()
@@ -1126,122 +1161,142 @@ export default function useDraftImageActions(params: Params) {
     }
   }
 
-  async function renderToCanvasAndGetDataUrlSilent(): Promise<string | null> {
-    const cur = dRef.current;
+async function renderOverlayToCanvasAndGetDataUrlBySlot(
+  slot: "base" | "mood" | "composite"
+): Promise<string | null> {
+  const cur = dRef.current;
 
-    const canvas = canvasRef.current;
-    if (!canvas) return null;
+  /**
+   * 重要
+   * - 画面上の既存 canvasRef に依存すると、
+   *   その時点で未マウントなら null になって失敗する
+   * - ④文字焼き込み保存は非表示でも確実に動いてほしいので、
+   *   ここで毎回ローカル canvas を新規作成する
+   */
+  const canvas = document.createElement("canvas");
 
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return null;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null;
 
-    const SIZE = 1024;
-    canvas.width = SIZE;
-    canvas.height = SIZE;
+  const SIZE = 1024;
+  canvas.width = SIZE;
+  canvas.height = SIZE;
 
-    ctx.clearRect(0, 0, SIZE, SIZE);
-    ctx.fillStyle = "#0b0f18";
-    ctx.fillRect(0, 0, SIZE, SIZE);
+  ctx.clearRect(0, 0, SIZE, SIZE);
+  ctx.fillStyle = "#0b0f18";
+  ctx.fillRect(0, 0, SIZE, SIZE);
 
-    const src = getOverlaySourceUrlForPreview(cur);
-    if (!src) return null;
+const src = resolveOverlayRenderSourceUrl(cur, slot);
+if (!src) {
+  throw new Error(`overlay source が空です: slot=${slot}`);
+}
 
-    const loaded = await loadImageAsObjectUrl(src);
-    if (!loaded) return null;
+const loaded = await loadImageAsObjectUrl(src);
+if (!loaded) {
+  throw new Error(`overlay source の読込に失敗しました: slot=${slot}`);
+}
 
-    try {
-      const img = new Image();
-      img.src = loaded.objectUrl;
+  try {
+    const img = new Image();
+    img.src = loaded.objectUrl;
 
-      const ok = await new Promise<boolean>((resolve) => {
-        img.onload = () => resolve(true);
-        img.onerror = () => resolve(false);
-      });
+    const ok = await new Promise<boolean>((resolve) => {
+      img.onload = () => resolve(true);
+      img.onerror = () => resolve(false);
+    });
 
-      if (!ok) return null;
+    if (!ok) return null;
 
-      const iw = img.naturalWidth || SIZE;
-      const ih = img.naturalHeight || SIZE;
-      const scale = Math.min(SIZE / iw, SIZE / ih);
-      const w = iw * scale;
-      const h = ih * scale;
-      const x = (SIZE - w) / 2;
-      const y = (SIZE - h) / 2;
+    const iw = img.naturalWidth || SIZE;
+    const ih = img.naturalHeight || SIZE;
+    const scale = Math.min(SIZE / iw, SIZE / ih);
+    const w = iw * scale;
+    const h = ih * scale;
+    const x = (SIZE - w) / 2;
+    const y = (SIZE - h) / 2;
 
-      ctx.drawImage(img, x, y, w, h);
-    } finally {
-      loaded.revoke();
-    }
-
-    const slotOverlay = (cur.textOverlayBySlot?.[currentSlot] ?? null) as TextOverlay | null;
-    const overlayText = Array.isArray(slotOverlay?.lines) ? slotOverlay.lines.join("\n").trim() : "";
-
-    if (overlayText) {
-      const fontPx = Math.max(10, Math.round(slotOverlay?.fontSize ?? 64));
-      const lineH = Math.max(10, Math.round((slotOverlay?.lineHeight ?? 1.25) * fontPx));
-
-      ctx.font = `900 ${fontPx}px system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif`;
-      ctx.textBaseline = "top";
-
-      const maxWidth = Math.floor(SIZE * 0.86);
-
-      const rawLines =
-        Array.isArray(slotOverlay?.lines) && slotOverlay.lines.length
-          ? slotOverlay.lines.map((s: string) => String(s ?? ""))
-          : overlayText.split("\n");
-
-      const fixedLines: string[] = [];
-
-      for (const ln0 of rawLines) {
-        let buf = "";
-
-        for (const ch of ln0) {
-          const t = buf + ch;
-
-          if (ctx.measureText(t).width <= maxWidth) {
-            buf = t;
-          } else {
-            if (buf) fixedLines.push(buf);
-            buf = ch;
-          }
-        }
-
-        if (buf) fixedLines.push(buf);
-      }
-
-      const blockH = fixedLines.length * lineH;
-      const yRaw = typeof slotOverlay?.y === "number" ? slotOverlay.y : 0;
-      const y01 = yRaw > 1 ? clamp(yRaw / 100, 0, 1) : clamp(yRaw, 0, 1);
-      const topY = Math.round((SIZE - blockH) * y01);
-      const pad = Math.round(SIZE * 0.035);
-
-      const bg = slotOverlay?.background;
-
-      if (bg?.enabled) {
-        ctx.fillStyle = bg.color || "rgba(0,0,0,0.45)";
-        const rectY = Math.max(0, topY - Math.round(pad * 0.6));
-        const rectH = Math.min(SIZE - rectY, blockH + Math.round(pad * 1.2));
-        ctx.fillRect(0, rectY, SIZE, rectH);
-      }
-
-      ctx.fillStyle = slotOverlay?.color || "rgba(255,255,255,0.95)";
-
-      for (let i = 0; i < fixedLines.length; i++) {
-        const ln = fixedLines[i];
-        const textW = ctx.measureText(ln).width;
-
-        const xRaw = typeof slotOverlay?.x === "number" ? slotOverlay.x : 0.5;
-        const x01 = xRaw > 1 ? clamp(xRaw / 100, 0, 1) : clamp(xRaw, 0, 1);
-        const tx = Math.round((SIZE - textW) * x01);
-
-        const ty = topY + i * lineH;
-        ctx.fillText(ln, tx, ty);
-      }
-    }
-
-    return canvas.toDataURL("image/png");
+    ctx.drawImage(img, x, y, w, h);
+  } finally {
+    loaded.revoke();
   }
 
+  const slotOverlay = (cur.textOverlayBySlot?.[slot] ?? null) as TextOverlay | null;
+
+  const overlayText = Array.isArray(slotOverlay?.lines)
+    ? slotOverlay.lines.join("\n").trim()
+    : typeof slotOverlay?.text === "string"
+      ? slotOverlay.text.trim()
+      : "";
+
+  if (overlayText) {
+    const fontPx = Math.max(10, Math.round(slotOverlay?.fontSize ?? 64));
+    const lineH = Math.max(10, Math.round((slotOverlay?.lineHeight ?? 1.25) * fontPx));
+
+    ctx.font = `900 ${fontPx}px system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif`;
+    ctx.textBaseline = "top";
+
+    const maxWidth = Math.floor(SIZE * 0.86);
+
+    const rawLines =
+      Array.isArray(slotOverlay?.lines) && slotOverlay.lines.length
+        ? slotOverlay.lines.map((s: string) => String(s ?? ""))
+        : overlayText.split("\n");
+
+    const fixedLines: string[] = [];
+
+    for (const ln0 of rawLines) {
+      let buf = "";
+
+      for (const ch of ln0) {
+        const t = buf + ch;
+
+        if (ctx.measureText(t).width <= maxWidth) {
+          buf = t;
+        } else {
+          if (buf) fixedLines.push(buf);
+          buf = ch;
+        }
+      }
+
+      if (buf) fixedLines.push(buf);
+    }
+
+    const blockH = fixedLines.length * lineH;
+    const yRaw = typeof slotOverlay?.y === "number" ? slotOverlay.y : 0;
+    const y01 = yRaw > 1 ? clamp(yRaw / 100, 0, 1) : clamp(yRaw, 0, 1);
+    const topY = Math.round((SIZE - blockH) * y01);
+    const pad = Math.round(SIZE * 0.035);
+
+    const bg = slotOverlay?.background;
+
+    if (bg?.enabled) {
+      ctx.fillStyle = bg.color || "rgba(0,0,0,0.45)";
+      const rectY = Math.max(0, topY - Math.round(pad * 0.6));
+      const rectH = Math.min(SIZE - rectY, blockH + Math.round(pad * 1.2));
+      ctx.fillRect(0, rectY, SIZE, rectH);
+    }
+
+    ctx.fillStyle = slotOverlay?.color || "rgba(255,255,255,0.95)";
+
+    for (let i = 0; i < fixedLines.length; i++) {
+      const ln = fixedLines[i];
+      const textW = ctx.measureText(ln).width;
+
+      const xRaw = typeof slotOverlay?.x === "number" ? slotOverlay.x : 0.5;
+      const x01 = xRaw > 1 ? clamp(xRaw / 100, 0, 1) : clamp(xRaw, 0, 1);
+      const tx = Math.round((SIZE - textW) * x01);
+
+      const ty = topY + i * lineH;
+      ctx.fillText(ln, tx, ty);
+    }
+  }
+
+  return canvas.toDataURL("image/png");
+}
+
+async function renderToCanvasAndGetDataUrlSilent(): Promise<string | null> {
+  return await renderOverlayToCanvasAndGetDataUrlBySlot(currentSlot);
+}
   async function cutoutCurrentBaseToReplace() {
     if (!uid) {
       showMsg("❌ ログインしてください");
@@ -1779,46 +1834,143 @@ export default function useDraftImageActions(params: Params) {
     }
   }
 
-  async function saveCompositeAsImageUrl() {
-    if (!uid) return;
+async function saveCompositeAsImageUrl() {
+  if (!uid) return;
 
-    if (inFlightRef.current["composite"]) return;
-    inFlightRef.current["composite"] = true;
+  if (inFlightRef.current["composite"]) return;
+  inFlightRef.current["composite"] = true;
 
-    setBusy(true);
+  setBusy(true);
 
-    try {
-      const ensuredDraftId = draftId ?? (await saveDraft());
-      if (!ensuredDraftId) {
-        throw new Error("failed to create draft");
-      }
-
-      const out = await renderToCanvasAndGetDataUrlSilent();
-      if (!out) return;
-
-      const url = await uploadDataUrlToStorage(uid, ensuredDraftId, out);
-
-      setD((prev) => ({
-        ...prev,
-        compositeImageUrl: url,
-        imageSource: "composite",
-      }));
-
-      await saveDraft({
-        compositeImageUrl: url,
-        imageSource: "composite",
-      } as any);
-
-      showMsg("文字入り画像を保存しました（投稿用）");
-    } catch (e: any) {
-      console.error(e);
-      showMsg(`❌ 保存に失敗：${e?.message || "不明"}`);
-    } finally {
-      setBusy(false);
-      inFlightRef.current["composite"] = false;
+  try {
+    const ensuredDraftId = draftId ?? (await saveDraft());
+    if (!ensuredDraftId) {
+      throw new Error("failed to create draft");
     }
-  }
 
+    const compositeBaseUrl = String(
+      dRef.current.aiImageUrl ||
+        dRef.current.imageUrl ||
+        dRef.current.stageImageUrl ||
+        ""
+    ).trim();
+
+    if (!compositeBaseUrl) {
+      throw new Error("先に④の合成画像を作成してください");
+    }
+
+    const out = await renderToCanvasAndGetDataUrlSilent();
+    if (!out) {
+      throw new Error("文字焼き込み画像の作成に失敗しました");
+    }
+
+    const url = await uploadDataUrlToStorage(uid, ensuredDraftId, out);
+
+    const nextCompositeTextUrls = uniqKeepOrder(
+      [
+        url,
+        ...(Array.isArray((dRef.current as any).compositeTextImageUrls)
+          ? (dRef.current as any).compositeTextImageUrls
+          : []),
+      ],
+      10
+    );
+
+    commitDraftPatch({
+      compositeTextImageUrl: url as any,
+      compositeTextImageUrls: nextCompositeTextUrls as any,
+      imageSource: "composite",
+    } as any);
+
+    await saveDraft({
+      compositeTextImageUrl: url as any,
+      compositeTextImageUrls: nextCompositeTextUrls as any,
+      imageSource: "composite",
+    } as any);
+
+    showMsg("文字焼き込み保存画像を保存しました");
+  } catch (e: any) {
+    console.error(e);
+    showMsg(`❌ 保存に失敗：${e?.message || "不明"}`);
+  } finally {
+    setBusy(false);
+    inFlightRef.current["composite"] = false;
+  }
+}
+
+async function saveCompositeTextImageFromCompositeSlot() {
+  if (!uid) return;
+
+  if (inFlightRef.current["compositeText"]) return;
+  inFlightRef.current["compositeText"] = true;
+
+  setBusy(true);
+
+  try {
+    const ensuredDraftId = draftId ?? (await saveDraft());
+    if (!ensuredDraftId) {
+      throw new Error("failed to create draft");
+    }
+
+    const compositeBaseUrl = String(
+      dRef.current.aiImageUrl ||
+        dRef.current.compositeImageUrl ||
+        dRef.current.imageUrl ||
+        dRef.current.stageImageUrl ||
+        ""
+    ).trim();
+
+    if (!compositeBaseUrl) {
+      throw new Error("先に④の通常合成画像を作成してください");
+    }
+
+    const compositeOverlay = dRef.current.textOverlayBySlot?.composite;
+    const compositeText = Array.isArray(compositeOverlay?.lines)
+      ? compositeOverlay.lines.join("\n").trim()
+      : typeof compositeOverlay?.text === "string"
+        ? compositeOverlay.text.trim()
+        : "";
+
+    if (!compositeText) {
+      throw new Error("④用の文字がありません");
+    }
+
+    const out = await renderOverlayToCanvasAndGetDataUrlBySlot("composite");
+    if (!out) {
+      throw new Error("④の文字焼き込み画像作成に失敗しました");
+    }
+
+    const url = await uploadDataUrlToStorage(uid, ensuredDraftId, out);
+
+    const nextCompositeTextUrls = uniqKeepOrder(
+      [
+        url,
+        ...(Array.isArray((dRef.current as any).compositeTextImageUrls)
+          ? (dRef.current as any).compositeTextImageUrls
+          : []),
+      ],
+      10
+    );
+
+    commitDraftPatch({
+      compositeTextImageUrl: url as any,
+      compositeTextImageUrls: nextCompositeTextUrls as any,
+    } as any);
+
+    await saveDraft({
+      compositeTextImageUrl: url as any,
+      compositeTextImageUrls: nextCompositeTextUrls as any,
+    } as any);
+
+    showMsg("④の文字焼き込み保存画像を保存しました");
+  } catch (e: any) {
+    console.error(e);
+    showMsg(`❌ ④文字焼き込み保存に失敗：${e?.message || "不明"}`);
+  } finally {
+    setBusy(false);
+    inFlightRef.current["compositeText"] = false;
+  }
+}
   /**
    * AI背景生成
    *
@@ -2201,6 +2353,7 @@ export default function useDraftImageActions(params: Params) {
         foregroundImageUrl: fg,
         aiImageUrl: outUrl,
         imageUrl: outUrl,
+        compositeImageUrl: outUrl,
         imageSource: "ai",
         activePhotoMode,
         placement,
@@ -2214,6 +2367,7 @@ export default function useDraftImageActions(params: Params) {
         foregroundImageUrl: fg,
         aiImageUrl: outUrl,
         imageUrl: outUrl,
+        compositeImageUrl: outUrl,
         imageSource: "ai",
         phase: "draft",
         activePhotoMode,
@@ -2570,6 +2724,7 @@ export default function useDraftImageActions(params: Params) {
     generateBackgroundImage,
     replaceBackgroundAndSaveToAiImage,
     saveCompositeAsImageUrl,
+    saveCompositeTextImageFromCompositeSlot,
     clearBgHistory,
     syncBgImagesFromStorage,
     syncIdeaImagesFromStorage,

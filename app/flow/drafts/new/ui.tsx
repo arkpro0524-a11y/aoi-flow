@@ -3,133 +3,18 @@
 
 import React from "react";
 
-/**
- * =========================================================
- * このファイルは何をするもの？
- * =========================================================
- * AOI FLOW の「見た目の部品」をまとめているファイルです。
- *
- * 画面の中で何度も使う
- * 「ボタン」「選択ボタン」「小さなラベル」「数値調整UI」
- * 「共通カード」「見出し」「空表示」「画面内メッセージ」
- * などを、ここでひとまとめにしています。
- *
- * このファイルの役割は、
- * 画面をきれいに作るための“部品箱”です。
- *
- * ---------------------------------------------------------
- * このファイルでやること
- * ---------------------------------------------------------
- * 1. 見た目の共通ルール（UI定数）をまとめる
- * 2. ボタン部品を作る
- * 3. 選択ボタン部品を作る
- * 4. 小さいラベル（Chip）部品を作る
- * 5. 数値を増減する部品を作る
- * 6. 写真提出ガイド表示の部品を作る
- * 7. 共通カード枠を作る
- * 8. 見出しや補助テキストの部品を作る
- * 9. 空状態表示の部品を作る
- * 10. 画面内メッセージ表示の部品を作る
- * 11. 生成元表示の部品を作る
- *
- * ---------------------------------------------------------
- * このファイルでやらないこと
- * ---------------------------------------------------------
- * - Firestoreへの保存
- * - Firebaseとの通信
- * - API呼び出し
- * - 画像生成
- * - 動画生成
- * - ログイン判定
- * - 状態管理の本体
- *
- * つまり、
- * 「処理」はしないで、
- * 「見た目」だけを担当するファイルです。
- *
- * ---------------------------------------------------------
- * 主にどのファイルとつながる？
- * ---------------------------------------------------------
- * 一番大きくつながるのは下のファイルです。
- *
- * /app/flow/drafts/new/page.tsx
- *
- * この page.tsx から、
- * ここで作った部品を import して使います。
- *
- * 例：
- * import {
- *   UI,
- *   Btn,
- *   SelectBtn,
- *   Chip,
- *   RangeControl,
- *   PhotoSubmissionGuide,
- *   SectionCard,
- *   FieldLabel,
- *   EmptyStateBox,
- *   UiMessage,
- *   LoadingText,
- *   OriginMetaView,
- * } from "./ui";
- *
- * ---------------------------------------------------------
- * 小学生向けにたとえると
- * ---------------------------------------------------------
- * page.tsx ＝ 司令塔（何をするか決める）
- * ui.tsx   ＝ 道具箱（ボタンや表示部品を用意する）
- *
- * 司令塔が
- * 「このボタンを出して」
- * 「このガイドを表示して」
- * 「空の時の箱を出して」
- * 「メッセージを見せて」
- * とお願いすると、
- * ui.tsx の部品が画面に出てくるイメージです。
- * =========================================================
- */
-
-// =========================================================
-// UI 定数
-// =========================================================
-/**
- * UI = 画面の見た目ルールをまとめた設定
- *
- * ここで数字をまとめておくと、
- * あとでデザインを直したい時にここだけ見ればよくなります。
- *
- * 例：
- * - 余白を広くしたい
- * - ボタン文字を少し大きくしたい
- * - プレビューの角丸を変えたい
- *
- * そういう時に便利です。
- */
 export const UI = {
-  // 部品どうしの基本のすき間
   gap: 12,
-
-  // カードの内側の余白
   cardPadding: 12,
-
-  // 各入力欄の高さ
   hVision: 64,
   hIG: 110,
   hX: 90,
   hMemo: 72,
   hOverlayText: 84,
-
-  // 画像プレビューの最大幅と角丸
   previewMaxWidth: 400,
   previewRadius: 11,
-
-  // 数値増減ボタンのサイズ
   stepBtnSize: 36,
-
-  // 読み込み中テキストを表示する設計用のフラグ
   showLoadingText: true,
-
-  // 文字サイズ関係
   FONT: {
     labelPx: 12,
     chipPx: 12,
@@ -139,18 +24,12 @@ export const UI = {
     overlayPreviewBasePx: 18,
     overlayCanvasBasePx: 44,
   },
-
-  // 入力欄の基本色
   FORM: {
     bg: "rgba(0,0,0,0.55)",
     border: "rgba(255,255,255,0.18)",
     text: "rgba(255,255,255,0.96)",
   },
-
-  // 右側固定表示の上からの余白
   rightStickyTopPx: 25,
-
-  // RangeControl専用の細かい余白設定
   RANGE: {
     boxPad: 8,
     headerMb: 6,
@@ -159,40 +38,10 @@ export const UI = {
   },
 } as const;
 
-// =========================================================
-// clamp
-// =========================================================
-/**
- * 数字が小さすぎたり大きすぎたりしないように、
- * 最低値〜最高値の間におさめる関数です。
- *
- * 例：
- * clamp(200, 0, 100) → 100
- * clamp(-5, 0, 100) → 0
- * clamp(50, 0, 100) → 50
- *
- * 主に RangeControl の中で使います。
- */
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
 }
 
-// =========================================================
-// SectionCard
-// =========================================================
-/**
- * 画面の大きなまとまりを包む共通カードです。
- *
- * 使い道：
- * - Brand の箱
- * - 本文編集の箱
- * - 動画設定の箱
- * - プレビュー側の箱
- *
- * これを使うと、
- * 「ここからここまでが1つのエリア」
- * だと分かりやすくなります。
- */
 export function SectionCard(props: {
   children: React.ReactNode;
   className?: string;
@@ -211,20 +60,6 @@ export function SectionCard(props: {
   );
 }
 
-// =========================================================
-// PanelTitle
-// =========================================================
-/**
- * カードの中の見出しです。
- *
- * 使い道：
- * - Brand
- * - Vision（必須）
- * - Instagram 本文
- * - 動画サイズ
- *
- * どこが見出しかを揃えるための部品です。
- */
 export function PanelTitle(props: {
   children: React.ReactNode;
   className?: string;
@@ -239,19 +74,6 @@ export function PanelTitle(props: {
   );
 }
 
-// =========================================================
-// FieldLabel
-// =========================================================
-/**
- * 入力欄の上に出す小さいラベルです。
- *
- * 使い道：
- * - Vision（必須）
- * - Keywords（任意）
- * - テキスト（直接編集）
- *
- * PanelTitle より少し用途を狭くしたラベルです。
- */
 export function FieldLabel(props: {
   children: React.ReactNode;
   className?: string;
@@ -266,17 +88,6 @@ export function FieldLabel(props: {
   );
 }
 
-// =========================================================
-// HelpText
-// =========================================================
-/**
- * 補足説明の小さい文字です。
- *
- * 使い道：
- * - 注意文
- * - 補足説明
- * - 操作ヒント
- */
 export function HelpText(props: {
   children: React.ReactNode;
   className?: string;
@@ -291,19 +102,6 @@ export function HelpText(props: {
   );
 }
 
-// =========================================================
-// LoadingText
-// =========================================================
-/**
- * 読み込み中の表示です。
- *
- * 使い道：
- * - 読み込み中...
- * - 保存中...
- * - 同期中...
- *
- * 画面の上などに、短い状態表示を出したい時に使います。
- */
 export function LoadingText(props: {
   text?: string;
   className?: string;
@@ -318,20 +116,6 @@ export function LoadingText(props: {
   );
 }
 
-// =========================================================
-// UiMessage
-// =========================================================
-/**
- * alert の代わりに画面の中へ出すメッセージです。
- *
- * 使い道：
- * - 保存しました
- * - 生成しました
- * - 失敗しました
- *
- * この部品は「表示だけ」を担当します。
- * メッセージを出すかどうかは page.tsx が決めます。
- */
 export function UiMessage(props: {
   message?: string | null;
   className?: string;
@@ -348,24 +132,6 @@ export function UiMessage(props: {
   );
 }
 
-// =========================================================
-// Btn
-// =========================================================
-/**
- * ふつうの共通ボタンです。
- *
- * 使い道：
- * - 保存ボタン
- * - 生成ボタン
- * - 削除ボタン
- * - 戻るボタン
- *
- * variant を変えると見た目が変わります。
- * - primary   : いちばん大事なボタン
- * - secondary : 次に大事なボタン
- * - ghost     : 目立ちすぎないボタン
- * - danger    : 危険系（削除など）
- */
 export function Btn(props: {
   children: React.ReactNode;
   onClick?: () => unknown | Promise<unknown>;
@@ -413,20 +179,6 @@ export function Btn(props: {
   );
 }
 
-// =========================================================
-// SelectBtn
-// =========================================================
-/**
- * これは「選ばれている / 選ばれていない」があるボタンです。
- *
- * 使い道：
- * - タブ切替
- * - ON/OFFのような選択
- * - 複数候補から1つ選ぶUI
- *
- * selected が true なら、
- * 「今これが選ばれています」という見た目になります。
- */
 export function SelectBtn(props: {
   selected: boolean;
   label: string;
@@ -460,20 +212,6 @@ export function SelectBtn(props: {
   );
 }
 
-// =========================================================
-// Chip
-// =========================================================
-/**
- * 小さい丸いラベル表示です。
- *
- * 使い道：
- * - 「おすすめ」
- * - 「重要」
- * - 「3条件」
- * - 「公開中」
- *
- * みたいな、短い目印を表示したい時に使います。
- */
 export function Chip(props: { children: React.ReactNode; className?: string }) {
   return (
     <div
@@ -489,20 +227,6 @@ export function Chip(props: { children: React.ReactNode; className?: string }) {
   );
 }
 
-// =========================================================
-// EmptyStateBox
-// =========================================================
-/**
- * まだ何も無い時の表示箱です。
- *
- * 使い道：
- * - 元画像がありません
- * - 背景がありません
- * - イメージ画像がありません
- * - 動画がまだありません
- *
- * 「空の状態」を見た目として統一したい時に使います。
- */
 export function EmptyStateBox(props: {
   children: React.ReactNode;
   className?: string;
@@ -529,20 +253,6 @@ export function EmptyStateBox(props: {
   );
 }
 
-// =========================================================
-// RangeControl
-// =========================================================
-/**
- * 数字をスライダーと + / - ボタンで調整する部品です。
- *
- * 使い道：
- * - 文字サイズ変更
- * - 位置調整
- * - 透明度調整
- * - 拡大率調整
- *
- * つまり「数値をいじるUI」をまとめた部品です。
- */
 export function RangeControl(props: {
   label: string;
   value: number;
@@ -632,18 +342,6 @@ export function RangeControl(props: {
   );
 }
 
-// =========================================================
-// PhotoSubmissionGuide
-// =========================================================
-/**
- * 写真提出の説明を表示する部品です。
- *
- * これはユーザーに
- * 「どんな写真をアップすると失敗しにくいか」
- * を伝えるためのガイドです。
- *
- * 開閉できる説明パネルになっています。
- */
 export function PhotoSubmissionGuide() {
   return (
     <details
@@ -661,38 +359,27 @@ export function PhotoSubmissionGuide() {
           <div className="text-white/90 font-black" style={{ fontSize: UI.FONT.inputPx }}>
             写真提出のお願い（重要）
           </div>
-          <Chip className="text-white/95">仕上がり安定の3条件</Chip>
+          <Chip className="text-white/95">提出ルールを統一</Chip>
         </div>
 
         <div className="text-white/70 mt-2" style={{ fontSize: UI.FONT.labelPx, lineHeight: 1.6 }}>
-          ※ ここを開いて、撮影条件だけ守ってください（これで失敗が激減します）
+          ※ この条件だけ守ってください。誰が撮っても切り抜きと仕上がりが安定しやすくなります。
         </div>
       </summary>
 
       <div className="mt-3 text-white/80" style={{ fontSize: UI.FONT.labelPx, lineHeight: 1.7 }}>
-        提出する写真は、次の3つだけ守ってください。これで仕上がりが安定します。
+        提出写真は、下のルールに統一してください。
       </div>
 
       <ul
         className="list-disc list-inside mt-2 space-y-1"
         style={{ color: "rgba(255,255,255,0.88)", fontSize: 13 }}
       >
-        <li>背景は「白い壁 / 白い紙 / 単色の布」（柄・文字はNG）</li>
-        <li>商品を画面の真ん中に大きく（小さいと形が崩れやすい）</li>
-        <li>影を薄く（強い影は商品と誤認されやすい）</li>
-      </ul>
-
-      <div className="mt-3 text-white/70 font-bold" style={{ fontSize: UI.FONT.labelPx }}>
-        NG例（失敗しやすい）
-      </div>
-      <ul
-        className="list-disc list-inside mt-1 space-y-1"
-        style={{ color: "rgba(255,255,255,0.70)", fontSize: 13 }}
-      >
-        <li>背景がごちゃごちゃ（部屋・棚・文字・柄）</li>
-        <li>商品が小さい</li>
-        <li>手で持ってる</li>
-        <li>逆光 / 暗い / ブレている</li>
+        <li>背景は「白・薄グレー・無地」にする（白い壁 / 白い紙 / 単色の布でOK）</li>
+        <li>商品を画面の真ん中に大きく写す（小さいと切り抜きが崩れやすい）</li>
+        <li>影は薄くする（強い影は商品本体と誤認されやすい）</li>
+        <li>明るい場所で撮る（昼間の窓際が安定）</li>
+        <li>商品の色が背景に溶けないようにする</li>
       </ul>
 
       <div className="mt-3 text-white/70 font-bold" style={{ fontSize: UI.FONT.labelPx }}>
@@ -703,8 +390,22 @@ export function PhotoSubmissionGuide() {
         style={{ color: "rgba(255,255,255,0.70)", fontSize: 13 }}
       >
         <li>正面1枚 + 斜め1枚（合計2枚）</li>
-        <li>明るい場所（昼間の窓際）</li>
-        <li>iPhone/Androidの標準カメラでOK（加工しない）</li>
+        <li>iPhone / Android の標準カメラでOK</li>
+        <li>加工しないまま提出でOK</li>
+      </ul>
+
+      <div className="mt-3 text-white/70 font-bold" style={{ fontSize: UI.FONT.labelPx }}>
+        NG例（失敗しやすい）
+      </div>
+      <ul
+        className="list-disc list-inside mt-1 space-y-1"
+        style={{ color: "rgba(255,255,255,0.70)", fontSize: 13 }}
+      >
+        <li>背景がごちゃごちゃしている（部屋・棚・文字・柄）</li>
+        <li>商品が小さい</li>
+        <li>手で持っている</li>
+        <li>逆光 / 暗い / ブレている</li>
+        <li>背景の柄・木目・影の筋が強い</li>
       </ul>
 
       <div className="mt-3 text-white/55" style={{ fontSize: UI.FONT.labelPx, lineHeight: 1.6 }}>
@@ -714,20 +415,6 @@ export function PhotoSubmissionGuide() {
   );
 }
 
-// =========================================================
-// OriginMetaView
-// =========================================================
-/**
- * 生成元の情報を表示する部品です。
- *
- * これは、
- * 「この画像や背景が、どこから作られたか」
- * を見せるための表示専用部品です。
- *
- * 注意：
- * この部品は表示だけします。
- * データを作るのは page.tsx 側です。
- */
 export function OriginMetaView(props: { meta: any | undefined }) {
   const { meta } = props;
 

@@ -1,8 +1,9 @@
+// /app/flow/drafts/new/components/ProductPlacementEditor.tsx
 "use client";
 
 import React, { useMemo, useState } from "react";
 import { Btn } from "../ui";
-import type { ProductPhotoMode } from "@/lib/types/draft";
+import type { ProductPhotoMode, TextOverlay } from "@/lib/types/draft";
 
 /**
  * ① 商品写真の配置調整UI
@@ -20,14 +21,18 @@ import type { ProductPhotoMode } from "@/lib/types/draft";
  * - AI背景で bgImageUrl が存在する時は「背景のみ + 商品重ね」の編集プレビュー
  * - AI背景で bgImageUrl が無く aiImageUrl しか無い時だけ、保存済み完成画像をそのまま表示
  *
- * 今回の整理方針
- * - 「背景モード」UI は削除
- * - ただし activePhotoMode の内部利用は維持
- * - 背景選択そのものがモード切替を兼ねる
- * - 「編集用プレビュー」と「保存済み完成画像」を完全に分離
- * - 完成画像は aiImageUrl を専用枠で表示
- * - 既存の背景選択 / スライダー / 保存 / 再合成 / おすすめ表示機能は削除しない
- * - 編集プレビュー / 保存済み完成画像 をタブで切り替え
+ * 今回の追加
+ * - 既存機能は削除せず維持
+ * - ④の編集プレビュー上に、任意で文字オーバーレイを重ねられるようにする
+ * - ただし親から文字情報がまだ渡ってこなくても壊れないように optional props にする
+ * - 保存済み完成画像タブは「保存済み画像をそのまま見る」役割を維持するため、文字は重ねない
+ *
+ * 今回の本質修正
+ * - 文字が見えない主因だった fontSize の計算を修正
+ *   - 以前の % は「親の font-size 基準」になってしまい極小表示になる
+ *   - 今回は cqw を使って、プレビュー幅に対して正しく拡大縮小する
+ * - x / y が旧データで 0〜1 でも、新データで 0〜100 でも両対応にする
+ * - composite 以外から来た overlay でも、そのまま安全に表示できるようにする
  */
 
 type ProductCategory = "furniture" | "goods" | "apparel" | "small" | "other";
@@ -50,6 +55,8 @@ type Props = {
   foregroundImageUrl?: string;
   bgImageUrl?: string;
   aiImageUrl?: string;
+  compositeTextImageUrl?: string;
+  onSaveCompositeTextImageFromCompositeSlot?: () => void | Promise<void>;
   templateBgUrl?: string;
 
   templateBgUrls?: string[];
@@ -63,6 +70,16 @@ type Props = {
   productSize?: ProductSize;
   groundingType?: GroundingType;
   bgScene?: BgScene;
+
+  /**
+   * 文字オーバーレイ
+   *
+   * 重要:
+   * - 今は optional にしておく
+   * - 親がまだ渡していなくても既存機能を壊さない
+   * - 受け取れた時だけ ④編集プレビューに反映する
+   */
+  textOverlay?: TextOverlay | null;
 
   activePhotoMode: ProductPhotoMode;
   onChangePhotoMode: (next: ProductPhotoMode) => void | Promise<void>;
@@ -135,6 +152,60 @@ function uiScaleToSaved(ui: number) {
 
 function uiPosToSaved(ui: number) {
   return clamp(ui, 0, 100) / 100;
+}
+
+/**
+ * overlay.lines を安全に整形する
+ */
+function getSafeOverlayLines(overlay?: TextOverlay | null): string[] {
+  if (!overlay) return [];
+
+  if (Array.isArray(overlay.lines) && overlay.lines.length > 0) {
+    return overlay.lines
+      .map((line) => String(line ?? "").trim())
+      .filter(Boolean);
+  }
+
+  if (typeof (overlay as any).text === "string" && String((overlay as any).text).trim()) {
+    return String((overlay as any).text)
+      .split("\n")
+      .map((line) => String(line ?? "").trim())
+      .filter(Boolean);
+  }
+
+  return [];
+}
+
+/**
+ * rgba(0,0,0,0.45) などから opacity を取り出す
+ * 取れなければ fallback を使う
+ */
+function parseAlphaFromRgba(color: string | undefined, fallback: number) {
+  const value = String(color ?? "").trim();
+  const match = /rgba\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*([0-9.]+)\s*\)/i.exec(value);
+  if (!match) return fallback;
+
+  const alpha = Number(match[1]);
+  if (!Number.isFinite(alpha)) return fallback;
+
+  return clamp(alpha, 0, 1);
+}
+
+/**
+ * x / y の旧値(0〜1)と新値(0〜100)を吸収する
+ */
+function normalizeOverlayPercent(raw: unknown, fallback: number) {
+  const n = Number(raw);
+
+  if (!Number.isFinite(n)) {
+    return clamp(fallback, 0, 100);
+  }
+
+  if (n >= 0 && n <= 1) {
+    return clamp(n * 100, 0, 100);
+  }
+
+  return clamp(n, 0, 100);
 }
 
 /**
@@ -485,6 +556,8 @@ export default function ProductPlacementEditor({
   foregroundImageUrl,
   bgImageUrl,
   aiImageUrl,
+  compositeTextImageUrl = "",
+  onSaveCompositeTextImageFromCompositeSlot,
   templateBgUrl,
 
   templateBgUrls = [],
@@ -498,6 +571,8 @@ export default function ProductPlacementEditor({
   productSize = "medium",
   groundingType = "floor",
   bgScene = "studio",
+
+  textOverlay = null,
 
   activePhotoMode,
   onChangePhotoMode,
@@ -558,6 +633,58 @@ export default function ProductPlacementEditor({
   const safeShadowScale = clamp(shadowScale || 1, 0.5, 2);
   const safeShadowOffsetX = clamp(shadowOffsetX || 0, -1, 1);
   const safeShadowOffsetY = clamp(shadowOffsetY || 0.02, -1, 1);
+
+  /**
+   * 文字オーバーレイの安全な表示値を作る
+   * - 親からまだ何も来ていなくても壊れない
+   */
+  const overlayLines = useMemo(() => {
+    return getSafeOverlayLines(textOverlay);
+  }, [textOverlay]);
+
+  const hasOverlayText = overlayLines.length > 0;
+
+  const overlayFontSizePx = useMemo(() => {
+    const raw = Number(textOverlay?.fontSize ?? 44);
+    return clamp(raw, 12, 120);
+  }, [textOverlay?.fontSize]);
+
+  const overlayLineHeight = useMemo(() => {
+    const raw = Number(textOverlay?.lineHeight ?? 1.15);
+    return clamp(raw, 0.8, 2.2);
+  }, [textOverlay?.lineHeight]);
+
+  const overlayXPercent = useMemo(() => {
+    return normalizeOverlayPercent(textOverlay?.x, 50);
+  }, [textOverlay?.x]);
+
+  const overlayYPercent = useMemo(() => {
+    return normalizeOverlayPercent(textOverlay?.y, 80);
+  }, [textOverlay?.y]);
+
+  const overlayTextColor = useMemo(() => {
+    const color = String(textOverlay?.color ?? "#FFFFFF").trim();
+    return color || "#FFFFFF";
+  }, [textOverlay?.color]);
+
+  const overlayBackgroundEnabled = useMemo(() => {
+    if (!hasOverlayText) return false;
+
+    if (typeof textOverlay?.background?.enabled === "boolean") {
+      return textOverlay.background.enabled;
+    }
+
+    if (typeof textOverlay?.bandOpacity === "number" && textOverlay.bandOpacity > 0) {
+      return true;
+    }
+
+    return true;
+  }, [hasOverlayText, textOverlay?.background?.enabled, textOverlay?.bandOpacity]);
+
+  const overlayBackgroundColor = useMemo(() => {
+    const color = String(textOverlay?.background?.color ?? "rgba(0,0,0,0.45)").trim();
+    return color || "rgba(0,0,0,0.45)";
+  }, [textOverlay?.background?.color]);
 
   const normalizedSavedScaleForPreview = useMemo(() => {
     if (placementScale > 0 && placementScale <= 2.2) {
@@ -640,6 +767,80 @@ export default function ProductPlacementEditor({
   ]);
 
   /**
+   * 文字プレビュー用ブロック
+   * - ④編集プレビューの上に重ねる
+   * - 実際の保存処理は別ファイル側の責務なので、ここでは表示だけ
+   */
+  const overlayPreviewStyle = useMemo<React.CSSProperties>(() => {
+    const lineCount = Math.max(1, overlayLines.length);
+    const blockHeightPx = Math.round(overlayFontSizePx * overlayLineHeight * lineCount);
+    const topPx = Math.round((PREVIEW_CANVAS - blockHeightPx) * (overlayYPercent / 100));
+    const topPercent = clamp((topPx / PREVIEW_CANVAS) * 100, 0, 100);
+
+    return {
+      position: "absolute",
+      left: 0,
+      right: 0,
+      top: `${topPercent}%`,
+      zIndex: 4,
+      pointerEvents: "none",
+      userSelect: "none",
+    };
+  }, [overlayLines.length, overlayFontSizePx, overlayLineHeight, overlayYPercent]);
+
+  const overlayBandStyle = useMemo<React.CSSProperties>(() => {
+    const alpha = parseAlphaFromRgba(overlayBackgroundColor, 0.45);
+
+    return {
+      position: "absolute",
+      inset: 0,
+      background: overlayBackgroundColor || `rgba(0,0,0,${alpha})`,
+      opacity: 1,
+      zIndex: 0,
+      pointerEvents: "none",
+      userSelect: "none",
+    };
+  }, [overlayBackgroundColor]);
+
+  const overlayTextWrapStyle = useMemo<React.CSSProperties>(() => {
+    return {
+      position: "relative",
+      zIndex: 1,
+      width: "100%",
+      paddingLeft: "4.5%",
+      paddingRight: "4.5%",
+      paddingTop: "1.2%",
+      paddingBottom: "1.2%",
+      display: "flex",
+      flexDirection: "column",
+      gap: `${Math.max(2, Math.round(overlayFontSizePx * (overlayLineHeight - 1)))}px`,
+      boxSizing: "border-box",
+    };
+  }, [overlayFontSizePx, overlayLineHeight]);
+
+  /**
+   * 以前は % を使っていたため、親の font-size 基準となり文字が極小化していた。
+   * ここでは cqw を使って、プレビューコンテナ幅に対して正しく拡大縮小する。
+   */
+  const overlayLineStyle = useMemo<React.CSSProperties>(() => {
+    const sizeByContainerWidth = (overlayFontSizePx / PREVIEW_CANVAS) * 100;
+
+    return {
+      color: overlayTextColor,
+      fontWeight: 900,
+      fontSize: `${sizeByContainerWidth}cqw`,
+      lineHeight: overlayLineHeight,
+      textAlign: "left",
+      textShadow: "0 1px 2px rgba(0,0,0,0.18)",
+      whiteSpace: "pre-wrap",
+      wordBreak: "break-word",
+      overflowWrap: "anywhere",
+      marginLeft: `${overlayXPercent * 0.35}%`,
+      maxWidth: `${Math.max(30, 100 - overlayXPercent * 0.35)}%`,
+    };
+  }, [overlayTextColor, overlayFontSizePx, overlayLineHeight, overlayXPercent]);
+
+  /**
    * 前景は切り抜き済み foreground を最優先し、
    * 無ければ元画像を使う
    */
@@ -681,9 +882,13 @@ export default function ProductPlacementEditor({
   /**
    * 保存済み完成画像
    */
-  const savedCompositeUrl = useMemo(() => {
-    return String(aiImageUrl || "").trim();
-  }, [aiImageUrl]);
+const savedCompositeUrl = useMemo(() => {
+  return String(aiImageUrl || "").trim();
+}, [aiImageUrl]);
+
+const savedCompositeTextUrl = useMemo(() => {
+  return String(compositeTextImageUrl || "").trim();
+}, [compositeTextImageUrl]);
 
   /**
    * 商品オーバーレイを乗せて良いか
@@ -1055,6 +1260,16 @@ export default function ProductPlacementEditor({
         >
           再合成
         </Btn>
+
+        <Btn
+          variant="secondary"
+          disabled={!savedCompositeUrl || !hasOverlayText || busy}
+          onClick={() => {
+            void onSaveCompositeTextImageFromCompositeSlot?.();
+          }}
+        >
+          文字焼き込み保存
+        </Btn>
       </div>
 
       <div className="mt-3 flex gap-2">
@@ -1092,6 +1307,7 @@ export default function ProductPlacementEditor({
             style={{
               aspectRatio: "1 / 1",
               background: "rgba(255,255,255,0.03)",
+              containerType: "inline-size",
             }}
           >
             {previewBaseUrl ? (
@@ -1149,6 +1365,25 @@ export default function ProductPlacementEditor({
               </>
             ) : null}
 
+            {hasOverlayText ? (
+              <div style={overlayPreviewStyle}>
+                <div className="relative w-full">
+                  {overlayBackgroundEnabled ? <div style={overlayBandStyle} /> : null}
+
+                  <div style={overlayTextWrapStyle}>
+                    {overlayLines.map((line, index) => (
+                      <div
+                        key={`overlay-line-${index}-${line}`}
+                        style={overlayLineStyle}
+                      >
+                        {line}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
             {!shouldShowProductOverlay && !unifiedForegroundUrl ? (
               <div
                 className="absolute inset-0 flex items-center justify-center text-white/50"
@@ -1184,48 +1419,93 @@ export default function ProductPlacementEditor({
         </div>
       )}
 
-      {activePreviewTab === "final" && (
-        <div className="mt-3 overflow-hidden rounded-2xl border border-white/10 bg-black/25">
-          <div
-            className="border-b border-white/10 px-3 py-2 text-white/72"
-            style={{ fontSize: 12 }}
-          >
-            保存済み完成画像
-          </div>
+{activePreviewTab === "final" && (
+  <div className="mt-3 rounded-2xl border border-white/10 bg-black/25 overflow-hidden">
+    <div
+      className="border-b border-white/10 px-3 py-2 text-white/72"
+      style={{ fontSize: 12 }}
+    >
+      保存済み完成画像
+    </div>
 
-          <div
-            className="px-3 py-2 text-white/52"
-            style={{ fontSize: 11, lineHeight: 1.6 }}
-          >
-            ここに出る画像が、再合成で保存された最終画像です。
-          </div>
+    <div
+      className="px-3 py-2 text-white/52"
+      style={{ fontSize: 11, lineHeight: 1.6 }}
+    >
+      通常の合成画像と、文字焼き込み保存画像を分けて表示します。
+    </div>
 
-          <div
-            className="relative w-full"
-            style={{
-              aspectRatio: "1 / 1",
-              background: "rgba(255,255,255,0.03)",
-            }}
-          >
-            {savedCompositeUrl ? (
-              <img
-                src={savedCompositeUrl}
-                alt="saved composite"
-                className="absolute inset-0 h-full w-full object-cover"
-              />
-            ) : (
-              <div
-                className="absolute inset-0 flex items-center justify-center text-white/40"
-                style={{ fontSize: 12 }}
-              >
-                まだ完成画像はありません
-              </div>
-            )}
-
-            <div className="pointer-events-none absolute inset-0 border border-white/10" />
-          </div>
+    <div className="grid grid-cols-1 gap-3 p-3 lg:grid-cols-2">
+      <div className="overflow-hidden rounded-2xl border border-white/10 bg-black/20">
+        <div
+          className="border-b border-white/10 px-3 py-2 text-white/75"
+          style={{ fontSize: 12 }}
+        >
+          通常合成画像
         </div>
-      )}
+
+        <div
+          className="relative w-full"
+          style={{
+            aspectRatio: "1 / 1",
+            background: "rgba(255,255,255,0.03)",
+          }}
+        >
+          {savedCompositeUrl ? (
+            <img
+              src={savedCompositeUrl}
+              alt="saved composite"
+              className="absolute inset-0 h-full w-full object-cover"
+            />
+          ) : (
+            <div
+              className="absolute inset-0 flex items-center justify-center text-white/40"
+              style={{ fontSize: 12 }}
+            >
+              まだ通常合成画像はありません
+            </div>
+          )}
+
+          <div className="pointer-events-none absolute inset-0 border border-white/10" />
+        </div>
+      </div>
+
+      <div className="overflow-hidden rounded-2xl border border-white/10 bg-black/20">
+        <div
+          className="border-b border-white/10 px-3 py-2 text-white/75"
+          style={{ fontSize: 12 }}
+        >
+          文字焼き込み保存画像
+        </div>
+
+        <div
+          className="relative w-full"
+          style={{
+            aspectRatio: "1 / 1",
+            background: "rgba(255,255,255,0.03)",
+          }}
+        >
+          {savedCompositeTextUrl ? (
+            <img
+              src={savedCompositeTextUrl}
+              alt="saved composite text"
+              className="absolute inset-0 h-full w-full object-cover"
+            />
+          ) : (
+            <div
+              className="absolute inset-0 flex items-center justify-center text-white/40"
+              style={{ fontSize: 12 }}
+            >
+              まだ文字焼き込み保存画像はありません
+            </div>
+          )}
+
+          <div className="pointer-events-none absolute inset-0 border border-white/10" />
+        </div>
+      </div>
+    </div>
+  </div>
+)}
 
       <div className="mt-3 rounded-2xl border border-white/10 bg-black/15 p-3">
         <div className="text-white/72 mb-2" style={{ fontSize: 12 }}>

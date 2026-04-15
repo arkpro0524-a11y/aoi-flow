@@ -144,44 +144,44 @@ export default function NewDraftPage() {
   const bgScene = c.bgScene as BgScene;
   const setBgScene = c.setBgScene as React.Dispatch<React.SetStateAction<BgScene>>;
 
-/**
- * ① 商品写真の配置調整関連
- */
-const activePhotoMode = c.activePhotoMode as ProductPhotoMode;
-const setActivePhotoMode =
-  c.setActivePhotoMode as React.Dispatch<React.SetStateAction<ProductPhotoMode>>;
+  /**
+   * ① 商品写真の配置調整関連
+   */
+  const activePhotoMode = c.activePhotoMode as ProductPhotoMode;
+  const setActivePhotoMode =
+    c.setActivePhotoMode as React.Dispatch<React.SetStateAction<ProductPhotoMode>>;
 
-const placementScale = Number(c.placementScale ?? 1);
-const setPlacementScale =
-  c.setPlacementScale as React.Dispatch<React.SetStateAction<number>>;
+  const placementScale = Number(c.placementScale ?? 1);
+  const setPlacementScale =
+    c.setPlacementScale as React.Dispatch<React.SetStateAction<number>>;
 
-const placementX = Number(c.placementX ?? 0.5);
-const setPlacementX =
-  c.setPlacementX as React.Dispatch<React.SetStateAction<number>>;
+  const placementX = Number(c.placementX ?? 0.5);
+  const setPlacementX =
+    c.setPlacementX as React.Dispatch<React.SetStateAction<number>>;
 
-const placementY = Number(c.placementY ?? 0.5);
-const setPlacementY =
-  c.setPlacementY as React.Dispatch<React.SetStateAction<number>>;
+  const placementY = Number(c.placementY ?? 0.5);
+  const setPlacementY =
+    c.setPlacementY as React.Dispatch<React.SetStateAction<number>>;
 
-const shadowOpacity = Number(c.shadowOpacity ?? 0.12);
-const setShadowOpacity =
-  c.setShadowOpacity as React.Dispatch<React.SetStateAction<number>>;
+  const shadowOpacity = Number(c.shadowOpacity ?? 0.12);
+  const setShadowOpacity =
+    c.setShadowOpacity as React.Dispatch<React.SetStateAction<number>>;
 
-const shadowBlur = Number(c.shadowBlur ?? 12);
-const setShadowBlur =
-  c.setShadowBlur as React.Dispatch<React.SetStateAction<number>>;
+  const shadowBlur = Number(c.shadowBlur ?? 12);
+  const setShadowBlur =
+    c.setShadowBlur as React.Dispatch<React.SetStateAction<number>>;
 
-const shadowScale = Number(c.shadowScale ?? 1);
-const setShadowScale =
-  c.setShadowScale as React.Dispatch<React.SetStateAction<number>>;
+  const shadowScale = Number(c.shadowScale ?? 1);
+  const setShadowScale =
+    c.setShadowScale as React.Dispatch<React.SetStateAction<number>>;
 
-const shadowOffsetX = Number(c.shadowOffsetX ?? 0);
-const setShadowOffsetX =
-  c.setShadowOffsetX as React.Dispatch<React.SetStateAction<number>>;
+  const shadowOffsetX = Number(c.shadowOffsetX ?? 0);
+  const setShadowOffsetX =
+    c.setShadowOffsetX as React.Dispatch<React.SetStateAction<number>>;
 
-const shadowOffsetY = Number(c.shadowOffsetY ?? 0.02);
-const setShadowOffsetY =
-  c.setShadowOffsetY as React.Dispatch<React.SetStateAction<number>>;
+  const shadowOffsetY = Number(c.shadowOffsetY ?? 0.02);
+  const setShadowOffsetY =
+    c.setShadowOffsetY as React.Dispatch<React.SetStateAction<number>>;
 
   /**
    * ③ サイズテンプレ
@@ -195,10 +195,18 @@ const setShadowOffsetY =
    */
   const storyDisplayUrl = String(c.storyDisplayUrl ?? "");
 
+  /**
+   * 背景表示URL
+   *
+   * 重要:
+   * - テンプレ背景選択中は templateBgUrl を優先
+   * - それ以外は従来どおり controller 側の bgDisplayUrl を使用
+   * - 既存の背景表示系を壊さないための最小調整
+   */
   const bgDisplayUrl =
-  activePhotoMode === "template"
-    ? String(c.templateBgUrl ?? "")
-    : String(c.bgDisplayUrl ?? "");
+    activePhotoMode === "template"
+      ? String(c.templateBgUrl ?? "")
+      : String(c.bgDisplayUrl ?? "");
 
   return (
     <>
@@ -367,6 +375,8 @@ const setShadowOffsetY =
   currentSlot={c.currentSlot}
   formStyle={formStyle}
   defaultTextOverlay={c.DEFAULT_TEXT_OVERLAY}
+  textOverlay={c.d.textOverlayBySlot?.[c.currentSlot] ?? null}
+  compositeTextImageUrl={String((c.d as any).compositeTextImageUrl ?? "")}
   staticPurpose={c.staticPurpose}
   setStaticPurpose={c.setStaticPurpose}
   productCategory={productCategory}
@@ -395,6 +405,7 @@ const setShadowOffsetY =
   onCutoutCurrentBaseToReplace={c.cutoutCurrentBaseToReplace}
   onPromoteMaterialToBase={c.promoteMaterialToBase}
   onSaveCompositeAsImageUrl={c.saveCompositeAsImageUrl}
+  onSaveCompositeTextImageFromCompositeSlot={c.saveCompositeTextImageFromCompositeSlot}
   onSaveDraft={() => {
     void c.saveDraft();
   }}

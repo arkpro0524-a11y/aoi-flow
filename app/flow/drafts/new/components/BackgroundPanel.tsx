@@ -1,9 +1,8 @@
 //app/flow/drafts/new/components/BackgroundPanel.tsx
-
 "use client";
 
 import React, { useMemo, useState } from "react";
-import type { DraftDoc, ProductPhotoMode } from "@/lib/types/draft";
+import type { DraftDoc, ProductPhotoMode, TextOverlay } from "@/lib/types/draft";
 import { Btn } from "../ui";
 import ProductPlacementEditor from "./ProductPlacementEditor";
 
@@ -14,22 +13,28 @@ import ProductPlacementEditor from "./ProductPlacementEditor";
  * このファイルの役割
  * - 背景生成
  * - 背景一覧
- * - おすすめ取得
- * - composite タブでは ProductPlacementEditor を呼び出す
+ * - テンプレ背景おすすめ取得
+ * - 商品理解レイヤー設定
+ * - 合成タブでは ProductPlacementEditor を呼び出す
  *
- * 重要
- * - 旧 composite 内の機能は削らず、ProductPlacementEditor 側へ移設する
- * - 背景生成側 UI はこのファイルに残す
+ * 今回の整理ポイント
+ * - 既存機能は削除しない
+ * - 表で見せる方向決定UIは「3ボタン」に寄せる
+ * - 詳細調整は 1 か所だけにまとめる
+ * - 3ボタン押下時に Vision / Keywords / 現在の商品状態から内部値を自動推定する
+ * - ただし、あとから手動で選び直せるようにする
  *
- * 今回の整理方針
- * - backgroundSourceTab を削除
- * - 「背景タイプ」の二重UIを削除
- * - ただしテンプレ背景 / AI背景の機能は全部残す
- * - 背景選択タブの中に、
- *   1. テンプレ背景セクション
- *   2. AI背景セクション
- *   を順番に並べる
+ * 今回の追加
+ * - ProductPlacementEditor に文字オーバーレイを橋渡しする
+ * - このファイル単体では currentSlot を持っていないため、
+ *   まずは親から来た textOverlay を優先して渡す
+ * - 親から未受領なら composite スロット文字を fallback として使う
+ * - 他の既存機能は削除しない
  */
+
+/* =========================
+   型
+========================= */
 
 type ProductCategory = "furniture" | "goods" | "apparel" | "small" | "other";
 type ProductSize = "large" | "medium" | "small";
@@ -38,6 +43,14 @@ type SellDirection = "sales" | "branding" | "trust" | "story";
 type BgScene = "studio" | "lifestyle" | "scale" | "detail";
 
 type InnerTab = "background" | "composite";
+
+/**
+ * 画面に見せる用途プリセット
+ * - ec    : EC販売用
+ * - sns   : 広告・SNS用
+ * - usage : 使用イメージ用
+ */
+type ImageUsePreset = "ec" | "sns" | "usage";
 
 type TemplateRecommendItem = {
   url: string;
@@ -58,41 +71,6 @@ type TemplateRecommendResult = {
   } | null;
 };
 
-const PRODUCT_CATEGORY_LABEL: Record<ProductCategory, string> = {
-  furniture: "家具",
-  goods: "雑貨",
-  apparel: "アパレル",
-  small: "小型商品",
-  other: "その他",
-};
-
-const PRODUCT_SIZE_LABEL: Record<ProductSize, string> = {
-  large: "大",
-  medium: "中",
-  small: "小",
-};
-
-const GROUNDING_TYPE_LABEL: Record<GroundingType, string> = {
-  floor: "床置き",
-  table: "卓上",
-  hanging: "吊り下げ",
-  wall: "壁寄せ",
-};
-
-const SELL_DIRECTION_LABEL: Record<SellDirection, string> = {
-  sales: "売上重視",
-  branding: "世界観重視",
-  trust: "信頼重視",
-  story: "ストーリー重視",
-};
-
-const BG_SCENE_LABEL: Record<BgScene, string> = {
-  studio: "スタジオ",
-  lifestyle: "ライフスタイル",
-  scale: "スケール訴求",
-  detail: "ディテール訴求",
-};
-
 type Props = {
   bgDisplayUrl: string;
   backgroundKeyword: string;
@@ -100,6 +78,9 @@ type Props = {
   uid: string | null;
   busy: boolean;
   d: DraftDoc;
+  textOverlay?: TextOverlay | null;
+  compositeTextImageUrl?: string;
+  onSaveCompositeTextImageFromCompositeSlot?: () => Promise<void> | void;
 
   generateBackgroundImage: (keyword: string) => Promise<string>;
   replaceBackgroundAndSaveToAiImage: () => Promise<void>;
@@ -177,6 +158,55 @@ type Props = {
   }) => Promise<void> | void;
 };
 
+/* =========================
+   表示ラベル
+========================= */
+
+const PRODUCT_CATEGORY_LABEL: Record<ProductCategory, string> = {
+  furniture: "家具",
+  goods: "雑貨",
+  apparel: "アパレル",
+  small: "小型商品",
+  other: "その他",
+};
+
+const PRODUCT_SIZE_LABEL: Record<ProductSize, string> = {
+  large: "大",
+  medium: "中",
+  small: "小",
+};
+
+const GROUNDING_TYPE_LABEL: Record<GroundingType, string> = {
+  floor: "床置き",
+  table: "卓上",
+  hanging: "吊り下げ",
+  wall: "壁寄せ",
+};
+
+const SELL_DIRECTION_LABEL: Record<SellDirection, string> = {
+  sales: "売上重視",
+  branding: "世界観重視",
+  trust: "信頼重視",
+  story: "ストーリー重視",
+};
+
+const BG_SCENE_LABEL: Record<BgScene, string> = {
+  studio: "スタジオ",
+  lifestyle: "ライフスタイル",
+  scale: "スケール訴求",
+  detail: "ディテール訴求",
+};
+
+const PRESET_LABEL: Record<ImageUsePreset, string> = {
+  ec: "EC販売用",
+  sns: "広告・SNS用",
+  usage: "使用イメージ用",
+};
+
+/* =========================
+   小部品
+========================= */
+
 function TopTabButton({
   active,
   label,
@@ -253,6 +283,279 @@ function SmallBadge({
   );
 }
 
+function PresetButton({
+  active,
+  label,
+  onClick,
+}: {
+  active: boolean;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={[
+        "rounded-xl border px-4 py-2 text-sm font-semibold transition",
+        active
+          ? "border-white/60 bg-white/10 text-white"
+          : "border-white/10 bg-black/20 text-white/70 hover:bg-white/5",
+      ].join(" ")}
+    >
+      {label}
+    </button>
+  );
+}
+
+/* =========================
+   文字解析系 utility
+========================= */
+
+/**
+ * Vision / Keywords / 既存の選択状態から判断しやすいように、
+ * まず参照用テキストを1つにまとめます。
+ */
+function buildReferenceText(d: DraftDoc, backgroundKeyword: string): string {
+  const vision = String((d as any).selectedStaticPrompt ?? d.vision ?? "").trim();
+  const keywordsText = String((d as any).keywordsText ?? d.keywords ?? "").trim();
+  const extra = String(backgroundKeyword || "").trim();
+
+  return [vision, keywordsText, extra].filter(Boolean).join("\n").toLowerCase();
+}
+
+function includesAny(text: string, words: string[]): boolean {
+  return words.some((w) => text.includes(w));
+}
+
+/**
+ * Vision / Keywords から商品カテゴリを軽く推定します。
+ * 既存の category が other 以外なら、それを強めに尊重します。
+ */
+function inferProductCategory(input: {
+  text: string;
+  current: ProductCategory;
+}): ProductCategory {
+  const { text, current } = input;
+
+  if (current !== "other") {
+    return current;
+  }
+
+  if (
+    includesAny(text, [
+      "chair",
+      "table",
+      "desk",
+      "sofa",
+      "shelf",
+      "cabinet",
+      "stool",
+      "家具",
+      "椅子",
+      "机",
+      "テーブル",
+      "棚",
+      "チェスト",
+      "ソファ",
+      "ラック",
+    ])
+  ) {
+    return "furniture";
+  }
+
+  if (
+    includesAny(text, [
+      "shirt",
+      "jacket",
+      "coat",
+      "pants",
+      "bag",
+      "shoes",
+      "apparel",
+      "fashion",
+      "服",
+      "シャツ",
+      "ジャケット",
+      "コート",
+      "パンツ",
+      "バッグ",
+      "靴",
+      "アパレル",
+    ])
+  ) {
+    return "apparel";
+  }
+
+  if (
+    includesAny(text, [
+      "watch",
+      "vase",
+      "cup",
+      "plate",
+      "wallet",
+      "accessory",
+      "時計",
+      "花瓶",
+      "マグ",
+      "カップ",
+      "皿",
+      "財布",
+      "アクセサリー",
+      "雑貨",
+    ])
+  ) {
+    return "goods";
+  }
+
+  if (
+    includesAny(text, [
+      "small",
+      "mini",
+      "tiny",
+      "compact",
+      "小型",
+      "ミニ",
+      "コンパクト",
+      "小物",
+    ])
+  ) {
+    return "small";
+  }
+
+  return "other";
+}
+
+/**
+ * カテゴリから自然な接地タイプを決めます。
+ */
+function inferGroundingFromCategory(
+  category: ProductCategory,
+  current: GroundingType
+): GroundingType {
+  if (category === "furniture") return "floor";
+  if (category === "goods") return "table";
+  if (category === "small") return "table";
+  if (category === "apparel") return "hanging";
+  return current;
+}
+
+/**
+ * カテゴリから自然なサイズ感を決めます。
+ */
+function inferSizeFromCategory(
+  category: ProductCategory,
+  current: ProductSize
+): ProductSize {
+  if (category === "furniture") return "large";
+  if (category === "small") return "small";
+  if (category === "goods") return "medium";
+  if (category === "apparel") return "medium";
+  return current;
+}
+
+/**
+ * 用途プリセット + テキストから背景方向を自動決定します。
+ */
+function inferBgSceneFromPreset(input: {
+  preset: ImageUsePreset;
+  text: string;
+}): BgScene {
+  const { preset, text } = input;
+
+  if (preset === "ec") {
+    if (
+      includesAny(text, [
+        "size",
+        "scale",
+        "比較",
+        "サイズ",
+        "大きさ",
+        "寸法",
+        "設置感",
+      ])
+    ) {
+      return "scale";
+    }
+    return "studio";
+  }
+
+  if (preset === "sns") {
+    if (
+      includesAny(text, [
+        "texture",
+        "detail",
+        "質感",
+        "素材感",
+        "ディテール",
+        "手仕事",
+        "craft",
+      ])
+    ) {
+      return "detail";
+    }
+    return "lifestyle";
+  }
+
+  if (
+    includesAny(text, [
+      "room",
+      "living",
+      "interior",
+      "玄関",
+      "リビング",
+      "部屋",
+      "室内",
+      "暮らし",
+      "使用シーン",
+    ])
+  ) {
+    return "lifestyle";
+  }
+
+  return "scale";
+}
+
+/**
+ * 用途プリセット + テキストから売り方向を自動決定します。
+ */
+function inferSellDirectionFromPreset(input: {
+  preset: ImageUsePreset;
+  text: string;
+}): SellDirection {
+  const { preset, text } = input;
+
+  if (preset === "ec") return "sales";
+  if (preset === "sns") return "branding";
+
+  if (
+    includesAny(text, [
+      "story",
+      "物語",
+      "ストーリー",
+      "history",
+      "背景",
+      "想い",
+    ])
+  ) {
+    return "story";
+  }
+
+  return "trust";
+}
+
+/**
+ * 用途プリセットから、どの背景モードを主役にするかを決めます。
+ */
+function inferPhotoModeFromPreset(preset: ImageUsePreset): ProductPhotoMode {
+  if (preset === "ec") return "template";
+  return "ai_bg";
+}
+
+/* =========================
+   本体
+========================= */
+
 export default function BackgroundPanel({
   bgDisplayUrl,
   backgroundKeyword,
@@ -260,6 +563,9 @@ export default function BackgroundPanel({
   uid,
   busy,
   d,
+  textOverlay = null,
+  compositeTextImageUrl = "",
+  onSaveCompositeTextImageFromCompositeSlot,
 
   generateBackgroundImage,
   replaceBackgroundAndSaveToAiImage,
@@ -313,24 +619,42 @@ export default function BackgroundPanel({
   setShadowOffsetY,
   onSavePlacement,
 }: Props) {
+  /**
+   * 背景タブ / 合成タブ
+   */
   const [innerTab, setInnerTab] = useState<InnerTab>("background");
 
+  /**
+   * テンプレ背景おすすめの一時表示状態
+   */
   const [templateRecommendBusy, setTemplateRecommendBusy] = useState(false);
   const [templateRecommendTopReason, setTemplateRecommendTopReason] = useState("");
   const [templateRecommended, setTemplateRecommended] = useState<TemplateRecommendItem[]>([]);
 
+  /**
+   * 詳細調整は最初は閉じる
+   * 必要な人だけ開けばよい
+   */
+  const [detailOpen, setDetailOpen] = useState(false);
+
+  /**
+   * テンプレ背景プレビュー
+   */
   const templatePreviewBackgroundUrl = useMemo(() => {
     return String(templateBgUrl || d.templateBgUrl || "").trim();
   }, [templateBgUrl, d.templateBgUrl]);
 
   /**
-   * AI背景の背景のみプレビューは d.bgImageUrl を最優先にする
-   * これで activePhotoMode が template の時でも AI背景候補が正しく見える
+   * AI背景プレビュー
+   * d.bgImageUrl を優先
    */
   const aiOnlyPreviewBackgroundUrl = useMemo(() => {
     return String(d.bgImageUrl || bgDisplayUrl || "").trim();
   }, [d.bgImageUrl, bgDisplayUrl]);
 
+  /**
+   * テンプレ背景一覧
+   */
   const templateBgUrls = useMemo(() => {
     const raw =
       Array.isArray(templateBgUrlsFromParent) && templateBgUrlsFromParent.length > 0
@@ -342,11 +666,109 @@ export default function BackgroundPanel({
     return Array.from(new Set(raw.map((u) => String(u || "").trim()).filter(Boolean)));
   }, [templateBgUrlsFromParent, d.templateBgUrls]);
 
+  /**
+   * AI背景履歴一覧
+   */
   const aiBgUrls = useMemo(() => {
     const raw = Array.isArray(d.bgImageUrls) ? d.bgImageUrls : [];
     return Array.from(new Set(raw.map((u) => String(u || "").trim()).filter(Boolean)));
   }, [d.bgImageUrls]);
 
+  /**
+   * ④ 合成プレビューに渡す文字
+   *
+   * 今回は親から来た textOverlay を最優先で使う。
+   * 親がまだ渡していない場合だけ composite スロットを使う。
+   */
+  const compositeTextOverlay = useMemo<TextOverlay | null>(() => {
+    if (textOverlay) {
+      return textOverlay;
+    }
+
+    const overlay = d.textOverlayBySlot?.composite;
+    return overlay ?? null;
+  }, [textOverlay, d.textOverlayBySlot]);
+
+  /**
+   * 現在の内部状態が、どの用途プリセットに近いかを表示用に判定
+   */
+  const selectedPreset = useMemo<ImageUsePreset | null>(() => {
+    if (sellDirection === "sales" && activePhotoMode === "template") {
+      return "ec";
+    }
+
+    if (sellDirection === "branding") {
+      return "sns";
+    }
+
+    if (sellDirection === "trust" || sellDirection === "story") {
+      return "usage";
+    }
+
+    return null;
+  }, [sellDirection, activePhotoMode]);
+
+  /**
+   * 3ボタン押下時に、
+   * Vision / Keywords / 現在の商品状態から内部値を自動決定する関数
+   *
+   * ポイント
+   * - ユーザーには用途だけ選ばせる
+   * - 中では細かい項目へ変換する
+   * - ただし手動上書きできるよう、詳細設定は残す
+   */
+  function applyPreset(preset: ImageUsePreset) {
+    const referenceText = buildReferenceText(d, backgroundKeyword);
+
+    /**
+     * まずカテゴリを推定
+     * - current が other 以外ならなるべく維持
+     * - other なら Vision / Keywords から推定
+     */
+    const nextCategory = inferProductCategory({
+      text: referenceText,
+      current: productCategory,
+    });
+
+    /**
+     * カテゴリからサイズ感と接地を推定
+     */
+    const nextGrounding = inferGroundingFromCategory(nextCategory, groundingType);
+    const nextSize = inferSizeFromCategory(nextCategory, productSize);
+
+    /**
+     * 用途から売り方向 / 背景方向 / 背景モードを決定
+     */
+    const nextSellDirection = inferSellDirectionFromPreset({
+      preset,
+      text: referenceText,
+    });
+
+    const nextBgScene = inferBgSceneFromPreset({
+      preset,
+      text: referenceText,
+    });
+
+    const nextPhotoMode = inferPhotoModeFromPreset(preset);
+
+    /**
+     * state 更新
+     * - category は推定値に寄せる
+     * - user があとから詳細調整で直せる前提
+     */
+    setProductCategory?.(nextCategory);
+    setGroundingType?.(nextGrounding);
+    setProductSize?.(nextSize);
+    setSellDirection?.(nextSellDirection);
+    setBgScene?.(nextBgScene);
+    setActivePhotoMode(nextPhotoMode);
+
+    showMsg(`${PRESET_LABEL[preset]}に自動設定しました`);
+  }
+
+  /**
+   * テンプレ背景選択
+   */
   async function handleSelectTemplateBackground(url: string) {
     const picked = String(url || "").trim();
     if (!picked) return;
@@ -376,6 +798,9 @@ export default function BackgroundPanel({
     }
   }
 
+  /**
+   * テンプレ背景おすすめ取得
+   */
   async function handleFetchTemplateRecommendations() {
     if (!uid || busy || templateBgUrls.length === 0) return;
 
@@ -426,6 +851,9 @@ export default function BackgroundPanel({
     }
   }
 
+  /**
+   * テンプレ背景生成
+   */
   async function handleGenerateTemplateBackground() {
     if (!uid || busy) return;
 
@@ -444,6 +872,9 @@ export default function BackgroundPanel({
     }
   }
 
+  /**
+   * AI背景選択
+   */
   async function handleSelectAiBackground(url: string) {
     const picked = String(url || "").trim();
     if (!picked) return;
@@ -474,6 +905,9 @@ export default function BackgroundPanel({
       </summary>
 
       <div className="flex flex-col gap-3 p-3 pt-0">
+        {/* =========================
+            上部タブ
+        ========================= */}
         <div className="flex flex-wrap items-center gap-2">
           <TopTabButton
             active={innerTab === "background"}
@@ -487,66 +921,84 @@ export default function BackgroundPanel({
           />
         </div>
 
+        {/* =========================
+            背景タブ
+        ========================= */}
         {innerTab === "background" ? (
           <>
+            {/* =========================
+                用途プリセット
+            ========================= */}
             <div className="rounded-2xl border border-white/10 bg-black/15 p-3">
               <div className="text-white/85 font-bold" style={{ fontSize: 12 }}>
-                背景選択
+                画像の目的
               </div>
 
               <div className="mt-2 text-white/55" style={{ fontSize: 12, lineHeight: 1.6 }}>
-                テンプレ背景とAI背景をここでまとめて管理します。選択した背景は合成タブの編集プレビューに反映されます。
+                まず用途だけ選んでください。Vision・Keywords・現在の商品状態を見て、内部設定を自動で寄せます。
               </div>
-            </div>
 
-            {/* =========================
-             * テンプレ背景セクション
-             * ========================= */}
-            <div className="rounded-2xl border border-white/10 bg-black/15 p-3">
-              <div className="flex items-center justify-between gap-3">
-                <div className="text-white/85 font-bold" style={{ fontSize: 12 }}>
-                  テンプレ背景
-                </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <PresetButton
+                  label="EC販売用"
+                  active={selectedPreset === "ec"}
+                  onClick={() => applyPreset("ec")}
+                />
 
-                <SmallBadge
-                  active={activePhotoMode === "template"}
-                  label={activePhotoMode === "template" ? "現在の編集対象" : "切替可能"}
+                <PresetButton
+                  label="広告・SNS用"
+                  active={selectedPreset === "sns"}
+                  onClick={() => applyPreset("sns")}
+                />
+
+                <PresetButton
+                  label="使用イメージ用"
+                  active={selectedPreset === "usage"}
+                  onClick={() => applyPreset("usage")}
                 />
               </div>
 
-              <div className="mt-2 text-white/55" style={{ fontSize: 12, lineHeight: 1.6 }}>
-                テンプレ背景は「売るための整った背景」です。
+              <div
+                className="mt-3 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-white/60"
+                style={{ fontSize: 12, lineHeight: 1.6 }}
+              >
+                自動設定中：
+                {" "}
+                {SELL_DIRECTION_LABEL[sellDirection]}
+                {" / "}
+                {BG_SCENE_LABEL[bgScene]}
+                {" / "}
+                {PRODUCT_CATEGORY_LABEL[productCategory]}
+                {" / "}
+                {GROUNDING_TYPE_LABEL[groundingType]}
+                {" / "}
+                {PRODUCT_SIZE_LABEL[productSize]}
+                {" / "}
+                {activePhotoMode === "template" ? "テンプレ背景" : "AI背景"}
               </div>
 
-              <div className="mt-3">
-                {templatePreviewBackgroundUrl ? (
-                  <img
-                    src={templatePreviewBackgroundUrl}
-                    alt="template background"
-                    className="w-full rounded-xl border border-white/10"
-                    style={{
-                      height: 240,
-                      objectFit: "contain",
-                      background: "rgba(0,0,0,0.25)",
-                    }}
-                  />
-                ) : (
-                  <div
-                    className="flex w-full items-center justify-center rounded-xl border border-white/10 bg-black/30 text-white/55"
-                    style={{ aspectRatio: "1 / 1", fontSize: 13 }}
-                  >
-                    テンプレ背景がありません
-                  </div>
-                )}
-              </div>
+              <button
+                type="button"
+                onClick={() => setDetailOpen((prev) => !prev)}
+                className="mt-3 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-left text-white/70 transition hover:bg-white/5"
+                style={{ fontSize: 12 }}
+              >
+                {detailOpen ? "自動設定を調整する（閉じる）" : "自動設定を調整する"}
+              </button>
+            </div>
 
-              <div className="mt-3 rounded-2xl border border-white/10 bg-black/15 p-3">
+            {/* =========================
+                詳細調整
+                1か所だけに集約
+            ========================= */}
+            {detailOpen ? (
+              <div className="rounded-2xl border border-white/10 bg-black/15 p-3">
                 <div className="text-white/85 font-bold" style={{ fontSize: 12 }}>
-                  商品理解レイヤー
+                  詳細調整
                 </div>
 
                 <div className="mt-2 text-white/55" style={{ fontSize: 12, lineHeight: 1.6 }}>
-                  テンプレ背景のおすすめ精度を上げるために、商品カテゴリ・サイズ感・接地タイプ・売り方向・背景方向を先に決めます。
+                  自動設定のあとに、必要な時だけ手で直してください。
                 </div>
 
                 <div className="mt-3">
@@ -653,10 +1105,73 @@ export default function BackgroundPanel({
                   className="mt-3 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-white/65"
                   style={{ fontSize: 12, lineHeight: 1.6 }}
                 >
-                  現在： {PRODUCT_CATEGORY_LABEL[productCategory]} / {PRODUCT_SIZE_LABEL[productSize]} /{" "}
-                  {GROUNDING_TYPE_LABEL[groundingType]} / {SELL_DIRECTION_LABEL[sellDirection]} /{" "}
+                  現在：
+                  {" "}
+                  {PRODUCT_CATEGORY_LABEL[productCategory]}
+                  {" / "}
+                  {PRODUCT_SIZE_LABEL[productSize]}
+                  {" / "}
+                  {GROUNDING_TYPE_LABEL[groundingType]}
+                  {" / "}
+                  {SELL_DIRECTION_LABEL[sellDirection]}
+                  {" / "}
                   {BG_SCENE_LABEL[bgScene]}
                 </div>
+              </div>
+            ) : null}
+
+            {/* =========================
+                背景説明
+            ========================= */}
+            <div className="rounded-2xl border border-white/10 bg-black/15 p-3">
+              <div className="text-white/85 font-bold" style={{ fontSize: 12 }}>
+                背景選択
+              </div>
+
+              <div className="mt-2 text-white/55" style={{ fontSize: 12, lineHeight: 1.6 }}>
+                テンプレ背景とAI背景をここでまとめて管理します。選択した背景は合成タブの編集プレビューに反映されます。
+              </div>
+            </div>
+
+            {/* =========================
+                テンプレ背景
+            ========================= */}
+            <div className="rounded-2xl border border-white/10 bg-black/15 p-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-white/85 font-bold" style={{ fontSize: 12 }}>
+                  テンプレ背景
+                </div>
+
+                <SmallBadge
+                  active={activePhotoMode === "template"}
+                  label={activePhotoMode === "template" ? "現在の編集対象" : "切替可能"}
+                />
+              </div>
+
+              <div className="mt-2 text-white/55" style={{ fontSize: 12, lineHeight: 1.6 }}>
+                テンプレ背景は「売るための整った背景」です。
+              </div>
+
+              <div className="mt-3">
+                {templatePreviewBackgroundUrl ? (
+                  <img
+                    src={templatePreviewBackgroundUrl}
+                    alt="template background"
+                    className="w-full rounded-xl border border-white/10"
+                    style={{
+                      height: 240,
+                      objectFit: "contain",
+                      background: "rgba(0,0,0,0.25)",
+                    }}
+                  />
+                ) : (
+                  <div
+                    className="flex w-full items-center justify-center rounded-xl border border-white/10 bg-black/30 text-white/55"
+                    style={{ aspectRatio: "1 / 1", fontSize: 13 }}
+                  >
+                    テンプレ背景がありません
+                  </div>
+                )}
               </div>
 
               <div className="mt-3 flex flex-wrap gap-2">
@@ -824,8 +1339,8 @@ export default function BackgroundPanel({
             </div>
 
             {/* =========================
-             * AI背景セクション
-             * ========================= */}
+                AI背景
+            ========================= */}
             <div className="rounded-2xl border border-white/10 bg-black/15 p-3">
               <div className="flex items-center justify-between gap-3">
                 <div className="text-white/85 font-bold" style={{ fontSize: 12 }}>
@@ -864,125 +1379,6 @@ export default function BackgroundPanel({
                 )}
               </div>
 
-              <div className="mt-3 rounded-2xl border border-white/10 bg-black/15 p-3">
-                <div className="text-white/85 font-bold" style={{ fontSize: 12 }}>
-                  商品理解レイヤー
-                </div>
-
-                <div className="mt-2 text-white/55" style={{ fontSize: 12, lineHeight: 1.6 }}>
-                  背景を自然に作るために、商品カテゴリ・サイズ感・接地タイプ・売り方向・背景方向を先に決めます。
-                </div>
-
-                <div className="mt-3">
-                  <div className="mb-2 text-white/70" style={{ fontSize: 12 }}>
-                    1. 商品カテゴリ
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {(Object.keys(PRODUCT_CATEGORY_LABEL) as ProductCategory[]).map((key) => (
-                      <SegButton
-                        key={key}
-                        active={productCategory === key}
-                        label={PRODUCT_CATEGORY_LABEL[key]}
-                        disabled={!setProductCategory || busy}
-                        onClick={() => {
-                          if (!setProductCategory) return;
-                          setProductCategory(key);
-                        }}
-                      />
-                    ))}
-                  </div>
-                </div>
-
-                <div className="mt-3">
-                  <div className="mb-2 text-white/70" style={{ fontSize: 12 }}>
-                    2. サイズ感
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {(Object.keys(PRODUCT_SIZE_LABEL) as ProductSize[]).map((key) => (
-                      <SegButton
-                        key={key}
-                        active={productSize === key}
-                        label={PRODUCT_SIZE_LABEL[key]}
-                        disabled={!setProductSize || busy}
-                        onClick={() => {
-                          if (!setProductSize) return;
-                          setProductSize(key);
-                        }}
-                      />
-                    ))}
-                  </div>
-                </div>
-
-                <div className="mt-3">
-                  <div className="mb-2 text-white/70" style={{ fontSize: 12 }}>
-                    3. 接地タイプ
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {(Object.keys(GROUNDING_TYPE_LABEL) as GroundingType[]).map((key) => (
-                      <SegButton
-                        key={key}
-                        active={groundingType === key}
-                        label={GROUNDING_TYPE_LABEL[key]}
-                        disabled={!setGroundingType || busy}
-                        onClick={() => {
-                          if (!setGroundingType) return;
-                          setGroundingType(key);
-                        }}
-                      />
-                    ))}
-                  </div>
-                </div>
-
-                <div className="mt-3">
-                  <div className="mb-2 text-white/70" style={{ fontSize: 12 }}>
-                    4. 売り方向
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {(Object.keys(SELL_DIRECTION_LABEL) as SellDirection[]).map((key) => (
-                      <SegButton
-                        key={key}
-                        active={sellDirection === key}
-                        label={SELL_DIRECTION_LABEL[key]}
-                        disabled={!setSellDirection || busy}
-                        onClick={() => {
-                          if (!setSellDirection) return;
-                          setSellDirection(key);
-                        }}
-                      />
-                    ))}
-                  </div>
-                </div>
-
-                <div className="mt-3">
-                  <div className="mb-2 text-white/70" style={{ fontSize: 12 }}>
-                    5. 背景方向
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {(Object.keys(BG_SCENE_LABEL) as BgScene[]).map((key) => (
-                      <SegButton
-                        key={key}
-                        active={bgScene === key}
-                        label={BG_SCENE_LABEL[key]}
-                        disabled={!setBgScene || busy}
-                        onClick={() => {
-                          if (!setBgScene) return;
-                          setBgScene(key);
-                        }}
-                      />
-                    ))}
-                  </div>
-                </div>
-
-                <div
-                  className="mt-3 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-white/65"
-                  style={{ fontSize: 12, lineHeight: 1.6 }}
-                >
-                  現在： {PRODUCT_CATEGORY_LABEL[productCategory]} / {PRODUCT_SIZE_LABEL[productSize]} /{" "}
-                  {GROUNDING_TYPE_LABEL[groundingType]} / {SELL_DIRECTION_LABEL[sellDirection]} /{" "}
-                  {BG_SCENE_LABEL[bgScene]}
-                </div>
-              </div>
-
               <div className="mt-3">
                 <div className="mb-2 text-white/70" style={{ fontSize: 12 }}>
                   背景キーワード
@@ -992,7 +1388,7 @@ export default function BackgroundPanel({
                   value={backgroundKeyword}
                   onChange={(e) => setBackgroundKeyword(e.target.value)}
                   placeholder="例：玄関 / 書斎 / 薬局受付"
-                  className="w-full rounded-xl border p-2"
+                  className="w-full rounded-xl border p-2 outline-none"
                   style={formStyle}
                   disabled={!uid || busy}
                 />
@@ -1021,7 +1417,11 @@ export default function BackgroundPanel({
 
                 <Btn
                   variant="secondary"
-                  disabled={!uid || busy || (!aiOnlyPreviewBackgroundUrl && !String(backgroundKeyword || "").trim())}
+                  disabled={
+                    !uid ||
+                    busy ||
+                    (!aiOnlyPreviewBackgroundUrl && !String(backgroundKeyword || "").trim())
+                  }
                   onClick={replaceBackgroundAndSaveToAiImage}
                 >
                   製品画像＋背景を合成（保存）
@@ -1085,47 +1485,53 @@ export default function BackgroundPanel({
           </>
         ) : null}
 
+        {/* =========================
+            合成タブ
+        ========================= */}
         {innerTab === "composite" ? (
-          <ProductPlacementEditor
-            baseImageUrl={d.baseImageUrl}
-            foregroundImageUrl={d.foregroundImageUrl}
-            bgImageUrl={String(d.bgImageUrl || "").trim()}
-            aiImageUrl={aiImageUrl}
-            templateBgUrl={templateBgUrl}
-            templateBgUrls={templateBgUrls}
-            aiBgUrls={aiBgUrls}
-            templateRecommended={templateRecommended}
-            templateRecommendTopReason={templateRecommendTopReason}
-            isCompositeFresh={isCompositeFresh}
-            productCategory={productCategory}
-            productSize={productSize}
-            groundingType={groundingType}
-            bgScene={bgScene}
-            activePhotoMode={activePhotoMode}
-            onChangePhotoMode={setActivePhotoMode}
-            onSelectTemplateBg={handleSelectTemplateBackground}
-            onSelectAiBg={handleSelectAiBackground}
-            onRecompose={replaceBackgroundAndSaveToAiImage}
-            placementScale={placementScale}
-            placementX={placementX}
-            placementY={placementY}
-            shadowOpacity={shadowOpacity}
-            shadowBlur={shadowBlur}
-            shadowScale={shadowScale}
-            shadowOffsetX={shadowOffsetX}
-            shadowOffsetY={shadowOffsetY}
-            setPlacementScale={setPlacementScale}
-            setPlacementX={setPlacementX}
-            setPlacementY={setPlacementY}
-            setShadowOpacity={setShadowOpacity}
-            setShadowBlur={setShadowBlur}
-            setShadowScale={setShadowScale}
-            setShadowOffsetX={setShadowOffsetX}
-            setShadowOffsetY={setShadowOffsetY}
-            onSavePlacement={onSavePlacement}
-            busy={busy}
-            showMsg={showMsg}
-          />
+<ProductPlacementEditor
+  baseImageUrl={d.baseImageUrl}
+  foregroundImageUrl={d.foregroundImageUrl}
+  bgImageUrl={String(d.bgImageUrl || "").trim()}
+  aiImageUrl={aiImageUrl}
+  compositeTextImageUrl={String(compositeTextImageUrl || (d as any).compositeTextImageUrl || "").trim()}
+  onSaveCompositeTextImageFromCompositeSlot={onSaveCompositeTextImageFromCompositeSlot}
+  templateBgUrl={templateBgUrl}
+  templateBgUrls={templateBgUrls}
+  aiBgUrls={aiBgUrls}
+  templateRecommended={templateRecommended}
+  templateRecommendTopReason={templateRecommendTopReason}
+  isCompositeFresh={isCompositeFresh}
+  productCategory={productCategory}
+  productSize={productSize}
+  groundingType={groundingType}
+  bgScene={bgScene}
+  textOverlay={compositeTextOverlay}
+  activePhotoMode={activePhotoMode}
+  onChangePhotoMode={setActivePhotoMode}
+  onSelectTemplateBg={handleSelectTemplateBackground}
+  onSelectAiBg={handleSelectAiBackground}
+  onRecompose={replaceBackgroundAndSaveToAiImage}
+  placementScale={placementScale}
+  placementX={placementX}
+  placementY={placementY}
+  shadowOpacity={shadowOpacity}
+  shadowBlur={shadowBlur}
+  shadowScale={shadowScale}
+  shadowOffsetX={shadowOffsetX}
+  shadowOffsetY={shadowOffsetY}
+  setPlacementScale={setPlacementScale}
+  setPlacementX={setPlacementX}
+  setPlacementY={setPlacementY}
+  setShadowOpacity={setShadowOpacity}
+  setShadowBlur={setShadowBlur}
+  setShadowScale={setShadowScale}
+  setShadowOffsetX={setShadowOffsetX}
+  setShadowOffsetY={setShadowOffsetY}
+  onSavePlacement={onSavePlacement}
+  busy={busy}
+  showMsg={showMsg}
+/>
         ) : null}
       </div>
     </details>

@@ -1,7 +1,7 @@
-//app/flow/drafts/new/hooks/useDraftEditorController.ts
+// /app/flow/drafts/new/hooks/useDraftEditorController.ts
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import type {
   DraftDoc,
   TextOverlay,
@@ -29,12 +29,7 @@ import useDraftPricing from "./useDraftPricing";
  *
  * 今回の修正ポイント
  * - fetchTemplateRecommendations を正式に返す
- * - useDraftImageActions 側の実装名
- *   recommendTemplateBackgrounds
- *   とのズレをここで吸収する
- * - BackgroundPanel が期待している返り値
- *   { topReason, recommended: [{ url, reason, score }] }
- *   にここで正規化する
+ * - useDraftImageActions 側の返り値を UI 用に正規化する
  * - template 背景専用 state を state.d から local state に同期する
  * - ブランド切替時に template 背景専用 local state も初期化する
  * - TypeScript が null を混ぜないように型ガードを入れる
@@ -43,6 +38,23 @@ import useDraftPricing from "./useDraftPricing";
  * - shadow 系 state / setter を controller の return に追加する
  * - savePlacement で shadow 系も保存できるようにする
  * - Firestore 読込時に shadow 系 local state も同期する
+ *
+ * 今回の追加修正
+ * - ④ 合成スロットでの文字プレビュー元画像判定を強化する
+ * - currentSlot === "composite" の時は aiImageUrl / compositeImageUrl などを優先する
+ * - 既存の他スロット挙動は壊さない
+ *
+ * 今回のエラー修正
+ * - useEffect の依存配列サイズ変更エラーを避けるため、
+ *   ④文字プレビュー用 effect の依存配列を固定サイズにする
+ * - 依存対象は文字列キーにまとめて useMemo で先に作る
+ *
+ * 今回の重要修正
+ * - 文字プレビュー生成時に「今見ているスロットの overlay」と
+ *   「そのスロットに対応する preview source」を厳密に同期させる
+ * - imageActions オブジェクト全体ではなく、
+ *   renderToCanvasAndGetDataUrlSilent 関数だけを依存対象にする
+ * - overlay があるのに preview が消える事故を減らす
  */
 
 type Params = {
@@ -69,6 +81,36 @@ function isTemplateBgRecommendItem(
   value: TemplateBgRecommendItem | null
 ): value is TemplateBgRecommendItem {
   return value !== null;
+}
+
+/**
+ * 文字プレビューの土台画像を安全に決める関数
+ *
+ * 重要
+ * - base / mood は既存の getOverlaySourceUrlForPreview をそのまま使う
+ * - composite のときだけ ④で見る画像を優先する
+ * - これにより、④用の文字プレビューが出ない問題を避ける
+ */
+function resolveOverlayPreviewSourceUrl(
+  d: DraftDoc,
+  currentSlot: "base" | "mood" | "composite"
+): string {
+  if (currentSlot === "composite") {
+    const compositeCandidates = [
+      d.aiImageUrl,
+      d.compositeImageUrl,
+      d.imageUrl,
+      d.stageImageUrl,
+    ]
+      .map((v) => String(v || "").trim())
+      .filter(Boolean);
+
+    if (compositeCandidates.length > 0) {
+      return compositeCandidates[0];
+    }
+  }
+
+  return String(getOverlaySourceUrlForPreview(d) || "").trim();
 }
 
 export default function useDraftEditorController(params: Params) {
@@ -217,6 +259,11 @@ export default function useDraftEditorController(params: Params) {
     saveDraft: persistence.saveDraft,
     showMsg: persistence.showMsg,
   });
+
+  /**
+   * 文字プレビュー描画関数だけを切り出して依存を安定させる
+   */
+  const renderOverlayPreview = imageActions.renderToCanvasAndGetDataUrlSilent;
 
   function commitDraftPatch(patch: Partial<DraftDoc>) {
     const next = { ...state.dRef.current, ...patch } as DraftDoc;
@@ -418,26 +465,26 @@ export default function useDraftEditorController(params: Params) {
 
     state.setActivePhotoMode(nextMode);
 
-const patch: Partial<DraftDoc> = {
-  activePhotoMode: nextMode,
-  placement: {
-    scale: nextScale,
-    x: nextX,
-    y: nextY,
-    shadow: {
-      opacity: nextShadowOpacity,
-      blur: nextShadowBlur,
-      scale: nextShadowScale,
-      offsetX: nextShadowOffsetX,
-      offsetY: nextShadowOffsetY,
-    },
-  },
-  shadowOpacity: nextShadowOpacity,
-  shadowBlur: nextShadowBlur,
-  shadowScale: nextShadowScale,
-  shadowOffsetX: nextShadowOffsetX,
-  shadowOffsetY: nextShadowOffsetY,
-};
+    const patch: Partial<DraftDoc> = {
+      activePhotoMode: nextMode,
+      placement: {
+        scale: nextScale,
+        x: nextX,
+        y: nextY,
+        shadow: {
+          opacity: nextShadowOpacity,
+          blur: nextShadowBlur,
+          scale: nextShadowScale,
+          offsetX: nextShadowOffsetX,
+          offsetY: nextShadowOffsetY,
+        },
+      },
+      shadowOpacity: nextShadowOpacity,
+      shadowBlur: nextShadowBlur,
+      shadowScale: nextShadowScale,
+      shadowOffsetX: nextShadowOffsetX,
+      shadowOffsetY: nextShadowOffsetY,
+    };
 
     commitDraftPatch(patch);
     await persistence.saveDraft(patch);
@@ -500,7 +547,7 @@ const patch: Partial<DraftDoc> = {
    * { topReason, recommended: [{ url, reason, score }] }
    * を期待している。
    *
-   * actions 側の recommendTemplateBackgrounds の返り値を
+   * actions 側の返り値を
    * ここで正規化して返す。
    */
   async function fetchTemplateRecommendations(): Promise<TemplateRecommendResultForPanel> {
@@ -555,6 +602,47 @@ const patch: Partial<DraftDoc> = {
     };
   }
 
+  /**
+   * ④ 文字プレビュー用の依存キー
+   *
+   * 重要
+   * - useEffect の依存配列サイズを固定するため、
+   *   可変の個別 URL 群をここで 1 本の文字列にまとめる
+   * - dependency array に直接 URL を増減させない
+   */
+  const overlayForCurrentSlot = useMemo(() => {
+    return (state.d.textOverlayBySlot?.[state.currentSlot] ?? null) as TextOverlay | null;
+  }, [state.d.textOverlayBySlot, state.currentSlot]);
+
+  const overlayTextKey = useMemo(() => {
+    const overlay = overlayForCurrentSlot;
+
+    if (!overlay) return "";
+
+    const lines = Array.isArray(overlay.lines)
+      ? overlay.lines.map((v) => String(v ?? "").trim())
+      : [];
+
+    const text = typeof overlay.text === "string" ? overlay.text.trim() : "";
+
+    return JSON.stringify({
+      lines,
+      text,
+      x: overlay.x ?? null,
+      y: overlay.y ?? null,
+      fontSize: overlay.fontSize ?? null,
+      lineHeight: overlay.lineHeight ?? null,
+      color: overlay.color ?? null,
+      backgroundEnabled: overlay.background?.enabled ?? null,
+      backgroundColor: overlay.background?.color ?? null,
+      bandOpacity: overlay.bandOpacity ?? null,
+    });
+  }, [overlayForCurrentSlot]);
+
+  const overlaySourceKey = useMemo(() => {
+    return resolveOverlayPreviewSourceUrl(state.d, state.currentSlot);
+  }, [state.d, state.currentSlot]);
+
   useEffect(() => {
     state.dRef.current = state.d;
   }, [state.d, state.dRef]);
@@ -587,29 +675,59 @@ const patch: Partial<DraftDoc> = {
     state.setRecommendReason,
   ]);
 
+  /**
+   * 文字プレビュー生成
+   *
+   * 重要
+   * - 今見ているスロットの overlay が存在し、
+   *   そのスロットで使える source 画像がある時だけ生成する
+   * - 文字が無い / 画像が無い時だけ preview を消す
+   * - render 関数は imageActions 全体ではなく個別関数を依存にする
+   */
   useEffect(() => {
     let cancelled = false;
 
-    const slot = state.currentSlot;
-    const overlay = (state.d.textOverlayBySlot?.[slot] ?? null) as TextOverlay | null;
-    const text = Array.isArray(overlay?.lines) ? overlay.lines.join("\n").trim() : "";
+    const overlay = overlayForCurrentSlot;
 
-    if (!text) {
+    const linesText = Array.isArray(overlay?.lines)
+      ? overlay.lines.join("\n").trim()
+      : "";
+
+    /**
+     * lines が無くても text 互換がある場合は拾う
+     */
+    const legacyText =
+      typeof overlay?.text === "string" ? overlay.text.trim() : "";
+
+    const hasText = Boolean(linesText || legacyText);
+
+    /**
+     * 文字が無い時はプレビューを消す
+     */
+    if (!hasText) {
       state.setOverlayPreviewDataUrl(null);
       return;
     }
 
-    const srcForOverlay = getOverlaySourceUrlForPreview(state.d);
-    if (!srcForOverlay) {
+    /**
+     * 該当スロットに対応する土台画像が無い時も消す
+     */
+    if (!overlaySourceKey) {
       state.setOverlayPreviewDataUrl(null);
       return;
     }
 
     const timer = setTimeout(async () => {
-      const out = await imageActions.renderToCanvasAndGetDataUrlSilent();
+      try {
+        const out = await renderOverlayPreview();
 
-      if (!cancelled) {
-        state.setOverlayPreviewDataUrl(out);
+        if (!cancelled) {
+          state.setOverlayPreviewDataUrl(out);
+        }
+      } catch {
+        if (!cancelled) {
+          state.setOverlayPreviewDataUrl(null);
+        }
       }
     }, 150);
 
@@ -618,12 +736,11 @@ const patch: Partial<DraftDoc> = {
       clearTimeout(timer);
     };
   }, [
-    state.currentSlot,
-    state.d.textOverlayBySlot,
-    state.d.baseImageUrl,
-    state.d,
+    overlayForCurrentSlot,
+    overlayTextKey,
+    overlaySourceKey,
+    renderOverlayPreview,
     state.setOverlayPreviewDataUrl,
-    imageActions,
   ]);
 
   useEffect(() => {
@@ -728,82 +845,82 @@ const patch: Partial<DraftDoc> = {
       }
     }
 
-/**
- * 影パラメータ同期
- * - まず placement.shadow を優先
- * - 無ければ旧 root 値を使う
- */
-const placementShadow = (state.d as any)?.placement?.shadow ?? {};
+    /**
+     * 影パラメータ同期
+     * - まず placement.shadow を優先
+     * - 無ければ旧 root 値を使う
+     */
+    const placementShadow = (state.d as any)?.placement?.shadow ?? {};
 
-const nextShadowOpacity =
-  typeof placementShadow.opacity === "number" && Number.isFinite(placementShadow.opacity)
-    ? placementShadow.opacity
-    : typeof (state.d as any).shadowOpacity === "number" &&
-        Number.isFinite((state.d as any).shadowOpacity)
-      ? (state.d as any).shadowOpacity
-      : undefined;
+    const nextShadowOpacity =
+      typeof placementShadow.opacity === "number" && Number.isFinite(placementShadow.opacity)
+        ? placementShadow.opacity
+        : typeof (state.d as any).shadowOpacity === "number" &&
+            Number.isFinite((state.d as any).shadowOpacity)
+          ? (state.d as any).shadowOpacity
+          : undefined;
 
-if (typeof nextShadowOpacity === "number") {
-  state.setShadowOpacity((prev) =>
-    prev !== nextShadowOpacity ? nextShadowOpacity : prev
-  );
-}
+    if (typeof nextShadowOpacity === "number") {
+      state.setShadowOpacity((prev) =>
+        prev !== nextShadowOpacity ? nextShadowOpacity : prev
+      );
+    }
 
-const nextShadowBlur =
-  typeof placementShadow.blur === "number" && Number.isFinite(placementShadow.blur)
-    ? placementShadow.blur
-    : typeof (state.d as any).shadowBlur === "number" &&
-        Number.isFinite((state.d as any).shadowBlur)
-      ? (state.d as any).shadowBlur
-      : undefined;
+    const nextShadowBlur =
+      typeof placementShadow.blur === "number" && Number.isFinite(placementShadow.blur)
+        ? placementShadow.blur
+        : typeof (state.d as any).shadowBlur === "number" &&
+            Number.isFinite((state.d as any).shadowBlur)
+          ? (state.d as any).shadowBlur
+          : undefined;
 
-if (typeof nextShadowBlur === "number") {
-  state.setShadowBlur((prev) =>
-    prev !== nextShadowBlur ? nextShadowBlur : prev
-  );
-}
+    if (typeof nextShadowBlur === "number") {
+      state.setShadowBlur((prev) =>
+        prev !== nextShadowBlur ? nextShadowBlur : prev
+      );
+    }
 
-const nextShadowScale =
-  typeof placementShadow.scale === "number" && Number.isFinite(placementShadow.scale)
-    ? placementShadow.scale
-    : typeof (state.d as any).shadowScale === "number" &&
-        Number.isFinite((state.d as any).shadowScale)
-      ? (state.d as any).shadowScale
-      : undefined;
+    const nextShadowScale =
+      typeof placementShadow.scale === "number" && Number.isFinite(placementShadow.scale)
+        ? placementShadow.scale
+        : typeof (state.d as any).shadowScale === "number" &&
+            Number.isFinite((state.d as any).shadowScale)
+          ? (state.d as any).shadowScale
+          : undefined;
 
-if (typeof nextShadowScale === "number") {
-  state.setShadowScale((prev) =>
-    prev !== nextShadowScale ? nextShadowScale : prev
-  );
-}
+    if (typeof nextShadowScale === "number") {
+      state.setShadowScale((prev) =>
+        prev !== nextShadowScale ? nextShadowScale : prev
+      );
+    }
 
-const nextShadowOffsetX =
-  typeof placementShadow.offsetX === "number" && Number.isFinite(placementShadow.offsetX)
-    ? placementShadow.offsetX
-    : typeof (state.d as any).shadowOffsetX === "number" &&
-        Number.isFinite((state.d as any).shadowOffsetX)
-      ? (state.d as any).shadowOffsetX
-      : undefined;
+    const nextShadowOffsetX =
+      typeof placementShadow.offsetX === "number" && Number.isFinite(placementShadow.offsetX)
+        ? placementShadow.offsetX
+        : typeof (state.d as any).shadowOffsetX === "number" &&
+            Number.isFinite((state.d as any).shadowOffsetX)
+          ? (state.d as any).shadowOffsetX
+          : undefined;
 
-if (typeof nextShadowOffsetX === "number") {
-  state.setShadowOffsetX((prev) =>
-    prev !== nextShadowOffsetX ? nextShadowOffsetX : prev
-  );
-}
+    if (typeof nextShadowOffsetX === "number") {
+      state.setShadowOffsetX((prev) =>
+        prev !== nextShadowOffsetX ? nextShadowOffsetX : prev
+      );
+    }
 
-const nextShadowOffsetY =
-  typeof placementShadow.offsetY === "number" && Number.isFinite(placementShadow.offsetY)
-    ? placementShadow.offsetY
-    : typeof (state.d as any).shadowOffsetY === "number" &&
-        Number.isFinite((state.d as any).shadowOffsetY)
-      ? (state.d as any).shadowOffsetY
-      : undefined;
+    const nextShadowOffsetY =
+      typeof placementShadow.offsetY === "number" && Number.isFinite(placementShadow.offsetY)
+        ? placementShadow.offsetY
+        : typeof (state.d as any).shadowOffsetY === "number" &&
+            Number.isFinite((state.d as any).shadowOffsetY)
+          ? (state.d as any).shadowOffsetY
+          : undefined;
 
-if (typeof nextShadowOffsetY === "number") {
-  state.setShadowOffsetY((prev) =>
-    prev !== nextShadowOffsetY ? nextShadowOffsetY : prev
-  );
-}
+    if (typeof nextShadowOffsetY === "number") {
+      state.setShadowOffsetY((prev) =>
+        prev !== nextShadowOffsetY ? nextShadowOffsetY : prev
+      );
+    }
 
     /**
      * テンプレ背景URL
@@ -1109,6 +1226,8 @@ if (typeof nextShadowOffsetY === "number") {
 
     generateAiImage: imageActions.generateAiImage,
     saveCompositeAsImageUrl: imageActions.saveCompositeAsImageUrl,
+    saveCompositeTextImageFromCompositeSlot:
+      (imageActions as any).saveCompositeTextImageFromCompositeSlot,
     generateBackgroundImage: imageActions.generateBackgroundImage,
     replaceBackgroundAndSaveToAiImage: imageActions.replaceBackgroundAndSaveToAiImage,
     clearBgHistory: imageActions.clearBgHistory,
