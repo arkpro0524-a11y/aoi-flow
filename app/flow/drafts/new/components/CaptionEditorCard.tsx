@@ -1,4 +1,3 @@
-// /app/flow/drafts/new/components/CaptionEditorCard.tsx
 "use client";
 
 import React from "react";
@@ -15,6 +14,23 @@ type Props = {
   onSaveDraft: () => void | Promise<void>;
   onEnsureDraftId: () => void | Promise<void>;
 };
+
+/**
+ * 配列欄を安全に編集するための補助
+ * - ecBullets のような配列を textarea で扱いやすくする
+ */
+function bulletsToText(list: unknown): string {
+  if (!Array.isArray(list)) return "";
+  return list.map((v) => String(v ?? "").trim()).filter(Boolean).join("\n");
+}
+
+function textToBullets(text: string): string[] {
+  return String(text ?? "")
+    .split("\n")
+    .map((v) => v.trim())
+    .filter(Boolean)
+    .slice(0, 5);
+}
 
 export default function CaptionEditorCard(props: Props) {
   const {
@@ -33,28 +49,135 @@ export default function CaptionEditorCard(props: Props) {
       className="rounded-2xl border border-white/12 bg-black/25"
       style={{ padding: UI.cardPadding }}
     >
+      {/* =========================
+          既存：Instagram 本文
+      ========================= */}
       <div className="text-white/80 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
         Instagram 本文（編集可）
       </div>
       <textarea
-        value={d.ig}
+        value={d.ig ?? ""}
         onChange={(e) => setD((p) => ({ ...p, ig: e.target.value }))}
         className="w-full rounded-xl border p-3 outline-none"
         style={{ ...formStyle, minHeight: UI.hIG }}
         placeholder="IG本文"
       />
 
+      {/* =========================
+          既存：X 本文
+      ========================= */}
       <div className="text-white/80 mt-4 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
         X 投稿文（編集可）
       </div>
       <textarea
-        value={d.x}
+        value={d.x ?? ""}
         onChange={(e) => setD((p) => ({ ...p, x: e.target.value }))}
         className="w-full rounded-xl border p-3 outline-none"
         style={{ ...formStyle, minHeight: UI.hX }}
         placeholder="X投稿文"
       />
 
+      {/* =========================
+          追加：販売用 Instagram
+      ========================= */}
+      <div className="text-white/80 mt-4 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
+        Instagram 販売用本文（編集可）
+      </div>
+      <textarea
+        value={d.instagramSales ?? ""}
+        onChange={(e) =>
+          setD((p) => ({
+            ...p,
+            instagramSales: e.target.value,
+          }))
+        }
+        className="w-full rounded-xl border p-3 outline-none"
+        style={{ ...formStyle, minHeight: UI.hIG }}
+        placeholder="販売導線を意識したInstagram本文"
+      />
+
+      {/* =========================
+          追加：販売用 X
+      ========================= */}
+      <div className="text-white/80 mt-4 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
+        X 販売用投稿文（編集可）
+      </div>
+      <textarea
+        value={d.xSales ?? ""}
+        onChange={(e) =>
+          setD((p) => ({
+            ...p,
+            xSales: e.target.value,
+          }))
+        }
+        className="w-full rounded-xl border p-3 outline-none"
+        style={{ ...formStyle, minHeight: UI.hX }}
+        placeholder="販売導線を意識したX投稿文"
+      />
+
+      {/* =========================
+          追加：ECタイトル
+      ========================= */}
+      <div className="text-white/80 mt-4 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
+        EC商品タイトル（編集可）
+      </div>
+      <textarea
+        value={d.ecTitle ?? ""}
+        onChange={(e) =>
+          setD((p) => ({
+            ...p,
+            ecTitle: e.target.value,
+          }))
+        }
+        className="w-full rounded-xl border p-3 outline-none"
+        style={{ ...formStyle, minHeight: 80 }}
+        placeholder="ECサイト用の商品タイトル"
+      />
+
+      {/* =========================
+          追加：EC説明文
+      ========================= */}
+      <div className="text-white/80 mt-4 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
+        EC商品説明文（編集可）
+      </div>
+      <textarea
+        value={d.ecDescription ?? ""}
+        onChange={(e) =>
+          setD((p) => ({
+            ...p,
+            ecDescription: e.target.value,
+          }))
+        }
+        className="w-full rounded-xl border p-3 outline-none"
+        style={{ ...formStyle, minHeight: 150 }}
+        placeholder="ECサイト用の商品説明文"
+      />
+
+      {/* =========================
+          追加：EC箇条書き
+      ========================= */}
+      <div className="text-white/80 mt-4 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
+        EC訴求ポイント（1行1項目・編集可）
+      </div>
+      <textarea
+        value={bulletsToText(d.ecBullets)}
+        onChange={(e) =>
+          setD((p) => ({
+            ...p,
+            ecBullets: textToBullets(e.target.value),
+          }))
+        }
+        className="w-full rounded-xl border p-3 outline-none"
+        style={{ ...formStyle, minHeight: 140 }}
+        placeholder={`例：
+高級感のある質感
+日常使いしやすいサイズ感
+贈り物にも使いやすいデザイン`}
+      />
+
+      {/* =========================
+          既存：IG短文候補
+      ========================= */}
       <div className="text-white/80 mt-4 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
         IG短文候補（ig3）※本文は上書きしない
       </div>
@@ -95,6 +218,9 @@ export default function CaptionEditorCard(props: Props) {
         ))}
       </div>
 
+      {/* =========================
+          既存：保存系ボタン
+      ========================= */}
       <div className="mt-4 flex flex-wrap gap-2">
         <Btn
           variant="ghost"

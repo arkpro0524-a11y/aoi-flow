@@ -1,4 +1,3 @@
-// /lib/types/draft.ts
 /**
  * AOI FLOW 用の型定義（統合版）
  *
@@ -17,6 +16,8 @@
  *   ③ サイズ        : テンプレ
  *   ④ ディテール    : 元写真
  *   ⑤ ストーリー    : AI再生成
+ * - 今回さらに追加
+ *   EC販売用文章
  */
 
 // =========================
@@ -303,6 +304,18 @@ export type SizeTemplateType =
   | string;
 
 // =========================
+// EC販売用文章
+// =========================
+
+export type EcSalesTextSet = {
+  instagramSales?: string;
+  xSales?: string;
+  ecTitle?: string;
+  ecDescription?: string;
+  ecBullets?: string[];
+};
+
+// =========================
 // DraftDoc
 // =========================
 
@@ -365,6 +378,16 @@ export type DraftDoc = {
   ig3?: string[];
 
   // =================
+  // 今回追加: EC販売用文章
+  // =================
+
+  instagramSales?: string;
+  xSales?: string;
+  ecTitle?: string;
+  ecDescription?: string;
+  ecBullets?: string[];
+
+  // =================
   // images（正式）
   // =================
 
@@ -417,21 +440,22 @@ export type DraftDoc = {
   // =================
 
   activePhotoMode?: ProductPhotoMode;
-// DraftDoc 内（同じ場所に追加）
-placement?: ProductPlacement;
+  placement?: ProductPlacement;
 
-shadowOpacity?: number;
-shadowBlur?: number;
-shadowScale?: number;
-shadowOffsetX?: number;
-shadowOffsetY?: number;
+  shadowOpacity?: number;
+  shadowBlur?: number;
+  shadowScale?: number;
+  shadowOffsetX?: number;
+  shadowOffsetY?: number;
 
-/**
- * ★追加：root保持（後方互換）
- */
-backgroundScale?: number;
-backgroundX?: number;
-backgroundY?: number;  backgroundSourceTab?: BackgroundSourceTab;
+  /**
+   * ★追加：root保持（後方互換）
+   */
+  backgroundScale?: number;
+  backgroundX?: number;
+  backgroundY?: number;
+
+  backgroundSourceTab?: BackgroundSourceTab;
   templateBgUrl?: string;
   templateBgUrls?: string[];
   templateBgSelectedId?: string;

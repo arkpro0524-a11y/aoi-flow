@@ -251,8 +251,8 @@ export const DEFAULT_DRAFT: DraftDocWithBackground = {
     },
     background: {
       scale: 1,
-      x: 0.5,
-      y: 0.5,
+      x: 0,
+      y: 0,
     },
   },
 
@@ -270,8 +270,8 @@ export const DEFAULT_DRAFT: DraftDocWithBackground = {
    * - 背景編集値の root 保存互換
    */
   backgroundScale: 1,
-  backgroundX: 0.5,
-  backgroundY: 0.5,
+  backgroundX: 0,
+  backgroundY: 0,
 
   /**
    * テンプレ背景
@@ -397,14 +397,14 @@ export function createDefaultDraft(): DraftDoc {
       },
       background: {
         scale: base.placement?.background?.scale ?? 1,
-        x: base.placement?.background?.x ?? 0.5,
-        y: base.placement?.background?.y ?? 0.5,
+        x: base.placement?.background?.x ?? 0,
+        y: base.placement?.background?.y ?? 0,
       },
     },
 
     backgroundScale: base.backgroundScale ?? 1,
-    backgroundX: base.backgroundX ?? 0.5,
-    backgroundY: base.backgroundY ?? 0.5,
+    backgroundX: base.backgroundX ?? 0,
+    backgroundY: base.backgroundY ?? 0,
 
     videoSettings: {
       seconds: base.videoSettings?.seconds ?? 5,
@@ -615,8 +615,8 @@ export default function useDraftEditorState(id: string | null) {
    * - 値の意味は保存時に useDraftImageActions 側で placement.background へ流す
    */
   const [backgroundScale, setBackgroundScale] = useState(1);
-  const [backgroundX, setBackgroundX] = useState(0.5);
-  const [backgroundY, setBackgroundY] = useState(0.5);
+  const [backgroundX, setBackgroundX] = useState(0);
+  const [backgroundY, setBackgroundY] = useState(0);
 
   /**
    * テンプレ背景専用 state

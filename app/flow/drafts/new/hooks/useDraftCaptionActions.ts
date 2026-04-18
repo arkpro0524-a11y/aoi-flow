@@ -1,4 +1,3 @@
-// /app/flow/drafts/new/hooks/useDraftCaptionActions.ts
 "use client";
 
 import { auth } from "@/firebase";
@@ -10,6 +9,7 @@ import { splitKeywords } from "./useDraftEditorState";
  *
  * 役割
  * - IG / X / IG3 の生成
+ * - 追加した販売用文章の生成・保存
  * - オーバーレイ文字への反映
  * - 下書き保存
  *
@@ -19,6 +19,7 @@ import { splitKeywords } from "./useDraftEditorState";
  * - keywordsText / keywords の両方に対応する
  * - 文字オーバーレイは「今見ているスロット」に正しく入れる
  * - setD の直後に saveDraft しても値ズレしないよう dRef.current も更新する
+ * - 既存機能は削除しない
  */
 
 type Params = {
@@ -101,6 +102,21 @@ function createFallbackOverlay(): TextOverlay {
   };
 }
 
+/**
+ * 文字配列を安全に整える
+ * - null / undefined を弾く
+ * - 空文字を除外
+ * - 最大件数も制限する
+ */
+function toSafeStringArray(value: unknown, max = 5): string[] {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .map((v) => String(v ?? "").trim())
+    .filter(Boolean)
+    .slice(0, max);
+}
+
 export default function useDraftCaptionActions(params: Params) {
   const {
     uid,
@@ -140,22 +156,24 @@ export default function useDraftCaptionActions(params: Params) {
           ? currentMood
           : currentComposite;
 
+    const currentCloned = cloneOverlay(currentForSlot ?? createFallbackOverlay());
+
     const nextForSlot: TextOverlay = {
-      ...cloneOverlay(currentForSlot ?? createFallbackOverlay()),
+      ...currentCloned,
       ...(patch ?? {}),
       lines:
         patch && "lines" in patch
           ? Array.isArray(patch.lines)
             ? [...patch.lines]
             : []
-          : cloneOverlay(currentForSlot ?? createFallbackOverlay()).lines,
+          : [...(currentCloned.lines ?? [])],
       background:
         patch && patch.background
           ? {
-              ...cloneOverlay(currentForSlot ?? createFallbackOverlay()).background,
+              ...(currentCloned.background ?? createFallbackOverlay().background!),
               ...patch.background,
             }
-          : cloneOverlay(currentForSlot ?? createFallbackOverlay()).background,
+          : currentCloned.background,
     };
 
     return {
@@ -238,6 +256,7 @@ export default function useDraftCaptionActions(params: Params) {
    * - brand / brandId の両方を吸収
    * - keywordsText / keywords の両方を吸収
    * - オーバーレイ文字が既にある場合は勝手に上書きしない
+   * - 追加した販売用文章もここで受け取って保存する
    */
   async function generateCaptions() {
     if (!uid) return;
@@ -290,9 +309,27 @@ export default function useDraftCaptionActions(params: Params) {
         throw new Error(j?.error || "caption error");
       }
 
+      /**
+       * 既存返り値
+       */
       const ig = typeof j.instagram === "string" ? j.instagram : "";
       const x = typeof j.x === "string" ? j.x : "";
       const ig3 = Array.isArray(j.ig3) ? j.ig3.map(String).slice(0, 3) : [];
+
+      /**
+       * 追加返り値
+       * - route.ts 側で増やした販売用文章をここで受ける
+       * - 無い場合でも壊れないように全部安全化する
+       */
+      const instagramSales =
+        typeof j.instagramSales === "string" ? j.instagramSales : "";
+      const xSales =
+        typeof j.xSales === "string" ? j.xSales : "";
+      const ecTitle =
+        typeof j.ecTitle === "string" ? j.ecTitle : "";
+      const ecDescription =
+        typeof j.ecDescription === "string" ? j.ecDescription : "";
+      const ecBullets = toSafeStringArray(j.ecBullets, 5);
 
       const slot = currentSlot;
       const hasText = hasOverlayTextInCurrentSlot(dRef.current, slot);
@@ -311,23 +348,30 @@ export default function useDraftCaptionActions(params: Params) {
           }
         : ensureSlotOverlay(dRef.current, slot, { lines: ig ? [ig] : [] });
 
-      commitDraftPatch({
+      const patch: Partial<DraftDoc> = {
         ig,
         x,
         ig3,
         igCaption: ig,
         xCaption: x,
+
+        /**
+         * 追加保存項目
+         */
+        instagramSales,
+        xSales,
+        ecTitle,
+        ecDescription,
+        ecBullets,
+
         textOverlayBySlot: nextTextOverlayBySlot,
-      });
+      };
+
+      commitDraftPatch(patch);
 
       await saveDraft({
-        ig,
-        x,
-        ig3,
-        igCaption: ig,
-        xCaption: x,
+        ...patch,
         phase: "draft",
-        textOverlayBySlot: nextTextOverlayBySlot,
       } as any);
 
       /**

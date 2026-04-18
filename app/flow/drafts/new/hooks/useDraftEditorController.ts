@@ -137,11 +137,13 @@ export default function useDraftEditorController(params: Params) {
    * まだ型に出ていない場合でも安全に扱えるように any 参照を作る
    *
    * 重要:
-   * - 単なる `const stateAny = state as any` だと render ごとに参照が変わる
-   * - その結果、依存配列に stateAny を入れた useEffect が毎回走りやすくなる
-   * - ここでは useMemo で stateAny の参照を固定化する
+   * - 以前は useMemo(state as any, [state]) にしていたが、
+   *   state 自体が render ごとに新しいオブジェクトになりやすいため、
+   *   実質あまり安定化の意味がありませんでした
+   * - 今回は useEffect の依存配列から stateAny を外しているため、
+   *   素直に cast のみで扱う形に戻します
    */
-  const stateAny = useMemo(() => state as any, [state]);
+  const stateAny = state as any;
 
   useDraftAuth({
     router,
@@ -186,65 +188,65 @@ export default function useDraftEditorController(params: Params) {
     setVideoPickerValue: state.setVideoPickerValue,
   });
 
-const imageActions = useDraftImageActions({
-  uid: state.uid,
-  draftId: state.draftId,
-  d: state.d,
-  dRef: state.dRef,
-  canvasRef: state.canvasRef,
-  inFlightRef: state.inFlightRef,
+  const imageActions = useDraftImageActions({
+    uid: state.uid,
+    draftId: state.draftId,
+    d: state.d,
+    dRef: state.dRef,
+    canvasRef: state.canvasRef,
+    inFlightRef: state.inFlightRef,
 
-  currentSlot: state.currentSlot,
+    currentSlot: state.currentSlot,
 
-  staticPurpose: state.staticPurpose,
-  bgScene: state.bgScene,
-  backgroundKeyword: state.backgroundKeyword,
-  bgBusy: state.bgBusy,
-  bgImageUrl: state.bgImageUrl,
-  bgDisplayUrl: state.bgDisplayUrl,
+    staticPurpose: state.staticPurpose,
+    bgScene: state.bgScene,
+    backgroundKeyword: state.backgroundKeyword,
+    bgBusy: state.bgBusy,
+    bgImageUrl: state.bgImageUrl,
+    bgDisplayUrl: state.bgDisplayUrl,
 
-  productCategory: state.productCategory,
-  productSize: state.productSize,
-  groundingType: state.groundingType,
-  sellDirection: state.sellDirection,
+    productCategory: state.productCategory,
+    productSize: state.productSize,
+    groundingType: state.groundingType,
+    sellDirection: state.sellDirection,
 
-  /**
-   * ★ 追加（最重要）
-   * 背景編集値を API 層へ明示的に渡す
-   * → transform ではなく「座標値」として統一するため
-   */
-  backgroundScale:
-    typeof stateAny.backgroundScale === "number"
-      ? stateAny.backgroundScale
-      : 1,
-  backgroundX:
-    typeof stateAny.backgroundX === "number"
-      ? stateAny.backgroundX
-      : 0,
-  backgroundY:
-    typeof stateAny.backgroundY === "number"
-      ? stateAny.backgroundY
-      : 0,
+    /**
+     * ★ 追加（最重要）
+     * 背景編集値を API 層へ明示的に渡す
+     * → transform ではなく「座標値」として統一するため
+     */
+    backgroundScale:
+      typeof stateAny.backgroundScale === "number"
+        ? stateAny.backgroundScale
+        : 1,
+    backgroundX:
+      typeof stateAny.backgroundX === "number"
+        ? stateAny.backgroundX
+        : 0,
+    backgroundY:
+      typeof stateAny.backgroundY === "number"
+        ? stateAny.backgroundY
+        : 0,
 
-  /**
-   * 既存 state 一式（後方互換）
-   */
-  ...(state as any),
+    /**
+     * 既存 state 一式（後方互換）
+     */
+    ...(state as any),
 
-  setD: state.setD,
-  setBusy: state.setBusy,
-  setCutoutBusy: state.setCutoutBusy,
-  setCutoutReason: state.setCutoutReason,
-  setBgBusy: state.setBgBusy,
-  setBgImageUrl: state.setBgImageUrl,
-  setPreviewMode: state.setPreviewMode,
-  setPreviewReason: state.setPreviewReason,
-  setRightTab: state.setRightTab,
-  setCompositeFromBaseUrl: state.setCompositeFromBaseUrl,
+    setD: state.setD,
+    setBusy: state.setBusy,
+    setCutoutBusy: state.setCutoutBusy,
+    setCutoutReason: state.setCutoutReason,
+    setBgBusy: state.setBgBusy,
+    setBgImageUrl: state.setBgImageUrl,
+    setPreviewMode: state.setPreviewMode,
+    setPreviewReason: state.setPreviewReason,
+    setRightTab: state.setRightTab,
+    setCompositeFromBaseUrl: state.setCompositeFromBaseUrl,
 
-  saveDraft: persistence.saveDraft,
-  showMsg: persistence.showMsg,
-} as any);
+    saveDraft: persistence.saveDraft,
+    showMsg: persistence.showMsg,
+  } as any);
 
   const captionActions = useDraftCaptionActions({
     uid: state.uid,

@@ -183,15 +183,22 @@ export default function NewDraftPage() {
   const setShadowOffsetY =
     c.setShadowOffsetY as React.Dispatch<React.SetStateAction<number>>;
 
+  /**
+   * 背景編集値
+   *
+   * 重要:
+   * - 背景X/Yの中心は 0
+   * - ここだけ 0.5 にすると、編集開始位置がズレる
+   */
   const backgroundScale = Number(c.backgroundScale ?? 1);
   const setBackgroundScale =
     c.setBackgroundScale as React.Dispatch<React.SetStateAction<number>>;
 
-  const backgroundX = Number(c.backgroundX ?? 0.5);
+  const backgroundX = Number(c.backgroundX ?? 0);
   const setBackgroundX =
     c.setBackgroundX as React.Dispatch<React.SetStateAction<number>>;
 
-  const backgroundY = Number(c.backgroundY ?? 0.5);
+  const backgroundY = Number(c.backgroundY ?? 0);
   const setBackgroundY =
     c.setBackgroundY as React.Dispatch<React.SetStateAction<number>>;
 
@@ -290,10 +297,6 @@ export default function NewDraftPage() {
       `}</style>
 
       <div className="pageWrap">
-        {/* =========================
-            左カラム
-            ブランド / キャプション編集
-        ========================= */}
         <section className="leftCol min-h-0 flex flex-col gap-3">
           <div className="shrink-0 flex items-center justify-between gap-3">
             <div className="flex items-center gap-2 flex-wrap" />
@@ -332,10 +335,6 @@ export default function NewDraftPage() {
           />
         </section>
 
-        {/* =========================
-            右カラム
-            画像 / 動画
-        ========================= */}
         <section className="rightCol min-h-0">
           <div className="rightScroll flex flex-col gap-3">
             <div
@@ -372,9 +371,6 @@ export default function NewDraftPage() {
                 </div>
               </div>
 
-              {/* =========================
-                  画像タブ
-              ========================= */}
               {c.rightTab === "image" ? (
                 <ImageTabPanel
                   d={c.d}
@@ -460,14 +456,12 @@ export default function NewDraftPage() {
                   setShadowOffsetX={setShadowOffsetX}
                   shadowOffsetY={shadowOffsetY}
                   setShadowOffsetY={setShadowOffsetY}
-
                   backgroundScale={backgroundScale}
                   setBackgroundScale={setBackgroundScale}
                   backgroundX={backgroundX}
                   setBackgroundX={setBackgroundX}
                   backgroundY={backgroundY}
                   setBackgroundY={setBackgroundY}
-
                   onSavePlacement={c.savePlacement}
                   sizeTemplateType={sizeTemplateType}
                   setSizeTemplateType={setSizeTemplateType}
@@ -481,9 +475,6 @@ export default function NewDraftPage() {
                 />
               ) : null}
 
-              {/* =========================
-                  動画タブ
-              ========================= */}
               {c.rightTab === "video" ? (
                 <div className="mt-3 flex flex-col gap-3">
                   <div
