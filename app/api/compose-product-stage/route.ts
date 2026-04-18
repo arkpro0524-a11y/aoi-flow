@@ -1,4 +1,4 @@
-//app/api/compose-product-stage/route.ts
+// /app/api/compose-product-stage/route.ts
 import { NextResponse } from "next/server";
 import sharp from "sharp";
 
@@ -12,6 +12,14 @@ export const runtime = "nodejs";
  * - 背景生成の主犯ではないが、
  *   テンプレ背景時は「商品を主役に見せる」寄せ方を少し強める
  * - AI背景時は世界観を少し残す
+ *
+ * 今回の追加修正
+ * - 商品位置 / 影位置 / 影広がり / 影ぼかし の可動域を拡張
+ * - UI側の「旧より約2倍広い」調整レンジを受けられるようにする
+ *
+ * 注意
+ * - 背景ズーム / 背景位置の最終保存反映は、controller / hook 配線が別途必要
+ * - 今回のこのAPIでは、商品側拡張レンジを主に受ける
  */
 
 type LightDirection = "left" | "center" | "right";
@@ -38,6 +46,11 @@ type PlacementInput = {
     scale: number;
     offsetX: number;
     offsetY: number;
+  };
+  background?: {
+    scale: number;
+    x: number;
+    y: number;
   };
 };
 
@@ -71,20 +84,131 @@ function normalizePlacement(input: unknown): PlacementInput {
   const shadowRaw =
     raw.shadow && typeof raw.shadow === "object" ? (raw.shadow as Record<string, any>) : {};
 
+  const backgroundRaw =
+    raw.background && typeof raw.background === "object"
+      ? (raw.background as Record<string, any>)
+      : {};
+
+  /**
+   * 今回の拡張
+   * - scale: 0.2〜4.4
+   * - x/y: -0.5〜1.5
+   * - shadow.blur: 0〜200
+   * - shadow.scale: 0.25〜4
+   * - shadow.offsetX/Y: -2〜2
+   * - background.scale: 0.5〜3
+   * - background.x/y: -1〜1
+   */
   return {
-    scale: clamp(Number(raw.scale ?? 1), 0.4, 2.2),
-    x: clamp(Number(raw.x ?? 0.5), 0, 1),
-    y: clamp(Number(raw.y ?? 0.5), 0, 1),
+    scale: clamp(Number(raw.scale ?? 1), 0.2, 4.4),
+/**
+ * フロントと完全一致させる
+ */
+x: clamp(Number(raw.x ?? 0.5), -0.75, 1.75),
+y: clamp(Number(raw.y ?? 0.5), -0.75, 1.75),
     shadow: {
       opacity: clamp(Number(shadowRaw.opacity ?? 0.2), 0, 1),
-      blur: clamp(Number(shadowRaw.blur ?? 14), 0, 100),
-      scale: clamp(Number(shadowRaw.scale ?? 1.05), 0.5, 2),
-      offsetX: clamp(Number(shadowRaw.offsetX ?? 0), -1, 1),
-      offsetY: clamp(Number(shadowRaw.offsetY ?? 0.03), -1, 1),
+      blur: clamp(Number(shadowRaw.blur ?? 14), 0, 200),
+      scale: clamp(Number(shadowRaw.scale ?? 1.05), 0.25, 4),
+      offsetX: clamp(Number(shadowRaw.offsetX ?? 0), -2, 2),
+      offsetY: clamp(Number(shadowRaw.offsetY ?? 0.03), -2, 2),
+    },
+    background: {
+      scale: clamp(Number(backgroundRaw.scale ?? 1), 0.5, 3),
+      x: clamp(Number(backgroundRaw.x ?? 0), -1, 1),
+      y: clamp(Number(backgroundRaw.y ?? 0), -1, 1),
     },
   };
 }
+async function transformBackground(
+  buf: Buffer,
+  mode: ProductPhotoMode,
+  sellDirection: SellDirection,
+  background?: {
+    scale: number;
+    x: number;
+    y: number;
+  }
+): Promise<Buffer> {
+  const brightness =
+    mode === "template" ? 0.97 : sellDirection === "branding" ? 0.96 : 0.95;
 
+  const saturation =
+    mode === "template" ? 0.94 : sellDirection === "branding" ? 1.0 : 0.98;
+
+  /**
+   * まず色味だけ整える
+   */
+  const base = await sharp(buf, { failOn: "none" })
+    .modulate({
+      brightness,
+      saturation,
+    })
+    .linear(mode === "template" ? 1.015 : 1.02, mode === "template" ? -3 : -4)
+    .png()
+    .toBuffer();
+
+  const meta = await sharp(base).metadata();
+  const srcW = Math.max(1, meta.width || 1024);
+  const srcH = Math.max(1, meta.height || 1024);
+
+  const canvas = 1024;
+  const bgScale = clamp(Number(background?.scale ?? 1), 0.5, 3);
+  const bgX = clamp(Number(background?.x ?? 0), -1, 1);
+  const bgY = clamp(Number(background?.y ?? 0), -1, 1);
+
+  /**
+   * object-fit: cover と同じ基準サイズを先に作る
+   */
+  const coverScale = Math.max(canvas / srcW, canvas / srcH);
+  const drawW = Math.max(1, Math.round(srcW * coverScale * bgScale));
+  const drawH = Math.max(1, Math.round(srcH * coverScale * bgScale));
+
+  /**
+   * まず背景を十分大きく拡大する
+   * その後 1024x1024 を extract で切り出す
+   *
+   * 重要:
+   * - composite に大画像を渡さない
+   * - 編集プレビューと同じく「中央基準 + overflow 範囲移動」に合わせる
+   */
+  const resized = await sharp(base, { failOn: "none" })
+    .resize(drawW, drawH, {
+      fit: "fill",
+    })
+    .png()
+    .toBuffer();
+
+  const overflowX = Math.max(0, drawW - canvas);
+  const overflowY = Math.max(0, drawH - canvas);
+
+  /**
+   * preview 側 resolveBackgroundCoverRect() と意味を合わせる
+   * left/top は「描画位置」ではなく、
+   * extract に使う「切り出し開始位置」に変換する
+   */
+  const extractLeft = clamp(
+    Math.round(overflowX / 2 + bgX * (overflowX / 2)),
+    0,
+    Math.max(0, drawW - canvas)
+  );
+
+  const extractTop = clamp(
+    Math.round(overflowY / 2 + bgY * (overflowY / 2)),
+    0,
+    Math.max(0, drawH - canvas)
+  );
+
+  return await sharp(resized, { failOn: "none" })
+    .extract({
+      left: extractLeft,
+      top: extractTop,
+      width: canvas,
+      height: canvas,
+    })
+    .png()
+    .toBuffer();
+}
 function normalizeLight(input: unknown): LightDirection {
   const s = String(input ?? "").trim();
   if (s === "left") return "left";
@@ -304,11 +428,16 @@ async function makeGroundShadow(
       : Math.max(8, Math.round(w * 0.08));
 
   const lightShiftX = light === "left" ? 8 : light === "right" ? -8 : 0;
-  const cx = Math.round(centerX + lightShiftX + (shadow?.offsetX ?? 0) * 40);
+
+  /**
+   * 今回の拡張
+   * - offset 係数を大きくして可動域を広げる
+   */
+  const cx = Math.round(centerX + lightShiftX + (shadow?.offsetX ?? 0) * 80);
   const cy =
     groundingType === "shelf" || groundingType === "display"
-      ? Math.round(contactY + 1 + (shadow?.offsetY ?? 0.03) * 30)
-      : Math.round(contactY + 2 + (shadow?.offsetY ?? 0.02) * 40);
+      ? Math.round(contactY + 1 + (shadow?.offsetY ?? 0.03) * 60)
+      : Math.round(contactY + 2 + (shadow?.offsetY ?? 0.02) * 80);
 
   const baseOpacity =
     groundingType === "shelf" || groundingType === "display"
@@ -399,7 +528,13 @@ function resolveBottomMargin(
   if (groundingType === "wall") return 165;
 
   const base =
-    productCategory === "furniture" ? 118 : productSize === "large" ? 122 : productSize === "small" ? 136 : 130;
+    productCategory === "furniture"
+      ? 118
+      : productSize === "large"
+        ? 122
+        : productSize === "small"
+          ? 136
+          : 130;
 
   return bgScene === "studio" ? base - 4 : base;
 }
@@ -425,7 +560,12 @@ function resolvePlacementRect(args: {
     bgScene,
   } = args;
 
-  const baseBottomMargin = resolveBottomMargin(groundingType, productCategory, productSize, bgScene);
+  const baseBottomMargin = resolveBottomMargin(
+    groundingType,
+    productCategory,
+    productSize,
+    bgScene
+  );
 
   const defaultLeft = Math.round((canvas - fgWidth) / 2);
 
@@ -443,7 +583,15 @@ function resolvePlacementRect(args: {
     left = Math.round(defaultLeft + (placement.x - 0.5) * 120);
   }
 
-  left = clamp(left, 0, Math.max(0, canvas - fgWidth));
+  /**
+   * 今回の拡張
+   * - 旧: 完全に画面内へ収める
+   * - 新: 画像サイズの75%までは外へ出せる
+   */
+  const overflowX = Math.round(fgWidth * 0.75);
+  const overflowY = Math.round(fgHeight * 0.75);
+
+  left = clamp(left, -overflowX, Math.max(-overflowX, canvas - fgWidth + overflowX));
 
   const maxTop =
     groundingType === "hanging"
@@ -452,7 +600,7 @@ function resolvePlacementRect(args: {
         ? canvas - fgHeight - 40
         : canvas - fgHeight - 10;
 
-  top = clamp(top, 0, Math.max(0, maxTop));
+  top = clamp(top, -overflowY, Math.max(-overflowY, maxTop + overflowY));
 
   const isNearDefaultX =
     groundingType === "shelf" || groundingType === "display"
@@ -465,11 +613,11 @@ function resolvePlacementRect(args: {
       : Math.abs(placement.y - 0.5) <= 0.03;
 
   if (isNearDefaultX) {
-    left = clamp(defaultLeft, 0, Math.max(0, canvas - fgWidth));
+    left = clamp(defaultLeft, -overflowX, Math.max(-overflowX, canvas - fgWidth + overflowX));
   }
 
   if (isNearDefaultY) {
-    top = clamp(defaultTop, 0, Math.max(0, maxTop));
+    top = clamp(defaultTop, -overflowY, Math.max(-overflowY, maxTop + overflowY));
   }
 
   const centerX = left + fgWidth / 2;
@@ -501,18 +649,31 @@ function evaluateCompositeQuality(args: {
 
   const centered = Math.abs(left - Math.round((canvas - fgWidth) / 2)) <= 6;
   const ratioOk = productWidthRatio >= 0.18 && productWidthRatio <= 0.82;
-  const insideCanvas = left >= 0 && top >= 0 && left + fgWidth <= canvas && top + fgHeight <= canvas;
+
+  /**
+   * 今回の拡張
+   * - 少し画面外へ出るのは許容したいので inside 判定も緩める
+   */
+  const insideCanvas =
+    left >= -Math.round(fgWidth * 0.75) &&
+    top >= -Math.round(fgHeight * 0.75) &&
+    left + fgWidth <= canvas + Math.round(fgWidth * 0.75) &&
+    top + fgHeight <= canvas + Math.round(fgHeight * 0.75);
 
   const groundingLikelyOk =
     groundingType === "hanging"
       ? true
       : groundingType === "wall"
-        ? top + fgHeight <= canvas - 20
+        ? top + fgHeight <= canvas + Math.round(fgHeight * 0.75)
         : groundingType === "shelf" || groundingType === "display"
-          ? top + fgHeight <= canvas - 40
-          : top + fgHeight <= canvas - 4;
+          ? top + fgHeight <= canvas + Math.round(fgHeight * 0.75)
+          : top + fgHeight <= canvas + Math.round(fgHeight * 0.75);
 
-  const score = (centered ? 20 : 0) + (ratioOk ? 30 : 0) + (insideCanvas ? 30 : 0) + (groundingLikelyOk ? 20 : 0);
+  const score =
+    (centered ? 20 : 0) +
+    (ratioOk ? 30 : 0) +
+    (insideCanvas ? 30 : 0) +
+    (groundingLikelyOk ? 20 : 0);
 
   return {
     score,
@@ -520,7 +681,8 @@ function evaluateCompositeQuality(args: {
     ratioOk,
     insideCanvas,
     groundingLikelyOk,
-    verdict: score >= 90 ? "excellent" : score >= 75 ? "good" : score >= 50 ? "fair" : "weak",
+    verdict:
+      score >= 90 ? "excellent" : score >= 75 ? "good" : score >= 50 ? "fair" : "weak",
   };
 }
 
@@ -558,7 +720,12 @@ export async function POST(req: Request) {
       fetchImageBuffer(backgroundUrl),
     ]);
 
-    const backgroundTuned = await tuneBackground(backgroundRaw, activePhotoMode, sellDirection);
+    const backgroundTuned = await transformBackground(
+      backgroundRaw,
+      activePhotoMode,
+      sellDirection,
+      placement.background
+    );
 
     const effectiveProductWidthRatio = clamp(
       baseProductWidthRatio *

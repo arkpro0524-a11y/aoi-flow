@@ -28,6 +28,17 @@ import type {
  * - 初期値オブジェクトの参照共有を避ける
  * - textOverlayBySlot まわりの土台を安定化する
  * - composite 文字プレビューの親側で必要になる state を崩さない
+ *
+ * 今回の追加修正
+ * - 背景ズーム / 背景X / 背景Y を state として正式に持つ
+ * - DEFAULT_DRAFT / createDefaultDraft に placement.background を追加
+ * - root の backgroundScale / backgroundX / backgroundY も初期値として持つ
+ * - return に background 系 state / setter を追加
+ *
+ * 重要
+ * - まだ型定義ファイル側（DraftDoc）が未更新でも、このファイル単体が壊れにくいように
+ *   一部はローカル拡張型を使って安全に扱っています
+ * - ただし最終的には "@/lib/types/draft" 側も同じ項目を正式追加するのが前提です
  */
 
 /* =========================
@@ -68,6 +79,36 @@ export type TemplateBgRecommendItem = {
 export type PricingTable = {
   standard: { 5: number; 10: number };
   high: { 5: number; 10: number };
+};
+
+/**
+ * 背景編集値のローカル拡張型
+ *
+ * 重要
+ * - DraftDoc 本体がまだ未更新でも、このファイルでは安全に background を扱いたい
+ * - placement.background と root の backgroundScale / backgroundX / backgroundY を吸収する
+ */
+type DraftDocWithBackground = DraftDoc & {
+  placement?: {
+    scale?: number;
+    x?: number;
+    y?: number;
+    shadow?: {
+      opacity?: number;
+      blur?: number;
+      scale?: number;
+      offsetX?: number;
+      offsetY?: number;
+    };
+    background?: {
+      scale?: number;
+      x?: number;
+      y?: number;
+    };
+  };
+  backgroundScale?: number;
+  backgroundX?: number;
+  backgroundY?: number;
 };
 
 /* =========================
@@ -151,8 +192,12 @@ export function createDefaultTextOverlayBySlot(
  * 注意
  * - この DEFAULT_DRAFT は「元データ」
  * - state に入れる時は createDefaultDraft() で clone して使う
+ *
+ * 今回の追加
+ * - placement.background
+ * - backgroundScale / backgroundX / backgroundY
  */
-export const DEFAULT_DRAFT: DraftDoc = {
+export const DEFAULT_DRAFT: DraftDocWithBackground = {
   userId: "",
 
   brandId: "vento",
@@ -204,12 +249,29 @@ export const DEFAULT_DRAFT: DraftDoc = {
       offsetX: 0,
       offsetY: 0.02,
     },
+    background: {
+      scale: 1,
+      x: 0.5,
+      y: 0.5,
+    },
   },
+
+  /**
+   * 旧 root 値との互換保存
+   */
   shadowOpacity: 0.12,
   shadowBlur: 12,
   shadowScale: 1,
   shadowOffsetX: 0,
   shadowOffsetY: 0.02,
+
+  /**
+   * 今回追加
+   * - 背景編集値の root 保存互換
+   */
+  backgroundScale: 1,
+  backgroundX: 0.5,
+  backgroundY: 0.5,
 
   /**
    * テンプレ背景
@@ -290,54 +352,71 @@ export const DEFAULT_DRAFT: DraftDoc = {
  * - ネストしたオブジェクト
  * - textOverlayBySlot
  * の参照共有を避ける
+ *
+ * 今回の追加
+ * - placement.background の clone
+ * - root の backgroundScale / backgroundX / backgroundY
  */
 export function createDefaultDraft(): DraftDoc {
-  return {
-    ...DEFAULT_DRAFT,
+  const base = DEFAULT_DRAFT as DraftDocWithBackground;
 
-    shortCopies: [...(DEFAULT_DRAFT.shortCopies ?? [])],
+  const next: DraftDocWithBackground = {
+    ...base,
 
-    bgImageUrls: [...(DEFAULT_DRAFT.bgImageUrls ?? [])],
-    imageIdeaUrls: [...(DEFAULT_DRAFT.imageIdeaUrls ?? [])],
-    templateBgUrls: [...(DEFAULT_DRAFT.templateBgUrls ?? [])],
-    templateBgRecommendedIds: [...(DEFAULT_DRAFT.templateBgRecommendedIds ?? [])],
-    templateBgRecommendations: [...(DEFAULT_DRAFT.templateBgRecommendations ?? [])],
-    useSceneImageUrls: [...(DEFAULT_DRAFT.useSceneImageUrls ?? [])],
-    detailImageUrls: [...(DEFAULT_DRAFT.detailImageUrls ?? [])],
-    storyImageUrls: [...(DEFAULT_DRAFT.storyImageUrls ?? [])],
-    ig3: [...(DEFAULT_DRAFT.ig3 ?? [])],
-    videoUrls: [...(DEFAULT_DRAFT.videoUrls ?? [])],
-    nonAiVideoUrls: [...(DEFAULT_DRAFT.nonAiVideoUrls ?? [])],
+    shortCopies: [...(base.shortCopies ?? [])],
+
+    bgImageUrls: [...(base.bgImageUrls ?? [])],
+    imageIdeaUrls: [...(base.imageIdeaUrls ?? [])],
+    templateBgUrls: [...(base.templateBgUrls ?? [])],
+    templateBgRecommendedIds: [...(base.templateBgRecommendedIds ?? [])],
+    templateBgRecommendations: [...(base.templateBgRecommendations ?? [])],
+    useSceneImageUrls: [...(base.useSceneImageUrls ?? [])],
+    detailImageUrls: [...(base.detailImageUrls ?? [])],
+    storyImageUrls: [...(base.storyImageUrls ?? [])],
+    ig3: [...(base.ig3 ?? [])],
+    videoUrls: [...(base.videoUrls ?? [])],
+    nonAiVideoUrls: [...(base.nonAiVideoUrls ?? [])],
 
     images: {
-      primary: DEFAULT_DRAFT.images?.primary ?? null,
-      materials: Array.isArray(DEFAULT_DRAFT.images?.materials)
-        ? [...DEFAULT_DRAFT.images.materials]
+      primary: base.images?.primary ?? null,
+      materials: Array.isArray(base.images?.materials)
+        ? [...base.images.materials]
         : [],
     },
 
     placement: {
-      scale: DEFAULT_DRAFT.placement?.scale ?? 1,
-      x: DEFAULT_DRAFT.placement?.x ?? 0.5,
-      y: DEFAULT_DRAFT.placement?.y ?? 0.5,
+      scale: base.placement?.scale ?? 1,
+      x: base.placement?.x ?? 0.5,
+      y: base.placement?.y ?? 0.5,
       shadow: {
-        opacity: DEFAULT_DRAFT.placement?.shadow?.opacity ?? 0.12,
-        blur: DEFAULT_DRAFT.placement?.shadow?.blur ?? 12,
-        scale: DEFAULT_DRAFT.placement?.shadow?.scale ?? 1,
-        offsetX: DEFAULT_DRAFT.placement?.shadow?.offsetX ?? 0,
-        offsetY: DEFAULT_DRAFT.placement?.shadow?.offsetY ?? 0.02,
+        opacity: base.placement?.shadow?.opacity ?? 0.12,
+        blur: base.placement?.shadow?.blur ?? 12,
+        scale: base.placement?.shadow?.scale ?? 1,
+        offsetX: base.placement?.shadow?.offsetX ?? 0,
+        offsetY: base.placement?.shadow?.offsetY ?? 0.02,
+      },
+      background: {
+        scale: base.placement?.background?.scale ?? 1,
+        x: base.placement?.background?.x ?? 0.5,
+        y: base.placement?.background?.y ?? 0.5,
       },
     },
 
+    backgroundScale: base.backgroundScale ?? 1,
+    backgroundX: base.backgroundX ?? 0.5,
+    backgroundY: base.backgroundY ?? 0.5,
+
     videoSettings: {
-      seconds: DEFAULT_DRAFT.videoSettings?.seconds ?? 5,
-      quality: DEFAULT_DRAFT.videoSettings?.quality ?? "standard",
-      template: DEFAULT_DRAFT.videoSettings?.template ?? "zoom",
-      size: DEFAULT_DRAFT.videoSettings?.size ?? "720x1280",
+      seconds: base.videoSettings?.seconds ?? 5,
+      quality: base.videoSettings?.quality ?? "standard",
+      template: base.videoSettings?.template ?? "zoom",
+      size: base.videoSettings?.size ?? "720x1280",
     },
 
-    textOverlayBySlot: createDefaultTextOverlayBySlot(DEFAULT_DRAFT.textOverlayBySlot),
+    textOverlayBySlot: createDefaultTextOverlayBySlot(base.textOverlayBySlot),
   };
+
+  return next as DraftDoc;
 }
 
 /* =========================
@@ -526,6 +605,18 @@ export default function useDraftEditorState(id: string | null) {
   const [shadowScale, setShadowScale] = useState(1);
   const [shadowOffsetX, setShadowOffsetX] = useState(0);
   const [shadowOffsetY, setShadowOffsetY] = useState(0.02);
+
+  /**
+   * 今回追加
+   * 背景の編集値
+   *
+   * 重要
+   * - 商品とは別管理
+   * - 値の意味は保存時に useDraftImageActions 側で placement.background へ流す
+   */
+  const [backgroundScale, setBackgroundScale] = useState(1);
+  const [backgroundX, setBackgroundX] = useState(0.5);
+  const [backgroundY, setBackgroundY] = useState(0.5);
 
   /**
    * テンプレ背景専用 state
@@ -859,6 +950,19 @@ export default function useDraftEditorState(id: string | null) {
 
     shadowOffsetY,
     setShadowOffsetY,
+
+    /**
+     * 今回追加
+     * 背景編集値
+     */
+    backgroundScale,
+    setBackgroundScale,
+
+    backgroundX,
+    setBackgroundX,
+
+    backgroundY,
+    setBackgroundY,
 
     /**
      * テンプレ背景専用

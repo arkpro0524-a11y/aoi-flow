@@ -183,6 +183,18 @@ export default function NewDraftPage() {
   const setShadowOffsetY =
     c.setShadowOffsetY as React.Dispatch<React.SetStateAction<number>>;
 
+  const backgroundScale = Number(c.backgroundScale ?? 1);
+  const setBackgroundScale =
+    c.setBackgroundScale as React.Dispatch<React.SetStateAction<number>>;
+
+  const backgroundX = Number(c.backgroundX ?? 0.5);
+  const setBackgroundX =
+    c.setBackgroundX as React.Dispatch<React.SetStateAction<number>>;
+
+  const backgroundY = Number(c.backgroundY ?? 0.5);
+  const setBackgroundY =
+    c.setBackgroundY as React.Dispatch<React.SetStateAction<number>>;
+
   /**
    * ③ サイズテンプレ
    */
@@ -364,101 +376,109 @@ export default function NewDraftPage() {
                   画像タブ
               ========================= */}
               {c.rightTab === "image" ? (
-<ImageTabPanel
-  d={c.d}
-  uid={c.uid}
-  busy={c.busy}
-  cutoutBusy={c.cutoutBusy}
-  cutoutReason={c.cutoutReason}
-  overlayPreviewDataUrl={c.overlayPreviewDataUrl}
-  baseCandidates={c.baseCandidates}
-  currentSlot={c.currentSlot}
-  formStyle={formStyle}
-  defaultTextOverlay={c.DEFAULT_TEXT_OVERLAY}
-  textOverlay={c.d.textOverlayBySlot?.[c.currentSlot] ?? null}
-  compositeTextImageUrl={String((c.d as any).compositeTextImageUrl ?? "")}
-  staticPurpose={c.staticPurpose}
-  setStaticPurpose={c.setStaticPurpose}
-  productCategory={productCategory}
-  setProductCategory={setProductCategory}
-  productSize={productSize}
-  setProductSize={setProductSize}
-  groundingType={groundingType}
-  setGroundingType={setGroundingType}
-  sellDirection={sellDirection}
-  setSellDirection={setSellDirection}
-  bgScene={bgScene}
-  setBgScene={setBgScene}
-  staticRecommendation={c.staticRecommendation}
-  staticVariants={c.staticVariants}
-  staticBusy={c.staticBusy}
-  purposeLabel={PURPOSE_LABEL}
-  bgSceneLabel={BG_SCENE_LABEL}
-  bgDisplayUrl={bgDisplayUrl}
-  backgroundKeyword={c.backgroundKeyword}
-  setBackgroundKeyword={c.setBackgroundKeyword}
-  canGenerate={c.canGenerate}
-  isCompositeFresh={c.isCompositeFresh}
-  onGenerateStaticVariants={c.generateStaticVariants}
-  onSelectStaticVariant={c.selectStaticVariant}
-  onUploadImageFilesNew={c.onUploadImageFilesNew}
-  onCutoutCurrentBaseToReplace={c.cutoutCurrentBaseToReplace}
-  onPromoteMaterialToBase={c.promoteMaterialToBase}
-  onRemoveBaseOrMaterialImage={c.removeBaseOrMaterialImage}
-  onSyncBaseAndMaterialImagesFromStorage={c.syncBaseAndMaterialImagesFromStorage}
-  onSaveCompositeAsImageUrl={c.saveCompositeAsImageUrl}
-  onSaveCompositeTextImageFromCompositeSlot={c.saveCompositeTextImageFromCompositeSlot}
-  onSaveDraft={() => {
-    void c.saveDraft();
-  }}
-  onGenerateBackgroundImage={c.generateBackgroundImage}
-  onReplaceBackgroundAndSaveToAiImage={c.replaceBackgroundAndSaveToAiImage}
-  onSyncBgImagesFromStorage={c.syncBgImagesFromStorage}
-  onSyncTemplateBgImagesFromStorage={c.syncTemplateBgImagesFromStorage}
-  onSyncCompositeImagesFromStorage={c.syncCompositeImagesFromStorage}
-  onSyncCompositeTextImagesFromStorage={c.syncCompositeTextImagesFromStorage}
-  onClearBgHistory={c.clearBgHistory}
-  onRemoveTemplateBgImage={c.removeTemplateBgImage}
-  onRemoveAiBgImage={c.removeAiBgImage}
-  onRemoveCompositeImage={c.removeCompositeImage}
-  onRemoveCompositeTextImage={c.removeCompositeTextImage}
-  onGenerateAiImage={c.generateAiImage}
-  onSyncIdeaImagesFromStorage={c.syncIdeaImagesFromStorage}
-  onClearIdeaHistory={c.clearIdeaHistory}
-  onSyncStoryImagesFromStorage={c.syncStoryImagesFromStorage}
-  setBgImageUrl={c.setBgImageUrl}
-  setD={c.setD}
-  saveDraft={c.saveDraft}
-  showMsg={c.showMsg}
-  activePhotoMode={activePhotoMode}
-  setActivePhotoMode={setActivePhotoMode}
-  placementScale={placementScale}
-  setPlacementScale={setPlacementScale}
-  placementX={placementX}
-  setPlacementX={setPlacementX}
-  placementY={placementY}
-  setPlacementY={setPlacementY}
-  shadowOpacity={shadowOpacity}
-  setShadowOpacity={setShadowOpacity}
-  shadowBlur={shadowBlur}
-  setShadowBlur={setShadowBlur}
-  shadowScale={shadowScale}
-  setShadowScale={setShadowScale}
-  shadowOffsetX={shadowOffsetX}
-  setShadowOffsetX={setShadowOffsetX}
-  shadowOffsetY={shadowOffsetY}
-  setShadowOffsetY={setShadowOffsetY}
-  onSavePlacement={c.savePlacement}
-  sizeTemplateType={sizeTemplateType}
-  setSizeTemplateType={setSizeTemplateType}
-  storyDisplayUrl={storyDisplayUrl}
-  onGenerateStoryImage={c.generateStoryImage}
-  generateTemplateBackground={c.generateTemplateBackground}
-  fetchTemplateRecommendations={c.fetchTemplateRecommendations}
-  selectTemplateBackground={c.selectTemplateBackground}
-  templateBgUrl={String(c.templateBgUrl ?? "")}
-  templateBgUrls={Array.isArray(c.templateBgUrls) ? c.templateBgUrls : []}
-/>
+                <ImageTabPanel
+                  d={c.d}
+                  uid={c.uid}
+                  busy={c.busy}
+                  cutoutBusy={c.cutoutBusy}
+                  cutoutReason={c.cutoutReason}
+                  overlayPreviewDataUrl={c.overlayPreviewDataUrl}
+                  baseCandidates={c.baseCandidates}
+                  currentSlot={c.currentSlot}
+                  formStyle={formStyle}
+                  defaultTextOverlay={c.DEFAULT_TEXT_OVERLAY}
+                  textOverlay={c.d.textOverlayBySlot?.[c.currentSlot] ?? null}
+                  compositeTextImageUrl={String((c.d as any).compositeTextImageUrl ?? "")}
+                  staticPurpose={c.staticPurpose}
+                  setStaticPurpose={c.setStaticPurpose}
+                  productCategory={productCategory}
+                  setProductCategory={setProductCategory}
+                  productSize={productSize}
+                  setProductSize={setProductSize}
+                  groundingType={groundingType}
+                  setGroundingType={setGroundingType}
+                  sellDirection={sellDirection}
+                  setSellDirection={setSellDirection}
+                  bgScene={bgScene}
+                  setBgScene={setBgScene}
+                  staticRecommendation={c.staticRecommendation}
+                  staticVariants={c.staticVariants}
+                  staticBusy={c.staticBusy}
+                  purposeLabel={PURPOSE_LABEL}
+                  bgSceneLabel={BG_SCENE_LABEL}
+                  bgDisplayUrl={bgDisplayUrl}
+                  backgroundKeyword={c.backgroundKeyword}
+                  setBackgroundKeyword={c.setBackgroundKeyword}
+                  canGenerate={c.canGenerate}
+                  isCompositeFresh={c.isCompositeFresh}
+                  onGenerateStaticVariants={c.generateStaticVariants}
+                  onSelectStaticVariant={c.selectStaticVariant}
+                  onUploadImageFilesNew={c.onUploadImageFilesNew}
+                  onCutoutCurrentBaseToReplace={c.cutoutCurrentBaseToReplace}
+                  onPromoteMaterialToBase={c.promoteMaterialToBase}
+                  onRemoveBaseOrMaterialImage={c.removeBaseOrMaterialImage}
+                  onSyncBaseAndMaterialImagesFromStorage={c.syncBaseAndMaterialImagesFromStorage}
+                  onSaveCompositeAsImageUrl={c.saveCompositeAsImageUrl}
+                  onSaveCompositeTextImageFromCompositeSlot={c.saveCompositeTextImageFromCompositeSlot}
+                  onSaveDraft={() => {
+                    void c.saveDraft();
+                  }}
+                  onGenerateBackgroundImage={c.generateBackgroundImage}
+                  onReplaceBackgroundAndSaveToAiImage={c.replaceBackgroundAndSaveToAiImage}
+                  onSyncBgImagesFromStorage={c.syncBgImagesFromStorage}
+                  onSyncTemplateBgImagesFromStorage={c.syncTemplateBgImagesFromStorage}
+                  onSyncCompositeImagesFromStorage={c.syncCompositeImagesFromStorage}
+                  onSyncCompositeTextImagesFromStorage={c.syncCompositeTextImagesFromStorage}
+                  onClearBgHistory={c.clearBgHistory}
+                  onRemoveTemplateBgImage={c.removeTemplateBgImage}
+                  onRemoveAiBgImage={c.removeAiBgImage}
+                  onRemoveCompositeImage={c.removeCompositeImage}
+                  onRemoveCompositeTextImage={c.removeCompositeTextImage}
+                  onGenerateAiImage={c.generateAiImage}
+                  onSyncIdeaImagesFromStorage={c.syncIdeaImagesFromStorage}
+                  onClearIdeaHistory={c.clearIdeaHistory}
+                  onSyncStoryImagesFromStorage={c.syncStoryImagesFromStorage}
+                  setBgImageUrl={c.setBgImageUrl}
+                  setD={c.setD}
+                  saveDraft={c.saveDraft}
+                  showMsg={c.showMsg}
+                  activePhotoMode={activePhotoMode}
+                  setActivePhotoMode={setActivePhotoMode}
+                  placementScale={placementScale}
+                  setPlacementScale={setPlacementScale}
+                  placementX={placementX}
+                  setPlacementX={setPlacementX}
+                  placementY={placementY}
+                  setPlacementY={setPlacementY}
+                  shadowOpacity={shadowOpacity}
+                  setShadowOpacity={setShadowOpacity}
+                  shadowBlur={shadowBlur}
+                  setShadowBlur={setShadowBlur}
+                  shadowScale={shadowScale}
+                  setShadowScale={setShadowScale}
+                  shadowOffsetX={shadowOffsetX}
+                  setShadowOffsetX={setShadowOffsetX}
+                  shadowOffsetY={shadowOffsetY}
+                  setShadowOffsetY={setShadowOffsetY}
+
+                  backgroundScale={backgroundScale}
+                  setBackgroundScale={setBackgroundScale}
+                  backgroundX={backgroundX}
+                  setBackgroundX={setBackgroundX}
+                  backgroundY={backgroundY}
+                  setBackgroundY={setBackgroundY}
+
+                  onSavePlacement={c.savePlacement}
+                  sizeTemplateType={sizeTemplateType}
+                  setSizeTemplateType={setSizeTemplateType}
+                  storyDisplayUrl={storyDisplayUrl}
+                  onGenerateStoryImage={c.generateStoryImage}
+                  generateTemplateBackground={c.generateTemplateBackground}
+                  fetchTemplateRecommendations={c.fetchTemplateRecommendations}
+                  selectTemplateBackground={c.selectTemplateBackground}
+                  templateBgUrl={String(c.templateBgUrl ?? "")}
+                  templateBgUrls={Array.isArray(c.templateBgUrls) ? c.templateBgUrls : []}
+                />
               ) : null}
 
               {/* =========================

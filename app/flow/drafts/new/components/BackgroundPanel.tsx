@@ -152,6 +152,15 @@ type Props = {
   shadowOffsetY: number;
   setShadowOffsetY: React.Dispatch<React.SetStateAction<number>>;
 
+  backgroundScale: number;
+  setBackgroundScale: React.Dispatch<React.SetStateAction<number>>;
+
+  backgroundX: number;
+  setBackgroundX: React.Dispatch<React.SetStateAction<number>>;
+
+  backgroundY: number;
+  setBackgroundY: React.Dispatch<React.SetStateAction<number>>;
+
   onSavePlacement: (partial?: {
     scale?: number;
     x?: number;
@@ -161,6 +170,9 @@ type Props = {
     shadowScale?: number;
     shadowOffsetX?: number;
     shadowOffsetY?: number;
+    backgroundScale?: number;
+    backgroundX?: number;
+    backgroundY?: number;
     activePhotoMode?: ProductPhotoMode;
   }) => Promise<void> | void;
 };
@@ -631,6 +643,14 @@ export default function BackgroundPanel({
   setShadowOffsetX,
   shadowOffsetY,
   setShadowOffsetY,
+
+  backgroundScale,
+  setBackgroundScale,
+  backgroundX,
+  setBackgroundX,
+  backgroundY,
+  setBackgroundY,
+
   onSavePlacement,
 }: Props) {
   /**
@@ -1601,6 +1621,11 @@ export default function BackgroundPanel({
               shadowScale={shadowScale}
               shadowOffsetX={shadowOffsetX}
               shadowOffsetY={shadowOffsetY}
+
+              backgroundScale={backgroundScale}
+              backgroundX={backgroundX}
+              backgroundY={backgroundY}
+
               setPlacementScale={setPlacementScale}
               setPlacementX={setPlacementX}
               setPlacementY={setPlacementY}
@@ -1609,6 +1634,11 @@ export default function BackgroundPanel({
               setShadowScale={setShadowScale}
               setShadowOffsetX={setShadowOffsetX}
               setShadowOffsetY={setShadowOffsetY}
+
+              setBackgroundScale={setBackgroundScale}
+              setBackgroundX={setBackgroundX}
+              setBackgroundY={setBackgroundY}
+
               onSavePlacement={onSavePlacement}
               busy={busy}
               showMsg={showMsg}

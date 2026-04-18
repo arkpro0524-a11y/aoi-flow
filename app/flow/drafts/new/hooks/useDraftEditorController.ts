@@ -55,6 +55,11 @@ import useDraftPricing from "./useDraftPricing";
  * - imageActions オブジェクト全体ではなく、
  *   renderToCanvasAndGetDataUrlSilent 関数だけを依存対象にする
  * - overlay があるのに preview が消える事故を減らす
+ *
+ * 今回の追加到達点
+ * - ④の保存項目に「背景ズーム / 背景左右 / 背景上下」を通せる形に拡張
+ * - 既存 state に backgroundScale / backgroundX / backgroundY がある前提で優先使用
+ * - まだ state 側未実装でも壊れにくいよう any 経由で安全に参照する
  */
 
 type Params = {
@@ -81,6 +86,15 @@ function isTemplateBgRecommendItem(
   value: TemplateBgRecommendItem | null
 ): value is TemplateBgRecommendItem {
   return value !== null;
+}
+
+/**
+ * 数値を安全に取り出す補助
+ * - finite でない値を保存しないためのガード
+ */
+function toFiniteNumberOrUndefined(value: unknown): number | undefined {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : undefined;
 }
 
 /**
@@ -117,6 +131,17 @@ export default function useDraftEditorController(params: Params) {
   const { id, router } = params;
 
   const state = useDraftEditorState(id);
+
+  /**
+   * state 側で backgroundScale / backgroundX / backgroundY が
+   * まだ型に出ていない場合でも安全に扱えるように any 参照を作る
+   *
+   * 重要:
+   * - 単なる `const stateAny = state as any` だと render ごとに参照が変わる
+   * - その結果、依存配列に stateAny を入れた useEffect が毎回走りやすくなる
+   * - ここでは useMemo で stateAny の参照を固定化する
+   */
+  const stateAny = useMemo(() => state as any, [state]);
 
   useDraftAuth({
     router,
@@ -161,48 +186,65 @@ export default function useDraftEditorController(params: Params) {
     setVideoPickerValue: state.setVideoPickerValue,
   });
 
-  const imageActions = useDraftImageActions({
-    uid: state.uid,
-    draftId: state.draftId,
-    d: state.d,
-    dRef: state.dRef,
-    canvasRef: state.canvasRef,
-    inFlightRef: state.inFlightRef,
+const imageActions = useDraftImageActions({
+  uid: state.uid,
+  draftId: state.draftId,
+  d: state.d,
+  dRef: state.dRef,
+  canvasRef: state.canvasRef,
+  inFlightRef: state.inFlightRef,
 
-    currentSlot: state.currentSlot,
+  currentSlot: state.currentSlot,
 
-    staticPurpose: state.staticPurpose,
-    bgScene: state.bgScene,
-    backgroundKeyword: state.backgroundKeyword,
-    bgBusy: state.bgBusy,
-    bgImageUrl: state.bgImageUrl,
-    bgDisplayUrl: state.bgDisplayUrl,
+  staticPurpose: state.staticPurpose,
+  bgScene: state.bgScene,
+  backgroundKeyword: state.backgroundKeyword,
+  bgBusy: state.bgBusy,
+  bgImageUrl: state.bgImageUrl,
+  bgDisplayUrl: state.bgDisplayUrl,
 
-    productCategory: state.productCategory,
-    productSize: state.productSize,
-    groundingType: state.groundingType,
-    sellDirection: state.sellDirection,
+  productCategory: state.productCategory,
+  productSize: state.productSize,
+  groundingType: state.groundingType,
+  sellDirection: state.sellDirection,
 
-    /**
-     * 既存 state 一式をまとめて渡す
-     * template 系の props もここ経由で受けられるようにしている
-     */
-    ...(state as any),
+  /**
+   * ★ 追加（最重要）
+   * 背景編集値を API 層へ明示的に渡す
+   * → transform ではなく「座標値」として統一するため
+   */
+  backgroundScale:
+    typeof stateAny.backgroundScale === "number"
+      ? stateAny.backgroundScale
+      : 1,
+  backgroundX:
+    typeof stateAny.backgroundX === "number"
+      ? stateAny.backgroundX
+      : 0,
+  backgroundY:
+    typeof stateAny.backgroundY === "number"
+      ? stateAny.backgroundY
+      : 0,
 
-    setD: state.setD,
-    setBusy: state.setBusy,
-    setCutoutBusy: state.setCutoutBusy,
-    setCutoutReason: state.setCutoutReason,
-    setBgBusy: state.setBgBusy,
-    setBgImageUrl: state.setBgImageUrl,
-    setPreviewMode: state.setPreviewMode,
-    setPreviewReason: state.setPreviewReason,
-    setRightTab: state.setRightTab,
-    setCompositeFromBaseUrl: state.setCompositeFromBaseUrl,
+  /**
+   * 既存 state 一式（後方互換）
+   */
+  ...(state as any),
 
-    saveDraft: persistence.saveDraft,
-    showMsg: persistence.showMsg,
-  } as any);
+  setD: state.setD,
+  setBusy: state.setBusy,
+  setCutoutBusy: state.setCutoutBusy,
+  setCutoutReason: state.setCutoutReason,
+  setBgBusy: state.setBgBusy,
+  setBgImageUrl: state.setBgImageUrl,
+  setPreviewMode: state.setPreviewMode,
+  setPreviewReason: state.setPreviewReason,
+  setRightTab: state.setRightTab,
+  setCompositeFromBaseUrl: state.setCompositeFromBaseUrl,
+
+  saveDraft: persistence.saveDraft,
+  showMsg: persistence.showMsg,
+} as any);
 
   const captionActions = useDraftCaptionActions({
     uid: state.uid,
@@ -310,6 +352,14 @@ export default function useDraftEditorController(params: Params) {
     state.setTemplateBgRecommend([]);
     state.setTemplateBgRecommendReason("");
 
+    /**
+     * 背景編集用 local state も初期化する
+     * - state 側に存在する場合だけ使う
+     */
+    stateAny.setBackgroundScale?.(1);
+    stateAny.setBackgroundX?.(0);
+    stateAny.setBackgroundY?.(0);
+
     state.setD((prev) => ({
       ...prev,
       brand: "vento",
@@ -334,7 +384,14 @@ export default function useDraftEditorController(params: Params) {
       imageIdeaUrls: [],
       storyImageUrl: undefined,
       storyImageUrls: [],
-    }));
+
+      /**
+       * 背景編集値
+       */
+      backgroundScale: undefined,
+      backgroundX: undefined,
+      backgroundY: undefined,
+    }) as any);
   }
 
   function handleSelectRiva() {
@@ -363,6 +420,14 @@ export default function useDraftEditorController(params: Params) {
     state.setTemplateBgRecommend([]);
     state.setTemplateBgRecommendReason("");
 
+    /**
+     * 背景編集用 local state も初期化する
+     * - state 側に存在する場合だけ使う
+     */
+    stateAny.setBackgroundScale?.(1);
+    stateAny.setBackgroundX?.(0);
+    stateAny.setBackgroundY?.(0);
+
     state.setD((prev) => ({
       ...prev,
       brand: "riva",
@@ -387,7 +452,14 @@ export default function useDraftEditorController(params: Params) {
       imageIdeaUrls: [],
       storyImageUrl: undefined,
       storyImageUrls: [],
-    }));
+
+      /**
+       * 背景編集値
+       */
+      backgroundScale: undefined,
+      backgroundX: undefined,
+      backgroundY: undefined,
+    }) as any);
   }
 
   async function handleEnsureDraftId() {
@@ -404,6 +476,7 @@ export default function useDraftEditorController(params: Params) {
    *
    * 今回の修正
    * - shadow 系も partial で受け取って保存する
+   * - 背景ズーム / 背景位置も partial で受け取って保存する
    */
   async function savePlacement(partial?: {
     scale?: number;
@@ -414,6 +487,9 @@ export default function useDraftEditorController(params: Params) {
     shadowScale?: number;
     shadowOffsetX?: number;
     shadowOffsetY?: number;
+    backgroundScale?: number;
+    backgroundX?: number;
+    backgroundY?: number;
     activePhotoMode?: ProductPhotoMode;
   }) {
     if (typeof (imageActions as any).saveProductPlacement === "function") {
@@ -451,6 +527,31 @@ export default function useDraftEditorController(params: Params) {
         ? partial.shadowOffsetY
         : state.shadowOffsetY;
 
+    /**
+     * 背景編集値
+     * - state 側にまだ無い場合でも壊れないよう any で吸収
+     */
+    const nextBackgroundScale =
+      typeof partial?.backgroundScale === "number"
+        ? partial.backgroundScale
+        : typeof stateAny.backgroundScale === "number"
+          ? stateAny.backgroundScale
+          : 1;
+
+    const nextBackgroundX =
+      typeof partial?.backgroundX === "number"
+        ? partial.backgroundX
+        : typeof stateAny.backgroundX === "number"
+          ? stateAny.backgroundX
+          : 0;
+
+    const nextBackgroundY =
+      typeof partial?.backgroundY === "number"
+        ? partial.backgroundY
+        : typeof stateAny.backgroundY === "number"
+          ? stateAny.backgroundY
+          : 0;
+
     const nextMode = partial?.activePhotoMode ?? state.activePhotoMode;
 
     state.setPlacementScale(nextScale);
@@ -462,6 +563,10 @@ export default function useDraftEditorController(params: Params) {
     state.setShadowScale(nextShadowScale);
     state.setShadowOffsetX(nextShadowOffsetX);
     state.setShadowOffsetY(nextShadowOffsetY);
+
+    stateAny.setBackgroundScale?.(nextBackgroundScale);
+    stateAny.setBackgroundX?.(nextBackgroundX);
+    stateAny.setBackgroundY?.(nextBackgroundY);
 
     state.setActivePhotoMode(nextMode);
 
@@ -478,16 +583,43 @@ export default function useDraftEditorController(params: Params) {
           offsetX: nextShadowOffsetX,
           offsetY: nextShadowOffsetY,
         },
-      },
+        /**
+         * 背景編集値を placement 配下にも保存
+         * - useDraftImageActions 側で同じキーを受け取れるようにする前提
+         */
+        background: {
+          scale: nextBackgroundScale,
+          x: nextBackgroundX,
+          y: nextBackgroundY,
+        },
+      } as any,
       shadowOpacity: nextShadowOpacity,
       shadowBlur: nextShadowBlur,
       shadowScale: nextShadowScale,
       shadowOffsetX: nextShadowOffsetX,
       shadowOffsetY: nextShadowOffsetY,
+
+      /**
+       * root にも保持して後方互換を確保
+       */
+      backgroundScale: nextBackgroundScale as any,
+      backgroundX: nextBackgroundX as any,
+      backgroundY: nextBackgroundY as any,
     };
 
     commitDraftPatch(patch);
-    await persistence.saveDraft(patch);
+
+    /**
+     * 修正ポイント
+     * - 直接 await saveDraft を呼ばない
+     * - saveQueueRef に積むことで詰まり防止
+     */
+    state.saveQueueRef.current = state.saveQueueRef.current.then(async () => {
+      await persistence.saveDraft(patch);
+    });
+
+    await state.saveQueueRef.current;
+
     persistence.showMsg("配置を保存しました");
   }
 
@@ -810,12 +942,13 @@ export default function useDraftEditorController(params: Params) {
    * template 背景専用 state もここで同期する
    * 今回の修正:
    * - shadow 系 state も同期する
+   * - 背景ズーム / 背景位置 も同期する
    */
   useEffect(() => {
     const nextPhotoMode = (state.d.activePhotoMode ?? "ai_bg") as ProductPhotoMode;
     state.setActivePhotoMode((prev) => (prev !== nextPhotoMode ? nextPhotoMode : prev));
 
-    const nextPlacement = state.d.placement;
+    const nextPlacement = state.d.placement as any;
     if (nextPlacement) {
       if (
         typeof nextPlacement.scale === "number" &&
@@ -923,6 +1056,55 @@ export default function useDraftEditorController(params: Params) {
     }
 
     /**
+     * 背景編集値同期
+     * - placement.background を優先
+     * - 無ければ旧 root 値を使う
+     */
+    const placementBackground = (state.d as any)?.placement?.background ?? {};
+
+    const nextBackgroundScale =
+      typeof placementBackground.scale === "number" && Number.isFinite(placementBackground.scale)
+        ? placementBackground.scale
+        : typeof (state.d as any).backgroundScale === "number" &&
+            Number.isFinite((state.d as any).backgroundScale)
+          ? (state.d as any).backgroundScale
+          : undefined;
+
+    if (typeof nextBackgroundScale === "number") {
+      stateAny.setBackgroundScale?.((prev: number) =>
+        prev !== nextBackgroundScale ? nextBackgroundScale : prev
+      );
+    }
+
+    const nextBackgroundX =
+      typeof placementBackground.x === "number" && Number.isFinite(placementBackground.x)
+        ? placementBackground.x
+        : typeof (state.d as any).backgroundX === "number" &&
+            Number.isFinite((state.d as any).backgroundX)
+          ? (state.d as any).backgroundX
+          : undefined;
+
+    if (typeof nextBackgroundX === "number") {
+      stateAny.setBackgroundX?.((prev: number) =>
+        prev !== nextBackgroundX ? nextBackgroundX : prev
+      );
+    }
+
+    const nextBackgroundY =
+      typeof placementBackground.y === "number" && Number.isFinite(placementBackground.y)
+        ? placementBackground.y
+        : typeof (state.d as any).backgroundY === "number" &&
+            Number.isFinite((state.d as any).backgroundY)
+          ? (state.d as any).backgroundY
+          : undefined;
+
+    if (typeof nextBackgroundY === "number") {
+      stateAny.setBackgroundY?.((prev: number) =>
+        prev !== nextBackgroundY ? nextBackgroundY : prev
+      );
+    }
+
+    /**
      * テンプレ背景URL
      */
     const nextTemplateBgUrl =
@@ -1009,6 +1191,17 @@ export default function useDraftEditorController(params: Params) {
     );
   }, [state.d]);
 
+  /**
+   * 背景編集用 state 値
+   * - state 側に未実装でも安全な既定値を返す
+   */
+  const backgroundScale =
+    toFiniteNumberOrUndefined(stateAny.backgroundScale) ?? 1;
+  const backgroundX =
+    toFiniteNumberOrUndefined(stateAny.backgroundX) ?? 0;
+  const backgroundY =
+    toFiniteNumberOrUndefined(stateAny.backgroundY) ?? 0;
+
   return {
     DEFAULT_TEXT_OVERLAY: state.DEFAULT_TEXT_OVERLAY,
 
@@ -1044,6 +1237,13 @@ export default function useDraftEditorController(params: Params) {
     shadowScale: state.shadowScale,
     shadowOffsetX: state.shadowOffsetX,
     shadowOffsetY: state.shadowOffsetY,
+
+    /**
+     * 背景編集 state を page.tsx へ返す
+     */
+    backgroundScale,
+    backgroundX,
+    backgroundY,
 
     templateBgUrl: state.templateBgUrl,
     templateBgUrls: state.templateBgUrls,
@@ -1129,6 +1329,14 @@ export default function useDraftEditorController(params: Params) {
     setShadowScale: state.setShadowScale,
     setShadowOffsetX: state.setShadowOffsetX,
     setShadowOffsetY: state.setShadowOffsetY,
+
+    /**
+     * 背景編集 setter を page.tsx へ返す
+     * - state 側にまだ無い場合でも undefined のまま返せるようにする
+     */
+    setBackgroundScale: stateAny.setBackgroundScale,
+    setBackgroundX: stateAny.setBackgroundX,
+    setBackgroundY: stateAny.setBackgroundY,
 
     setTemplateBgUrl: state.setTemplateBgUrl,
     setTemplateBgUrls: state.setTemplateBgUrls,

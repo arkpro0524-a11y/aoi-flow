@@ -1,4 +1,4 @@
-//app/flow/drafts/new/components/ImageTabPanel.tsx
+// /app/flow/drafts/new/components/ImageTabPanel.tsx
 "use client";
 
 import React from "react";
@@ -196,6 +196,15 @@ type Props = {
   shadowOffsetY: number;
   setShadowOffsetY: React.Dispatch<React.SetStateAction<number>>;
 
+  backgroundScale: number;
+  setBackgroundScale: React.Dispatch<React.SetStateAction<number>>;
+
+  backgroundX: number;
+  setBackgroundX: React.Dispatch<React.SetStateAction<number>>;
+
+  backgroundY: number;
+  setBackgroundY: React.Dispatch<React.SetStateAction<number>>;
+
   onSavePlacement: (partial?: {
     scale?: number;
     x?: number;
@@ -205,6 +214,9 @@ type Props = {
     shadowScale?: number;
     shadowOffsetX?: number;
     shadowOffsetY?: number;
+    backgroundScale?: number;
+    backgroundX?: number;
+    backgroundY?: number;
     activePhotoMode?: ProductPhotoMode;
   }) => Promise<void> | void;
 
@@ -318,6 +330,14 @@ export default function ImageTabPanel({
   setShadowOffsetX,
   shadowOffsetY,
   setShadowOffsetY,
+
+  backgroundScale,
+  setBackgroundScale,
+  backgroundX,
+  setBackgroundX,
+  backgroundY,
+  setBackgroundY,
+
   onSavePlacement,
 
   sizeTemplateType,
@@ -381,69 +401,78 @@ export default function ImageTabPanel({
           - 背景履歴
           - 合成タブ
       ========================= */}
-<BackgroundPanel
-  bgDisplayUrl={bgDisplayUrl}
-  backgroundKeyword={backgroundKeyword}
-  setBackgroundKeyword={setBackgroundKeyword}
-  uid={uid}
-  busy={busy}
-  d={d}
-  textOverlay={textOverlay}
-  compositeTextImageUrl={compositeTextImageUrl}
-  onSaveCompositeTextImageFromCompositeSlot={onSaveCompositeTextImageFromCompositeSlot}
-  templateBgUrl={templateBgUrl}
-  templateBgUrls={templateBgUrls}
-  generateBackgroundImage={onGenerateBackgroundImage}
-  replaceBackgroundAndSaveToAiImage={onReplaceBackgroundAndSaveToAiImage}
-  syncBgImagesFromStorage={onSyncBgImagesFromStorage}
-  syncTemplateBgImagesFromStorage={onSyncTemplateBgImagesFromStorage}
-  syncCompositeImagesFromStorage={onSyncCompositeImagesFromStorage}
-  syncCompositeTextImagesFromStorage={onSyncCompositeTextImagesFromStorage}
-  clearBgHistory={onClearBgHistory}
-  onRemoveTemplateBgImage={onRemoveTemplateBgImage}
-  onRemoveAiBgImage={onRemoveAiBgImage}
-  onRemoveCompositeImage={onRemoveCompositeImage}
-  onRemoveCompositeTextImage={onRemoveCompositeTextImage}
-  generateTemplateBackground={generateTemplateBackground}
-  fetchTemplateRecommendations={fetchTemplateRecommendations}
-  selectTemplateBackground={selectTemplateBackground}
-  setBgImageUrl={setBgImageUrl}
-  setD={setD}
-  saveDraft={saveDraft}
-  formStyle={formStyle}
-  showMsg={showMsg}
-  productCategory={productCategory}
-  setProductCategory={setProductCategory}
-  productSize={productSize}
-  setProductSize={setProductSize}
-  groundingType={groundingType}
-  setGroundingType={setGroundingType}
-  sellDirection={sellDirection}
-  setSellDirection={setSellDirection}
-  bgScene={bgScene}
-  setBgScene={setBgScene}
-  aiImageUrl={d.aiImageUrl ?? ""}
-  isCompositeFresh={isCompositeFresh}
-  activePhotoMode={activePhotoMode}
-  setActivePhotoMode={setActivePhotoMode}
-  placementScale={placementScale}
-  setPlacementScale={setPlacementScale}
-  placementX={placementX}
-  setPlacementX={setPlacementX}
-  placementY={placementY}
-  setPlacementY={setPlacementY}
-  shadowOpacity={shadowOpacity}
-  setShadowOpacity={setShadowOpacity}
-  shadowBlur={shadowBlur}
-  setShadowBlur={setShadowBlur}
-  shadowScale={shadowScale}
-  setShadowScale={setShadowScale}
-  shadowOffsetX={shadowOffsetX}
-  setShadowOffsetX={setShadowOffsetX}
-  shadowOffsetY={shadowOffsetY}
-  setShadowOffsetY={setShadowOffsetY}
-  onSavePlacement={onSavePlacement}
-/>
+      <BackgroundPanel
+        bgDisplayUrl={bgDisplayUrl}
+        backgroundKeyword={backgroundKeyword}
+        setBackgroundKeyword={setBackgroundKeyword}
+        uid={uid}
+        busy={busy}
+        d={d}
+        textOverlay={textOverlay}
+        compositeTextImageUrl={compositeTextImageUrl}
+        onSaveCompositeTextImageFromCompositeSlot={onSaveCompositeTextImageFromCompositeSlot}
+        templateBgUrl={templateBgUrl}
+        templateBgUrls={templateBgUrls}
+        generateBackgroundImage={onGenerateBackgroundImage}
+        replaceBackgroundAndSaveToAiImage={onReplaceBackgroundAndSaveToAiImage}
+        syncBgImagesFromStorage={onSyncBgImagesFromStorage}
+        syncTemplateBgImagesFromStorage={onSyncTemplateBgImagesFromStorage}
+        syncCompositeImagesFromStorage={onSyncCompositeImagesFromStorage}
+        syncCompositeTextImagesFromStorage={onSyncCompositeTextImagesFromStorage}
+        clearBgHistory={onClearBgHistory}
+        onRemoveTemplateBgImage={onRemoveTemplateBgImage}
+        onRemoveAiBgImage={onRemoveAiBgImage}
+        onRemoveCompositeImage={onRemoveCompositeImage}
+        onRemoveCompositeTextImage={onRemoveCompositeTextImage}
+        generateTemplateBackground={generateTemplateBackground}
+        fetchTemplateRecommendations={fetchTemplateRecommendations}
+        selectTemplateBackground={selectTemplateBackground}
+        setBgImageUrl={setBgImageUrl}
+        setD={setD}
+        saveDraft={saveDraft}
+        formStyle={formStyle}
+        showMsg={showMsg}
+        productCategory={productCategory}
+        setProductCategory={setProductCategory}
+        productSize={productSize}
+        setProductSize={setProductSize}
+        groundingType={groundingType}
+        setGroundingType={setGroundingType}
+        sellDirection={sellDirection}
+        setSellDirection={setSellDirection}
+        bgScene={bgScene}
+        setBgScene={setBgScene}
+        aiImageUrl={d.aiImageUrl ?? ""}
+        isCompositeFresh={isCompositeFresh}
+        activePhotoMode={activePhotoMode}
+        setActivePhotoMode={setActivePhotoMode}
+        placementScale={placementScale}
+        setPlacementScale={setPlacementScale}
+        placementX={placementX}
+        setPlacementX={setPlacementX}
+        placementY={placementY}
+        setPlacementY={setPlacementY}
+        shadowOpacity={shadowOpacity}
+        setShadowOpacity={setShadowOpacity}
+        shadowBlur={shadowBlur}
+        setShadowBlur={setShadowBlur}
+        shadowScale={shadowScale}
+        setShadowScale={setShadowScale}
+        shadowOffsetX={shadowOffsetX}
+        setShadowOffsetX={setShadowOffsetX}
+        shadowOffsetY={shadowOffsetY}
+        setShadowOffsetY={setShadowOffsetY}
+
+        backgroundScale={backgroundScale}
+        setBackgroundScale={setBackgroundScale}
+        backgroundX={backgroundX}
+        setBackgroundX={setBackgroundX}
+        backgroundY={backgroundY}
+        setBackgroundY={setBackgroundY}
+
+        onSavePlacement={onSavePlacement}
+      />
+
       {/* =========================
           使用シーン / イメージ画像
       ========================= */}

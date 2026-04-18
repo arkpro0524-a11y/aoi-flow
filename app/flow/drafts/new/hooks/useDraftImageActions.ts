@@ -82,20 +82,36 @@ type Params = {
   placementScale: number;
   placementX: number;
   placementY: number;
+
   shadowOpacity: number;
   shadowBlur: number;
   shadowScale: number;
   shadowOffsetX: number;
   shadowOffsetY: number;
+
+  /**
+   * 背景編集パラメータ
+   * - 編集プレビューで使っている背景ズーム / 背景位置
+   * - ここでも受けて保存対象へ通す
+   */
+  backgroundScale: number;
+  backgroundX: number;
+  backgroundY: number;
+
   setActivePhotoMode: React.Dispatch<React.SetStateAction<ProductPhotoMode>>;
   setPlacementScale: React.Dispatch<React.SetStateAction<number>>;
   setPlacementX: React.Dispatch<React.SetStateAction<number>>;
   setPlacementY: React.Dispatch<React.SetStateAction<number>>;
+
   setShadowOpacity: React.Dispatch<React.SetStateAction<number>>;
   setShadowBlur: React.Dispatch<React.SetStateAction<number>>;
   setShadowScale: React.Dispatch<React.SetStateAction<number>>;
   setShadowOffsetX: React.Dispatch<React.SetStateAction<number>>;
   setShadowOffsetY: React.Dispatch<React.SetStateAction<number>>;
+
+  setBackgroundScale: React.Dispatch<React.SetStateAction<number>>;
+  setBackgroundX: React.Dispatch<React.SetStateAction<number>>;
+  setBackgroundY: React.Dispatch<React.SetStateAction<number>>;
 
   sizeTemplateType: SizeTemplateType;
   setSizeTemplateType: React.Dispatch<React.SetStateAction<SizeTemplateType>>;
@@ -596,16 +612,19 @@ function resolveOverlayRenderSourceUrl(
   currentSlot: "base" | "mood" | "composite"
 ): string {
   if (currentSlot === "composite") {
-const compositeCandidates = [
-  cur.aiImageUrl,
-  cur.compositeImageUrl,
-  cur.imageUrl,
-  cur.stageImageUrl,
-]            .map((v) => String(v || "").trim())
+    const compositeCandidates = [
+      cur.compositeImageUrl,
+      cur.aiImageUrl,
+      cur.imageUrl,
+      cur.stageImageUrl,
+    ]
+      .map((v) => String(v || "").trim())
       .filter(Boolean);
 
-    if (compositeCandidates.length > 0) {
-      return compositeCandidates[0];
+    const firstCompositeCandidate = compositeCandidates[0];
+
+    if (firstCompositeCandidate) {
+      return firstCompositeCandidate;
     }
   }
 
@@ -639,20 +658,31 @@ export default function useDraftImageActions(params: Params) {
     placementScale,
     placementX,
     placementY,
+
     shadowOpacity,
     shadowBlur,
     shadowScale,
     shadowOffsetX,
     shadowOffsetY,
+
+    backgroundScale,
+    backgroundX,
+    backgroundY,
+
     setActivePhotoMode,
     setPlacementScale,
     setPlacementX,
     setPlacementY,
+
     setShadowOpacity,
     setShadowBlur,
     setShadowScale,
     setShadowOffsetX,
     setShadowOffsetY,
+
+    setBackgroundScale,
+    setBackgroundX,
+    setBackgroundY,
 
     sizeTemplateType,
     setSizeTemplateType,
@@ -707,38 +737,105 @@ export default function useDraftImageActions(params: Params) {
     scale?: number;
     x?: number;
     y?: number;
+
     shadowOpacity?: number;
     shadowBlur?: number;
     shadowScale?: number;
     shadowOffsetX?: number;
     shadowOffsetY?: number;
+
+    /**
+     * 背景編集値
+     * - 背景ズーム
+     * - 背景左右位置
+     * - 背景上下位置
+     */
+    backgroundScale?: number;
+    backgroundX?: number;
+    backgroundY?: number;
+
     activePhotoMode?: ProductPhotoMode;
   }) {
-    const nextScale = clamp(Number(partial?.scale ?? placementScale ?? 1), 0.4, 2.2);
-    const nextX = clamp(Number(partial?.x ?? placementX ?? 0.5), 0, 1);
-    const nextY = clamp(Number(partial?.y ?? placementY ?? 0.5), 0, 1);
-    const nextShadowOpacity = clamp(Number(partial?.shadowOpacity ?? shadowOpacity ?? 0.12), 0, 1);
-    const nextShadowBlur = clamp(Number(partial?.shadowBlur ?? shadowBlur ?? 12), 0, 100);
-    const nextShadowScale = clamp(Number(partial?.shadowScale ?? shadowScale ?? 1), 0.5, 2);
-    const nextShadowOffsetX = clamp(Number(partial?.shadowOffsetX ?? shadowOffsetX ?? 0), -1, 1);
+    /**
+     * 重要
+     * - 以前よりかなり広いレンジで保存する
+     * - UI側で広げた可動域をここで潰さない
+     * - 最終の安全制御は compose API 側でも入る前提
+     */
+    const nextScale = clamp(Number(partial?.scale ?? placementScale ?? 1), 0.2, 4.4);
+/**
+ * 座標系統一
+ * - x,y は 0〜1 を基準とする
+ * - 画面外許容は ±0.75 まで
+ */
+const nextX = clamp(Number(partial?.x ?? placementX ?? 0.5), -0.75, 1.75);
+const nextY = clamp(Number(partial?.y ?? placementY ?? 0.5), -0.75, 1.75);
+
+    const nextShadowOpacity = clamp(
+      Number(partial?.shadowOpacity ?? shadowOpacity ?? 0.12),
+      0,
+      1
+    );
+    const nextShadowBlur = clamp(
+      Number(partial?.shadowBlur ?? shadowBlur ?? 12),
+      0,
+      200
+    );
+    const nextShadowScale = clamp(
+      Number(partial?.shadowScale ?? shadowScale ?? 1),
+      0.25,
+      4
+    );
+    const nextShadowOffsetX = clamp(
+      Number(partial?.shadowOffsetX ?? shadowOffsetX ?? 0),
+      -2,
+      2
+    );
     const nextShadowOffsetY = clamp(
       Number(partial?.shadowOffsetY ?? shadowOffsetY ?? 0.02),
+      -2,
+      2
+    );
+
+    /**
+     * 背景ズーム / 背景位置
+     * - 背景編集プレビューで使う値をそのまま保存する
+     */
+    const nextBackgroundScale = clamp(
+      Number(partial?.backgroundScale ?? backgroundScale ?? 1),
+      0.5,
+      3
+    );
+    const nextBackgroundX = clamp(
+      Number(partial?.backgroundX ?? backgroundX ?? 0),
       -1,
       1
     );
+    const nextBackgroundY = clamp(
+      Number(partial?.backgroundY ?? backgroundY ?? 0),
+      -1,
+      1
+    );
+
     const nextMode = (partial?.activePhotoMode ?? activePhotoMode ?? "ai_bg") as ProductPhotoMode;
 
     setPlacementScale(nextScale);
     setPlacementX(nextX);
     setPlacementY(nextY);
+
     setShadowOpacity(nextShadowOpacity);
     setShadowBlur(nextShadowBlur);
     setShadowScale(nextShadowScale);
     setShadowOffsetX(nextShadowOffsetX);
     setShadowOffsetY(nextShadowOffsetY);
+
+    setBackgroundScale(nextBackgroundScale);
+    setBackgroundX(nextBackgroundX);
+    setBackgroundY(nextBackgroundY);
+
     setActivePhotoMode(nextMode);
 
-    commitDraftPatch({
+    const patch = {
       activePhotoMode: nextMode,
       placement: {
         scale: nextScale,
@@ -751,26 +848,10 @@ export default function useDraftImageActions(params: Params) {
           offsetX: nextShadowOffsetX,
           offsetY: nextShadowOffsetY,
         },
-      },
-      shadowOpacity: nextShadowOpacity,
-      shadowBlur: nextShadowBlur,
-      shadowScale: nextShadowScale,
-      shadowOffsetX: nextShadowOffsetX,
-      shadowOffsetY: nextShadowOffsetY,
-    });
-
-    await saveDraft({
-      activePhotoMode: nextMode,
-      placement: {
-        scale: nextScale,
-        x: nextX,
-        y: nextY,
-        shadow: {
-          opacity: nextShadowOpacity,
-          blur: nextShadowBlur,
-          scale: nextShadowScale,
-          offsetX: nextShadowOffsetX,
-          offsetY: nextShadowOffsetY,
+        background: {
+          scale: nextBackgroundScale,
+          x: nextBackgroundX,
+          y: nextBackgroundY,
         },
       },
       shadowOpacity: nextShadowOpacity,
@@ -778,9 +859,21 @@ export default function useDraftImageActions(params: Params) {
       shadowScale: nextShadowScale,
       shadowOffsetX: nextShadowOffsetX,
       shadowOffsetY: nextShadowOffsetY,
-    } as any);
 
-    showMsg("① 商品写真の位置・大きさ・影を保存しました");
+      /**
+       * root 側にも持っておく
+       * - 旧データ混在時の救済
+       * - state復元時の保険
+       */
+      backgroundScale: nextBackgroundScale,
+      backgroundX: nextBackgroundX,
+      backgroundY: nextBackgroundY,
+    } as any;
+
+    commitDraftPatch(patch);
+    await saveDraft(patch);
+
+    showMsg("① 商品写真の位置・大きさ・影・背景編集値を保存しました");
   }
 
   async function applySizeTemplate(type: SizeTemplateType) {
@@ -2382,11 +2475,10 @@ async function saveCompositeTextImageFromCompositeSlot() {
         at: Date.now(),
       } as const;
 
-      setD((prev) => ({
-        ...prev,
-        bgImageUrl: url,
-        originMeta: { ...((prev as any).originMeta ?? {}), bg: meta },
-      }) as any);
+commitDraftPatch({
+  bgImageUrl: url,
+  originMeta: { ...((dRef.current as any).originMeta ?? {}), bg: meta },
+} as any);
 
       setBgImageUrl(url);
 
@@ -2479,18 +2571,30 @@ async function saveCompositeTextImageFromCompositeSlot() {
         throw new Error("foreground url が取得できませんでした（サーバ返り値を確認）");
       }
 
-      let bg = "";
+let bg = "";
 
-      if (activePhotoMode === "template") {
-        bg = String(templateBgUrl || d.templateBgUrl || "").trim();
-        if (!bg) {
-          throw new Error("テンプレ背景が未選択です");
-        }
-      } else {
-        const aiBg = String(bgImageUrl || d.bgImageUrl || "").trim();
-        bg = aiBg ? aiBg : await generateBackgroundImage(backgroundKeyword);
-      }
+if (activePhotoMode === "template") {
+  bg = String(templateBgUrl || d.templateBgUrl || "").trim();
+  if (!bg) {
+    throw new Error("テンプレ背景が未選択です");
+  }
+} else {
+  const aiBg = String(bgImageUrl || d.bgImageUrl || "").trim();
+  bg = aiBg ? aiBg : await generateBackgroundImage(backgroundKeyword);
 
+  /**
+   * 重要
+   * - 再合成直後に編集プレビューが止まる主因対策
+   * - ProductPlacementEditor は bgImageUrl prop を見て編集可否を決めている
+   * - d.bgImageUrl だけ存在して local state の bgImageUrl が空だと、
+   *   再合成直後だけ previewBaseUrl / canLiveEdit が false になる
+   */
+  setBgImageUrl(bg || null);
+
+commitDraftPatch({
+  bgImageUrl: bg || dRef.current.bgImageUrl,
+} as any);
+}
       const understanding = resolveProductUnderstanding({
         productCategory,
         productSize,
@@ -2502,50 +2606,54 @@ async function saveCompositeTextImageFromCompositeSlot() {
 
       const savedPlacement = (dRef.current.placement ?? {}) as any;
       const savedShadow = (savedPlacement.shadow ?? {}) as any;
+      const savedBackground = (savedPlacement.background ?? {}) as any;
 
-      const placement = {
-        scale: clamp(Number(savedPlacement.scale ?? placementScale ?? 1), 0.4, 2.2),
-        x: clamp(Number(savedPlacement.x ?? placementX ?? 0.5), 0, 1),
-        y: clamp(Number(savedPlacement.y ?? placementY ?? 0.5), 0, 1),
-        shadow: {
-          opacity: clamp(Number(savedShadow.opacity ?? shadowOpacity ?? 0.12), 0, 1),
-          blur: clamp(Number(savedShadow.blur ?? shadowBlur ?? 12), 0, 100),
-          scale: clamp(Number(savedShadow.scale ?? shadowScale ?? 1), 0.5, 2),
-          offsetX: clamp(Number(savedShadow.offsetX ?? shadowOffsetX ?? 0), -1, 1),
-          offsetY: clamp(Number(savedShadow.offsetY ?? shadowOffsetY ?? 0.02), -1, 1),
-        },
-      };
+const placement = {
+  scale: clamp(Number(placementScale ?? 1), 0.2, 4.4),
+  x: clamp(Number(placementX ?? 0.5), -0.75, 1.75),
+  y: clamp(Number(placementY ?? 0.5), -0.75, 1.75),
 
-      const r = await fetch("/api/compose-product-stage", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          foregroundUrl: fg,
-          backgroundUrl: bg,
-          light: "center",
-          productWidthRatio: 0.42,
-          productCategory: understanding.productCategory,
-          productSize: understanding.productSize,
-          groundingType: understanding.groundingType,
-          sellDirection: understanding.sellDirection,
-          bgScene: understanding.bgScene,
-          activePhotoMode,
-          placement: {
-            scale: placement.scale,
-            x: placement.x,
-            y: placement.y,
-            shadow: {
-              opacity: placement.shadow.opacity,
-              blur: placement.shadow.blur,
-              scale: placement.shadow.scale,
-              offsetX: placement.shadow.offsetX,
-              offsetY: placement.shadow.offsetY,
-            },
-          },
-        }),
-      });
+  shadow: {
+    opacity: clamp(Number(shadowOpacity ?? 0.12), 0, 1),
+    blur: clamp(Number(shadowBlur ?? 12), 0, 200),
+    scale: clamp(Number(shadowScale ?? 1), 0.25, 4),
+    offsetX: clamp(Number(shadowOffsetX ?? 0), -2, 2),
+    offsetY: clamp(Number(shadowOffsetY ?? 0.02), -2, 2),
+  },
+
+  background: {
+    scale: clamp(Number(backgroundScale ?? 1), 0.5, 3),
+    x: clamp(Number(backgroundX ?? 0), -1, 1),
+    y: clamp(Number(backgroundY ?? 0), -1, 1),
+  },
+};
+
+const r = await fetch("/api/compose-product-stage", {
+  method: "POST",
+  headers: {
+    "content-type": "application/json",
+  },
+  body: JSON.stringify({
+    foregroundUrl: fg,
+    backgroundUrl: bg,
+    light: "center",
+    productWidthRatio: 0.42,
+    productCategory: understanding.productCategory,
+    productSize: understanding.productSize,
+    groundingType: understanding.groundingType,
+    sellDirection: understanding.sellDirection,
+    bgScene: understanding.bgScene,
+    activePhotoMode,
+
+    /**
+     * 重要
+     * - ここでは再正規化しない
+     * - フロント保存値の意味をそのままサーバへ渡す
+     * - route.ts 側の normalizePlacement() と同じレンジで一致させる
+     */
+    placement,
+  }),
+});
 
       const j = await r.json().catch(() => ({}));
 
@@ -2605,32 +2713,54 @@ async function saveCompositeTextImageFromCompositeSlot() {
        * - テンプレ背景の主保存先は templateBgUrl
        * - 合成結果 aiImageUrl だけを更新する
        */
-      setD((prev) => ({
-        ...prev,
-        foregroundImageUrl: fg,
-        aiImageUrl: outUrl,
-        imageUrl: outUrl,
-        compositeImageUrl: outUrl,
-        imageSource: "ai",
-        activePhotoMode,
-        placement,
-        originMeta: { ...((prev as any).originMeta ?? {}), composite: meta },
-      }));
+const compositePatch = {
+  foregroundImageUrl: fg,
+  aiImageUrl: outUrl,
+  imageUrl: outUrl,
+  compositeImageUrl: outUrl,
+  imageSource: "ai",
+  activePhotoMode,
+  ...(activePhotoMode === "ai_bg" ? { bgImageUrl: bg } : {}),
+  placement,
+  shadowOpacity: placement.shadow.opacity,
+  shadowBlur: placement.shadow.blur,
+  shadowScale: placement.shadow.scale,
+  shadowOffsetX: placement.shadow.offsetX,
+  shadowOffsetY: placement.shadow.offsetY,
+  backgroundScale: placement.background.scale,
+  backgroundX: placement.background.x,
+  backgroundY: placement.background.y,
+  originMeta: {
+    ...((dRef.current as any).originMeta ?? {}),
+    composite: meta,
+  },
+} as any;
+
+commitDraftPatch(compositePatch);
 
       setPreviewMode("composite");
       setPreviewReason("");
+      // 🔥 合成後にUI stateを強制同期する
+setPlacementScale(placement.scale);
+setPlacementX(placement.x);
+setPlacementY(placement.y);
 
-      await saveDraft({
-        foregroundImageUrl: fg,
-        aiImageUrl: outUrl,
-        imageUrl: outUrl,
-        compositeImageUrl: outUrl,
-        imageSource: "ai",
-        phase: "draft",
-        activePhotoMode,
-        placement,
-        originMeta: { ...((dRef.current as any).originMeta ?? {}), composite: meta },
-      });
+setShadowOpacity(placement.shadow.opacity);
+setShadowBlur(placement.shadow.blur);
+setShadowScale(placement.shadow.scale);
+setShadowOffsetX(placement.shadow.offsetX);
+setShadowOffsetY(placement.shadow.offsetY);
+
+setBackgroundScale(placement.background.scale);
+setBackgroundX(placement.background.x);
+setBackgroundY(placement.background.y);
+
+setActivePhotoMode(activePhotoMode);
+
+await saveDraft({
+  ...compositePatch,
+  phase: "draft",
+} as any);
 
       showMsg("✅ 切り抜き＋背景合成 完了（④に表示）");
     } catch (e: any) {
@@ -2741,11 +2871,10 @@ async function saveCompositeTextImageFromCompositeSlot() {
 
       setBgImageUrl(nextBgHead ?? null);
 
-      setD((prev) => ({
-        ...prev,
-        bgImageUrl: nextBgHead,
-        bgImageUrls: nextBgUrls,
-      }));
+commitDraftPatch({
+  bgImageUrl: nextBgHead,
+  bgImageUrls: nextBgUrls,
+} as any);
 
       await saveDraft({
         bgImageUrl: nextBgHead,

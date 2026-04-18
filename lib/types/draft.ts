@@ -264,12 +264,23 @@ export type ProductPlacement = {
   scale: number;
   x: number;
   y: number;
+
   shadow?: {
     opacity: number;
     blur: number;
     scale: number;
     offsetX: number;
     offsetY: number;
+  };
+
+  /**
+   * ★追加：背景編集値
+   * - 合成時のズーム / 位置
+   */
+  background?: {
+    scale: number;
+    x: number;
+    y: number;
   };
 };
 
@@ -406,13 +417,21 @@ export type DraftDoc = {
   // =================
 
   activePhotoMode?: ProductPhotoMode;
-  placement?: ProductPlacement;
-  shadowOpacity?: number;
-  shadowBlur?: number;
-  shadowScale?: number;
-  shadowOffsetX?: number;
-  shadowOffsetY?: number;
-  backgroundSourceTab?: BackgroundSourceTab;
+// DraftDoc 内（同じ場所に追加）
+placement?: ProductPlacement;
+
+shadowOpacity?: number;
+shadowBlur?: number;
+shadowScale?: number;
+shadowOffsetX?: number;
+shadowOffsetY?: number;
+
+/**
+ * ★追加：root保持（後方互換）
+ */
+backgroundScale?: number;
+backgroundX?: number;
+backgroundY?: number;  backgroundSourceTab?: BackgroundSourceTab;
   templateBgUrl?: string;
   templateBgUrls?: string[];
   templateBgSelectedId?: string;

@@ -1,7 +1,6 @@
-// /app/flow/drafts/new/components/ProductPlacementEditor.tsx
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Btn } from "../ui";
 import type { ProductPhotoMode, TextOverlay } from "@/lib/types/draft";
 
@@ -33,6 +32,21 @@ import type { ProductPhotoMode, TextOverlay } from "@/lib/types/draft";
  *   - 今回は cqw を使って、プレビュー幅に対して正しく拡大縮小する
  * - x / y が旧データで 0〜1 でも、新データで 0〜100 でも両対応にする
  * - composite 以外から来た overlay でも、そのまま安全に表示できるようにする
+ *
+ * 今回の追加修正
+ * - 商品位置・影位置などの可動域を大きく拡張する
+ * - 背景側も編集プレビュー上でズーム・左右位置・上下位置を調整できるようにする
+ *
+ * 今回の重要修正
+ * - 合成後に foregroundImageUrl の実画像サイズが変わると、
+ *   同じ slider 値でも動きの感じが変わって見える問題があった
+ * - そこで「配置計算専用の基準サイズ」を追加し、
+ *   baseImageUrl が同じ間はその基準を維持するようにした
+ * - これにより、再合成後でもバーの動きの感じが急に変わりにくくなる
+ *
+ * 注意
+ * - 背景ズーム/背景位置は、今回の4ファイル範囲では「編集プレビュー反映」まで
+ * - 完全保存まで行うには controller / hook 側にも追加配線が必要
  */
 
 type ProductCategory = "furniture" | "goods" | "apparel" | "small" | "other";
@@ -49,6 +63,50 @@ type TemplateRecommendItem = {
 const TEMPLATE_MODE: ProductPhotoMode = "template";
 const AI_BG_MODE: ProductPhotoMode = "ai_bg";
 const PREVIEW_CANVAS = 1024;
+
+/**
+ * 今回の可動域拡張定数
+ *
+ * 商品配置
+ * - scale: 旧 0.4〜2.2 → 新 0.2〜4.4
+ * - x/y  : 旧 0〜1     → 新 -0.75〜1.75
+ *
+ * UIスライダー
+ * - scale: 旧 20〜95   → 新 10〜180
+ * - x/y  : 旧 0〜100   → 新 0〜200（100が中央）
+ *
+ * 影
+ * - blur: 旧 0〜100    → 新 0〜200
+ * - scale:旧 0.5〜2    → 新 0.25〜4
+ * - offset: 旧 -1〜1   → 新 -2〜2
+ *
+ * 背景（編集プレビューのみ）
+ * - zoom: 40〜220
+ * - x/y : 0〜200（100が中央）
+ */
+const PRODUCT_SCALE_SAVED_MIN = 0.2;
+const PRODUCT_SCALE_SAVED_MAX = 4.4;
+const PRODUCT_SCALE_UI_MIN = 10;
+const PRODUCT_SCALE_UI_MAX = 180;
+
+const PRODUCT_POS_SAVED_MIN = -0.75;
+const PRODUCT_POS_SAVED_MAX = 1.75;
+const PRODUCT_POS_UI_MIN = 0;
+const PRODUCT_POS_UI_MAX = 200;
+
+const SHADOW_BLUR_MIN = 0;
+const SHADOW_BLUR_MAX = 200;
+const SHADOW_SCALE_MIN = 0.25;
+const SHADOW_SCALE_MAX = 4;
+const SHADOW_OFFSET_MIN = -2;
+const SHADOW_OFFSET_MAX = 2;
+const SHADOW_OFFSET_UI_MIN = 0;
+const SHADOW_OFFSET_UI_MAX = 200;
+
+const BG_SCALE_UI_MIN = 40;
+const BG_SCALE_UI_MAX = 220;
+const BG_POS_UI_MIN = 0;
+const BG_POS_UI_MAX = 200;
 
 type Props = {
   baseImageUrl?: string;
@@ -97,6 +155,16 @@ type Props = {
   shadowOffsetX: number;
   shadowOffsetY: number;
 
+  /**
+   * ★追加
+   * 背景編集値（保存値）
+   * - scale は 0.5〜3
+   * - x / y は -1〜1（0 が中央）
+   */
+  backgroundScale: number;
+  backgroundX: number;
+  backgroundY: number;
+
   setPlacementScale: React.Dispatch<React.SetStateAction<number>>;
   setPlacementX: React.Dispatch<React.SetStateAction<number>>;
   setPlacementY: React.Dispatch<React.SetStateAction<number>>;
@@ -105,6 +173,13 @@ type Props = {
   setShadowScale: React.Dispatch<React.SetStateAction<number>>;
   setShadowOffsetX: React.Dispatch<React.SetStateAction<number>>;
   setShadowOffsetY: React.Dispatch<React.SetStateAction<number>>;
+
+  /**
+   * ★追加
+   */
+  setBackgroundScale: React.Dispatch<React.SetStateAction<number>>;
+  setBackgroundX: React.Dispatch<React.SetStateAction<number>>;
+  setBackgroundY: React.Dispatch<React.SetStateAction<number>>;
 
   onSavePlacement: (partial?: {
     scale?: number;
@@ -115,6 +190,15 @@ type Props = {
     shadowScale?: number;
     shadowOffsetX?: number;
     shadowOffsetY?: number;
+
+    /**
+     * ★追加
+     * 0〜1 基準で保存する
+     */
+    backgroundScale?: number;
+    backgroundX?: number;
+    backgroundY?: number;
+
     activePhotoMode?: ProductPhotoMode;
   }) => void | Promise<void>;
 
@@ -128,30 +212,109 @@ function clamp(n: number, min: number, max: number) {
 
 /**
  * 保存値 → UI表示値
- * 保存値 scale は 0.4〜2.2
- * UI は 20〜95
+ * 保存値 scale は 0.2〜4.4
+ * UI は 10〜180
  */
 function savedScaleToUi(saved: number) {
-  const safe = clamp(saved, 0.4, 2.2);
-  const ratio = (safe - 0.4) / (2.2 - 0.4);
-  return 20 + ratio * (95 - 20);
+  const safe = clamp(saved, PRODUCT_SCALE_SAVED_MIN, PRODUCT_SCALE_SAVED_MAX);
+  const ratio =
+    (safe - PRODUCT_SCALE_SAVED_MIN) /
+    (PRODUCT_SCALE_SAVED_MAX - PRODUCT_SCALE_SAVED_MIN);
+
+  return PRODUCT_SCALE_UI_MIN + ratio * (PRODUCT_SCALE_UI_MAX - PRODUCT_SCALE_UI_MIN);
 }
 
+/**
+ * 保存値 x/y は -0.75〜1.75
+ * UI は 0〜200
+ * 100 が中央
+ */
 function savedPosToUi(saved: number) {
-  return clamp(saved, 0, 1) * 100;
+  const safe = clamp(saved, PRODUCT_POS_SAVED_MIN, PRODUCT_POS_SAVED_MAX);
+  const ratio =
+    (safe - PRODUCT_POS_SAVED_MIN) /
+    (PRODUCT_POS_SAVED_MAX - PRODUCT_POS_SAVED_MIN);
+
+  return PRODUCT_POS_UI_MIN + ratio * (PRODUCT_POS_UI_MAX - PRODUCT_POS_UI_MIN);
 }
 
 /**
  * UI表示値 → 保存値
  */
 function uiScaleToSaved(ui: number) {
-  const safe = clamp(ui, 20, 95);
-  const ratio = (safe - 20) / (95 - 20);
-  return 0.4 + ratio * (2.2 - 0.4);
+  const safe = clamp(ui, PRODUCT_SCALE_UI_MIN, PRODUCT_SCALE_UI_MAX);
+  const ratio =
+    (safe - PRODUCT_SCALE_UI_MIN) /
+    (PRODUCT_SCALE_UI_MAX - PRODUCT_SCALE_UI_MIN);
+
+  return PRODUCT_SCALE_SAVED_MIN + ratio * (PRODUCT_SCALE_SAVED_MAX - PRODUCT_SCALE_SAVED_MIN);
 }
 
 function uiPosToSaved(ui: number) {
-  return clamp(ui, 0, 100) / 100;
+  const safe = clamp(ui, PRODUCT_POS_UI_MIN, PRODUCT_POS_UI_MAX);
+  const ratio =
+    (safe - PRODUCT_POS_UI_MIN) /
+    (PRODUCT_POS_UI_MAX - PRODUCT_POS_UI_MIN);
+
+  return PRODUCT_POS_SAVED_MIN + ratio * (PRODUCT_POS_SAVED_MAX - PRODUCT_POS_SAVED_MIN);
+}
+
+/**
+ * 影 offset の UI 0〜200 ↔ 保存 -2〜2
+ */
+function savedShadowOffsetToUi(saved: number) {
+  const safe = clamp(saved, SHADOW_OFFSET_MIN, SHADOW_OFFSET_MAX);
+  const ratio =
+    (safe - SHADOW_OFFSET_MIN) /
+    (SHADOW_OFFSET_MAX - SHADOW_OFFSET_MIN);
+
+  return SHADOW_OFFSET_UI_MIN + ratio * (SHADOW_OFFSET_UI_MAX - SHADOW_OFFSET_UI_MIN);
+}
+
+function uiShadowOffsetToSaved(ui: number) {
+  const safe = clamp(ui, SHADOW_OFFSET_UI_MIN, SHADOW_OFFSET_UI_MAX);
+  const ratio =
+    (safe - SHADOW_OFFSET_UI_MIN) /
+    (SHADOW_OFFSET_UI_MAX - SHADOW_OFFSET_UI_MIN);
+
+  return SHADOW_OFFSET_MIN + ratio * (SHADOW_OFFSET_MAX - SHADOW_OFFSET_MIN);
+}
+
+/**
+ * 背景位置UI → transform用値
+ * 100 が中央
+ *
+ * 注意
+ * - 既存機能維持のため残す
+ * - 現在このファイルでは未使用
+ */
+function uiBgOffsetPercent(ui: number) {
+  const safe = clamp(ui, BG_POS_UI_MIN, BG_POS_UI_MAX);
+  return ((safe - 100) / 100) * 100;
+}
+
+/**
+ * ★追加
+ * 背景保存値(-1〜1中心=0) ↔ UI(0〜200中心=100)
+ */
+function savedBgPosToUi(saved: number) {
+  const safe = clamp(saved, -1, 1);
+  return clamp(100 + safe * 100, BG_POS_UI_MIN, BG_POS_UI_MAX);
+}
+
+function uiBgPosToSaved(ui: number) {
+  const safe = clamp(ui, BG_POS_UI_MIN, BG_POS_UI_MAX);
+  return clamp((safe - 100) / 100, -1, 1);
+}
+
+function savedBgScaleToUi(saved: number) {
+  const safe = clamp(saved, 0.5, 3);
+  return safe * 100;
+}
+
+function uiBgScaleToSaved(ui: number) {
+  const safe = clamp(ui, BG_SCALE_UI_MIN, BG_SCALE_UI_MAX);
+  return clamp(safe / 100, 0.5, 3);
 }
 
 /**
@@ -266,6 +429,7 @@ function resolveBottomMargin(
 
 /**
  * backend の resolvePlacementRect() と同じ
+ * 今回は可動域拡張のため、画面外へ少し出せる余白も許可する
  */
 function resolvePlacementRect(args: {
   canvas: number;
@@ -305,7 +469,15 @@ function resolvePlacementRect(args: {
   let left = Math.round(placement.x * canvas - fgWidth / 2);
   let top = Math.round(placement.y * canvas - fgHeight / 2);
 
-  left = clamp(left, 0, Math.max(0, canvas - fgWidth));
+  /**
+   * 今回の拡張
+   * - 旧: 完全に画面内へクランプ
+   * - 新: 画像サイズの 75% ぶんは外へ逃がせる
+   */
+  const overflowX = Math.round(fgWidth * 0.75);
+  const overflowY = Math.round(fgHeight * 0.75);
+
+  left = clamp(left, -overflowX, Math.max(-overflowX, canvas - fgWidth + overflowX));
 
   const maxTop =
     groundingType === "hanging"
@@ -314,17 +486,17 @@ function resolvePlacementRect(args: {
         ? canvas - fgHeight - 40
         : canvas - fgHeight - 10;
 
-  top = clamp(top, 0, Math.max(0, maxTop));
+  top = clamp(top, -overflowY, Math.max(-overflowY, maxTop + overflowY));
 
   const isNearDefaultX = Math.abs(placement.x - 0.5) <= 0.03;
   const isNearDefaultY = Math.abs(placement.y - 0.5) <= 0.03;
 
   if (isNearDefaultX) {
-    left = clamp(defaultLeft, 0, Math.max(0, canvas - fgWidth));
+    left = clamp(defaultLeft, -overflowX, Math.max(-overflowX, canvas - fgWidth + overflowX));
   }
 
   if (isNearDefaultY) {
-    top = clamp(defaultTop, 0, Math.max(0, maxTop));
+    top = clamp(defaultTop, -overflowY, Math.max(-overflowY, maxTop + overflowY));
   }
 
   const centerX = left + fgWidth / 2;
@@ -345,6 +517,7 @@ function resolvePlacementRect(args: {
 
 /**
  * backend の makeGroundShadow() とできるだけ合わせた preview 用影矩形
+ * 今回は offset 可動域も拡張
  */
 function resolvePreviewShadowRect(args: {
   canvas: number;
@@ -392,24 +565,24 @@ function resolvePreviewShadowRect(args: {
   const w = Math.max(60, Math.round(shadowWidth * baseScale * shadowScale));
   const h = Math.max(8, Math.round(w * 0.08));
 
+  /**
+   * 今回の拡張
+   * - 旧: * 40
+   * - 新: * 80
+   */
   const cx = clamp(
-    Math.round(centerX + shadowOffsetX * 40),
-    0,
-    canvas
+    Math.round(centerX + shadowOffsetX * 80),
+    -Math.round(w),
+    canvas + Math.round(w)
   );
 
   const cy = clamp(
-    Math.round(contactY + 2 + shadowOffsetY * 40),
-    0,
-    canvas
+    Math.round(contactY + 2 + shadowOffsetY * 80),
+    -Math.round(h),
+    canvas + Math.round(h)
   );
 
-  const opacity = clamp(
-    0.12 + shadowOpacity * 0.6,
-    0,
-    0.5
-  );
-
+  const opacity = clamp(0.12 + shadowOpacity * 0.6, 0, 0.5);
   const blurPx = Math.max(1, shadowBlur * 0.8);
 
   return {
@@ -419,6 +592,54 @@ function resolvePreviewShadowRect(args: {
     heightPx: h,
     opacity,
     blurPx,
+  };
+}
+
+/**
+ * 背景 cover 計算
+ */
+function resolveBackgroundCoverRect(args: {
+  canvas: number;
+  naturalWidth: number;
+  naturalHeight: number;
+  scale: number;
+  x: number;
+  y: number;
+}) {
+  const { canvas, naturalWidth, naturalHeight, scale, x, y } = args;
+
+  const safeW = Math.max(1, naturalWidth || canvas);
+  const safeH = Math.max(1, naturalHeight || canvas);
+
+  /**
+   * object-fit: cover と同じ基準サイズ
+   */
+  const coverScale = Math.max(canvas / safeW, canvas / safeH);
+  const baseW = safeW * coverScale;
+  const baseH = safeH * coverScale;
+
+  /**
+   * 保存値 scale をそのまま追加倍率として使う
+   */
+  const drawW = baseW * scale;
+  const drawH = baseH * scale;
+
+  /**
+   * x / y は -1〜1
+   * 0 が中央
+   * はみ出し余白の半分を最大移動量として使う
+   */
+  const overflowX = Math.max(0, drawW - canvas);
+  const overflowY = Math.max(0, drawH - canvas);
+
+  const left = -overflowX / 2 - x * (overflowX / 2);
+  const top = -overflowY / 2 - y * (overflowY / 2);
+
+  return {
+    left,
+    top,
+    width: drawW,
+    height: drawH,
   };
 }
 
@@ -589,6 +810,13 @@ export default function ProductPlacementEditor({
   shadowOffsetX,
   shadowOffsetY,
 
+  /**
+   * ★追加
+   */
+  backgroundScale,
+  backgroundX,
+  backgroundY,
+
   setPlacementScale,
   setPlacementX,
   setPlacementY,
@@ -598,41 +826,151 @@ export default function ProductPlacementEditor({
   setShadowOffsetX,
   setShadowOffsetY,
 
+  /**
+   * ★追加
+   */
+  setBackgroundScale,
+  setBackgroundX,
+  setBackgroundY,
+
   onSavePlacement,
   busy = false,
   showMsg,
 }: Props) {
+  /**
+   * 現在表示している前景画像の実サイズ
+   * - 既存機能維持のため残す
+   * - 直接の配置計算基準には使わない
+   */
   const [foregroundNaturalSize, setForegroundNaturalSize] = useState({
     width: 0,
     height: 0,
   });
+
+  /**
+   * 配置計算専用の固定基準サイズ
+   *
+   * 重要
+   * - 再合成後に foregroundImageUrl が変わっても、
+   *   baseImageUrl が同じ間はこの基準を維持する
+   * - これで「合成後だけ動きの幅が変わる」違和感を減らす
+   */
+  const [placementBasisSize, setPlacementBasisSize] = useState({
+    width: 0,
+    height: 0,
+  });
+
+  /**
+   * どの baseImageUrl を基準に basisSize を取ったか
+   */
+  const [placementBasisBaseKey, setPlacementBasisBaseKey] = useState("");
+
+  const [backgroundNaturalSize, setBackgroundNaturalSize] = useState({
+    width: 0,
+    height: 0,
+  });
+
   const [activePreviewTab, setActivePreviewTab] = useState<"edit" | "final">("edit");
 
+  /**
+   * baseImageUrl が変わった時だけ、
+   * 配置計算用の基準サイズを取り直せるようにリセットする
+   */
+  useEffect(() => {
+    const nextBaseKey = String(baseImageUrl || "").trim();
+
+    setPlacementBasisBaseKey((prev) => {
+      if (prev === nextBaseKey) return prev;
+      return nextBaseKey;
+    });
+
+    setPlacementBasisSize((prev) => {
+      if (
+        placementBasisBaseKey === nextBaseKey &&
+        (prev.width > 0 || prev.height > 0)
+      ) {
+        return prev;
+      }
+
+      return {
+        width: 0,
+        height: 0,
+      };
+    });
+  }, [baseImageUrl, placementBasisBaseKey]);
+
+  /**
+   * ★修正
+   * 背景UI値は local state ではなく、保存値から直接作る
+   * これで preview / save / recomposite の意味を一致させる
+   */
+  const backgroundScaleUi = useMemo(() => {
+    return savedBgScaleToUi(typeof backgroundScale === "number" ? backgroundScale : 1);
+  }, [backgroundScale]);
+
+  const backgroundXUi = useMemo(() => {
+    return savedBgPosToUi(typeof backgroundX === "number" ? backgroundX : 0);
+  }, [backgroundX]);
+
+  const backgroundYUi = useMemo(() => {
+    return savedBgPosToUi(typeof backgroundY === "number" ? backgroundY : 0);
+  }, [backgroundY]);
+
+  const safePlacementScaleSaved = clamp(
+    Number.isFinite(Number(placementScale)) ? Number(placementScale) : 1,
+    PRODUCT_SCALE_SAVED_MIN,
+    PRODUCT_SCALE_SAVED_MAX
+  );
+
+  const safePlacementXSaved = clamp(
+    Number.isFinite(Number(placementX)) ? Number(placementX) : 0.5,
+    PRODUCT_POS_SAVED_MIN,
+    PRODUCT_POS_SAVED_MAX
+  );
+
+  const safePlacementYSaved = clamp(
+    Number.isFinite(Number(placementY)) ? Number(placementY) : 0.5,
+    PRODUCT_POS_SAVED_MIN,
+    PRODUCT_POS_SAVED_MAX
+  );
+
   const safeScale = clamp(
-    placementScale > 0 && placementScale <= 2.2
-      ? savedScaleToUi(placementScale)
-      : placementScale || 42,
-    20,
-    95
+    savedScaleToUi(safePlacementScaleSaved),
+    PRODUCT_SCALE_UI_MIN,
+    PRODUCT_SCALE_UI_MAX
   );
 
   const safeX = clamp(
-    placementX >= 0 && placementX <= 1 ? savedPosToUi(placementX) : placementX || 50,
-    0,
-    100
+    savedPosToUi(safePlacementXSaved),
+    PRODUCT_POS_UI_MIN,
+    PRODUCT_POS_UI_MAX
   );
 
   const safeY = clamp(
-    placementY >= 0 && placementY <= 1 ? savedPosToUi(placementY) : placementY || 62,
-    0,
-    100
+    savedPosToUi(safePlacementYSaved),
+    PRODUCT_POS_UI_MIN,
+    PRODUCT_POS_UI_MAX
   );
 
   const safeShadowOpacity = clamp(shadowOpacity || 0.12, 0, 1);
-  const safeShadowBlur = clamp(shadowBlur || 12, 0, 100);
-  const safeShadowScale = clamp(shadowScale || 1, 0.5, 2);
-  const safeShadowOffsetX = clamp(shadowOffsetX || 0, -1, 1);
-  const safeShadowOffsetY = clamp(shadowOffsetY || 0.02, -1, 1);
+  const safeShadowBlur = clamp(shadowBlur || 12, SHADOW_BLUR_MIN, SHADOW_BLUR_MAX);
+  const safeShadowScale = clamp(shadowScale || 1, SHADOW_SCALE_MIN, SHADOW_SCALE_MAX);
+
+  const safeShadowOffsetX = clamp(
+    shadowOffsetX >= SHADOW_OFFSET_MIN && shadowOffsetX <= SHADOW_OFFSET_MAX
+      ? shadowOffsetX
+      : 0,
+    SHADOW_OFFSET_MIN,
+    SHADOW_OFFSET_MAX
+  );
+
+  const safeShadowOffsetY = clamp(
+    shadowOffsetY >= SHADOW_OFFSET_MIN && shadowOffsetY <= SHADOW_OFFSET_MAX
+      ? shadowOffsetY
+      : 0.02,
+    SHADOW_OFFSET_MIN,
+    SHADOW_OFFSET_MAX
+  );
 
   /**
    * 文字オーバーレイの安全な表示値を作る
@@ -687,19 +1025,34 @@ export default function ProductPlacementEditor({
   }, [textOverlay?.background?.color]);
 
   const normalizedSavedScaleForPreview = useMemo(() => {
-    if (placementScale > 0 && placementScale <= 2.2) {
-      return clamp(placementScale, 0.4, 2.2);
-    }
-    return uiScaleToSaved(placementScale || 42);
-  }, [placementScale]);
+    return safePlacementScaleSaved;
+  }, [safePlacementScaleSaved]);
+
+  /**
+   * 配置計算に使うサイズ
+   *
+   * 優先順位
+   * 1. 固定基準サイズ（合成後も維持したい）
+   * 2. まだ基準が無い時だけ現在の表示画像サイズ
+   * 3. 最後は targetWidth fallback
+   */
+  const placementNaturalWidthForPreview =
+    placementBasisSize.width > 0
+      ? placementBasisSize.width
+      : foregroundNaturalSize.width;
+
+  const placementNaturalHeightForPreview =
+    placementBasisSize.height > 0
+      ? placementBasisSize.height
+      : foregroundNaturalSize.height;
 
   const previewGeometry = useMemo(() => {
     const canvas = PREVIEW_CANVAS;
 
     const placement = {
-      scale: normalizedSavedScaleForPreview,
-      x: uiPosToSaved(safeX),
-      y: uiPosToSaved(safeY),
+      scale: safePlacementScaleSaved,
+      x: safePlacementXSaved,
+      y: safePlacementYSaved,
     };
 
     const baseProductWidthRatio = 0.42;
@@ -712,8 +1065,8 @@ export default function ProductPlacementEditor({
     const productTargetWidth = Math.round(canvas * effectiveProductWidthRatio);
 
     const previewFgSize = resolvePreviewForegroundSize({
-      naturalWidth: foregroundNaturalSize.width || productTargetWidth,
-      naturalHeight: foregroundNaturalSize.height || productTargetWidth,
+      naturalWidth: placementNaturalWidthForPreview || productTargetWidth,
+      naturalHeight: placementNaturalHeightForPreview || productTargetWidth,
       targetWidth: productTargetWidth,
       productSize,
     });
@@ -751,15 +1104,16 @@ export default function ProductPlacementEditor({
     };
   }, [
     normalizedSavedScaleForPreview,
-    safeX,
-    safeY,
+    safePlacementScaleSaved,
+    safePlacementXSaved,
+    safePlacementYSaved,
     safeShadowOpacity,
     safeShadowBlur,
     safeShadowScale,
     safeShadowOffsetX,
     safeShadowOffsetY,
-    foregroundNaturalSize.width,
-    foregroundNaturalSize.height,
+    placementNaturalWidthForPreview,
+    placementNaturalHeightForPreview,
     productCategory,
     productSize,
     groundingType,
@@ -882,13 +1236,13 @@ export default function ProductPlacementEditor({
   /**
    * 保存済み完成画像
    */
-const savedCompositeUrl = useMemo(() => {
-  return String(aiImageUrl || "").trim();
-}, [aiImageUrl]);
+  const savedCompositeUrl = useMemo(() => {
+    return String(aiImageUrl || "").trim();
+  }, [aiImageUrl]);
 
-const savedCompositeTextUrl = useMemo(() => {
-  return String(compositeTextImageUrl || "").trim();
-}, [compositeTextImageUrl]);
+  const savedCompositeTextUrl = useMemo(() => {
+    return String(compositeTextImageUrl || "").trim();
+  }, [compositeTextImageUrl]);
 
   /**
    * 商品オーバーレイを乗せて良いか
@@ -908,7 +1262,7 @@ const savedCompositeTextUrl = useMemo(() => {
     }
 
     if (activePhotoMode === AI_BG_MODE) {
-      return !!String(bgImageUrl || "").trim();
+      return !!aiEditorBackgroundUrl;
     }
 
     return false;
@@ -916,7 +1270,7 @@ const savedCompositeTextUrl = useMemo(() => {
     unifiedForegroundUrl,
     activePhotoMode,
     templatePreviewBackgroundUrl,
-    bgImageUrl,
+    aiEditorBackgroundUrl,
   ]);
 
   /**
@@ -934,6 +1288,23 @@ const savedCompositeTextUrl = useMemo(() => {
   const currentAiBgUrl = useMemo(() => {
     return String(bgImageUrl || "").trim();
   }, [bgImageUrl]);
+
+  const previewBackgroundRect = useMemo(() => {
+    return resolveBackgroundCoverRect({
+      canvas: PREVIEW_CANVAS,
+      naturalWidth: backgroundNaturalSize.width || PREVIEW_CANVAS,
+      naturalHeight: backgroundNaturalSize.height || PREVIEW_CANVAS,
+      scale: clamp(typeof backgroundScale === "number" ? backgroundScale : 1, 0.5, 3),
+      x: clamp(typeof backgroundX === "number" ? backgroundX : 0, -1, 1),
+      y: clamp(typeof backgroundY === "number" ? backgroundY : 0, -1, 1),
+    });
+  }, [
+    backgroundNaturalSize.width,
+    backgroundNaturalSize.height,
+    backgroundScale,
+    backgroundX,
+    backgroundY,
+  ]);
 
   const productStyle: React.CSSProperties = {
     position: "absolute",
@@ -964,6 +1335,22 @@ const savedCompositeTextUrl = useMemo(() => {
     zIndex: 1,
   };
 
+  /**
+   * 背景のズーム / 位置（編集プレビュー専用）
+   */
+  const backgroundPreviewStyle = useMemo<React.CSSProperties>(() => {
+    return {
+      position: "absolute",
+      width: `${(previewBackgroundRect.width / PREVIEW_CANVAS) * 100}%`,
+      height: `${(previewBackgroundRect.height / PREVIEW_CANVAS) * 100}%`,
+      left: `${(previewBackgroundRect.left / PREVIEW_CANVAS) * 100}%`,
+      top: `${(previewBackgroundRect.top / PREVIEW_CANVAS) * 100}%`,
+      objectFit: "fill",
+      pointerEvents: "none",
+      userSelect: "none",
+    };
+  }, [previewBackgroundRect]);
+
   async function handleSavePlacement() {
     await onSavePlacement({
       scale: uiScaleToSaved(safeScale),
@@ -974,6 +1361,24 @@ const savedCompositeTextUrl = useMemo(() => {
       shadowScale: safeShadowScale,
       shadowOffsetX: safeShadowOffsetX,
       shadowOffsetY: safeShadowOffsetY,
+
+      /**
+       * ★追加
+       * 背景も保存対象にする
+       */
+      backgroundScale:
+        typeof backgroundScale === "number"
+          ? clamp(backgroundScale, 0.5, 3)
+          : 1,
+      backgroundX:
+        typeof backgroundX === "number"
+          ? clamp(backgroundX, -1, 1)
+          : 0,
+      backgroundY:
+        typeof backgroundY === "number"
+          ? clamp(backgroundY, -1, 1)
+          : 0,
+
       activePhotoMode,
     });
 
@@ -1314,7 +1719,25 @@ const savedCompositeTextUrl = useMemo(() => {
               <img
                 src={previewBaseUrl}
                 alt="preview base"
-                className="absolute inset-0 h-full w-full object-cover"
+                style={backgroundPreviewStyle}
+                onLoad={(e) => {
+                  const img = e.currentTarget;
+                  const naturalWidth = Number(img.naturalWidth || 0);
+                  const naturalHeight = Number(img.naturalHeight || 0);
+
+                  if (naturalWidth > 0 && naturalHeight > 0) {
+                    setBackgroundNaturalSize((prev) => {
+                      if (prev.width === naturalWidth && prev.height === naturalHeight) {
+                        return prev;
+                      }
+
+                      return {
+                        width: naturalWidth,
+                        height: naturalHeight,
+                      };
+                    });
+                  }
+                }}
               />
             ) : (
               <div
@@ -1345,12 +1768,13 @@ const savedCompositeTextUrl = useMemo(() => {
                     const naturalWidth = Number(img.naturalWidth || 0);
                     const naturalHeight = Number(img.naturalHeight || 0);
 
+                    /**
+                     * 現在表示画像の実サイズは常に更新する
+                     * - 既存機能維持
+                     */
                     if (naturalWidth > 0 && naturalHeight > 0) {
                       setForegroundNaturalSize((prev) => {
-                        if (
-                          prev.width === naturalWidth &&
-                          prev.height === naturalHeight
-                        ) {
+                        if (prev.width === naturalWidth && prev.height === naturalHeight) {
                           return prev;
                         }
 
@@ -1358,6 +1782,38 @@ const savedCompositeTextUrl = useMemo(() => {
                           width: naturalWidth,
                           height: naturalHeight,
                         };
+                      });
+                    }
+
+                    /**
+                     * 配置計算用の基準サイズは、
+                     * 同じ baseImageUrl の間は最初の1回だけ固定する
+                     *
+                     * これで再合成後に foregroundImageUrl が変わっても、
+                     * バーの動きの感じが急に変わりにくくなる
+                     */
+                    const currentBaseKey = String(baseImageUrl || "").trim();
+
+                    if (naturalWidth > 0 && naturalHeight > 0) {
+                      setPlacementBasisSize((prev) => {
+                        const shouldReplace =
+                          placementBasisBaseKey !== currentBaseKey ||
+                          prev.width <= 0 ||
+                          prev.height <= 0;
+
+                        if (!shouldReplace) {
+                          return prev;
+                        }
+
+                        return {
+                          width: naturalWidth,
+                          height: naturalHeight,
+                        };
+                      });
+
+                      setPlacementBasisBaseKey((prev) => {
+                        if (prev === currentBaseKey) return prev;
+                        return currentBaseKey;
                       });
                     }
                   }}
@@ -1419,93 +1875,93 @@ const savedCompositeTextUrl = useMemo(() => {
         </div>
       )}
 
-{activePreviewTab === "final" && (
-  <div className="mt-3 rounded-2xl border border-white/10 bg-black/25 overflow-hidden">
-    <div
-      className="border-b border-white/10 px-3 py-2 text-white/72"
-      style={{ fontSize: 12 }}
-    >
-      保存済み完成画像
-    </div>
+      {activePreviewTab === "final" && (
+        <div className="mt-3 rounded-2xl border border-white/10 bg-black/25 overflow-hidden">
+          <div
+            className="border-b border-white/10 px-3 py-2 text-white/72"
+            style={{ fontSize: 12 }}
+          >
+            保存済み完成画像
+          </div>
 
-    <div
-      className="px-3 py-2 text-white/52"
-      style={{ fontSize: 11, lineHeight: 1.6 }}
-    >
-      通常の合成画像と、文字焼き込み保存画像を分けて表示します。
-    </div>
+          <div
+            className="px-3 py-2 text-white/52"
+            style={{ fontSize: 11, lineHeight: 1.6 }}
+          >
+            通常の合成画像と、文字焼き込み保存画像を分けて表示します。
+          </div>
 
-    <div className="grid grid-cols-1 gap-3 p-3 lg:grid-cols-2">
-      <div className="overflow-hidden rounded-2xl border border-white/10 bg-black/20">
-        <div
-          className="border-b border-white/10 px-3 py-2 text-white/75"
-          style={{ fontSize: 12 }}
-        >
-          通常合成画像
-        </div>
+          <div className="grid grid-cols-1 gap-3 p-3 lg:grid-cols-2">
+            <div className="overflow-hidden rounded-2xl border border-white/10 bg-black/20">
+              <div
+                className="border-b border-white/10 px-3 py-2 text-white/75"
+                style={{ fontSize: 12 }}
+              >
+                通常合成画像
+              </div>
 
-        <div
-          className="relative w-full"
-          style={{
-            aspectRatio: "1 / 1",
-            background: "rgba(255,255,255,0.03)",
-          }}
-        >
-          {savedCompositeUrl ? (
-            <img
-              src={savedCompositeUrl}
-              alt="saved composite"
-              className="absolute inset-0 h-full w-full object-cover"
-            />
-          ) : (
-            <div
-              className="absolute inset-0 flex items-center justify-center text-white/40"
-              style={{ fontSize: 12 }}
-            >
-              まだ通常合成画像はありません
+              <div
+                className="relative w-full"
+                style={{
+                  aspectRatio: "1 / 1",
+                  background: "rgba(255,255,255,0.03)",
+                }}
+              >
+                {savedCompositeUrl ? (
+                  <img
+                    src={savedCompositeUrl}
+                    alt="saved composite"
+                    className="absolute inset-0 h-full w-full object-cover"
+                  />
+                ) : (
+                  <div
+                    className="absolute inset-0 flex items-center justify-center text-white/40"
+                    style={{ fontSize: 12 }}
+                  >
+                    まだ通常合成画像はありません
+                  </div>
+                )}
+
+                <div className="pointer-events-none absolute inset-0 border border-white/10" />
+              </div>
             </div>
-          )}
 
-          <div className="pointer-events-none absolute inset-0 border border-white/10" />
-        </div>
-      </div>
+            <div className="overflow-hidden rounded-2xl border border-white/10 bg-black/20">
+              <div
+                className="border-b border-white/10 px-3 py-2 text-white/75"
+                style={{ fontSize: 12 }}
+              >
+                文字焼き込み保存画像
+              </div>
 
-      <div className="overflow-hidden rounded-2xl border border-white/10 bg-black/20">
-        <div
-          className="border-b border-white/10 px-3 py-2 text-white/75"
-          style={{ fontSize: 12 }}
-        >
-          文字焼き込み保存画像
-        </div>
+              <div
+                className="relative w-full"
+                style={{
+                  aspectRatio: "1 / 1",
+                  background: "rgba(255,255,255,0.03)",
+                }}
+              >
+                {savedCompositeTextUrl ? (
+                  <img
+                    src={savedCompositeTextUrl}
+                    alt="saved composite text"
+                    className="absolute inset-0 h-full w-full object-cover"
+                  />
+                ) : (
+                  <div
+                    className="absolute inset-0 flex items-center justify-center text-white/40"
+                    style={{ fontSize: 12 }}
+                  >
+                    まだ文字焼き込み保存画像はありません
+                  </div>
+                )}
 
-        <div
-          className="relative w-full"
-          style={{
-            aspectRatio: "1 / 1",
-            background: "rgba(255,255,255,0.03)",
-          }}
-        >
-          {savedCompositeTextUrl ? (
-            <img
-              src={savedCompositeTextUrl}
-              alt="saved composite text"
-              className="absolute inset-0 h-full w-full object-cover"
-            />
-          ) : (
-            <div
-              className="absolute inset-0 flex items-center justify-center text-white/40"
-              style={{ fontSize: 12 }}
-            >
-              まだ文字焼き込み保存画像はありません
+                <div className="pointer-events-none absolute inset-0 border border-white/10" />
+              </div>
             </div>
-          )}
-
-          <div className="pointer-events-none absolute inset-0 border border-white/10" />
+          </div>
         </div>
-      </div>
-    </div>
-  </div>
-)}
+      )}
 
       <div className="mt-3 rounded-2xl border border-white/10 bg-black/15 p-3">
         <div className="text-white/72 mb-2" style={{ fontSize: 12 }}>
@@ -1518,9 +1974,9 @@ const savedCompositeTextUrl = useMemo(() => {
             label="SELL（売る）"
             disabled={busy}
             onClick={() => {
-              setPlacementScale(82);
-              setPlacementX(50);
-              setPlacementY(64);
+              setPlacementScale(uiScaleToSaved(110));
+              setPlacementX(uiPosToSaved(100));
+              setPlacementY(uiPosToSaved(126));
             }}
           />
 
@@ -1529,9 +1985,9 @@ const savedCompositeTextUrl = useMemo(() => {
             label="BRAND（世界観）"
             disabled={busy}
             onClick={() => {
-              setPlacementScale(65);
-              setPlacementX(50);
-              setPlacementY(55);
+              setPlacementScale(uiScaleToSaved(82));
+              setPlacementX(uiPosToSaved(100));
+              setPlacementY(uiPosToSaved(110));
             }}
           />
 
@@ -1540,9 +1996,9 @@ const savedCompositeTextUrl = useMemo(() => {
             label="SMALL（余白）"
             disabled={busy}
             onClick={() => {
-              setPlacementScale(48);
-              setPlacementX(50);
-              setPlacementY(52);
+              setPlacementScale(uiScaleToSaved(58));
+              setPlacementX(uiPosToSaved(100));
+              setPlacementY(uiPosToSaved(102));
             }}
           />
         </div>
@@ -1554,48 +2010,99 @@ const savedCompositeTextUrl = useMemo(() => {
 
       <div className="mt-3 grid grid-cols-1 gap-3">
         <SliderRow
-          label="大きさ"
+          label="背景ズーム（編集プレビュー）"
+          value={backgroundScaleUi}
+          min={BG_SCALE_UI_MIN}
+          max={BG_SCALE_UI_MAX}
+          step={1}
+          disabled={busy || !previewBaseUrl}
+          help="背景だけを拡大・縮小します。保存値と同じ意味で反映されます。"
+          onChange={(n) =>
+            setBackgroundScale(clamp(uiBgScaleToSaved(n), 0.5, 3))
+          }
+        />
+
+        <SliderRow
+          label="背景の左右位置（編集プレビュー）"
+          value={backgroundXUi}
+          min={BG_POS_UI_MIN}
+          max={BG_POS_UI_MAX}
+          step={1}
+          disabled={busy || !previewBaseUrl}
+          help="100 が中央です。保存値と同じ意味で左右移動します。"
+          onChange={(n) =>
+            setBackgroundX(clamp(uiBgPosToSaved(n), -1, 1))
+          }
+        />
+
+        <SliderRow
+          label="背景の上下位置（編集プレビュー）"
+          value={backgroundYUi}
+          min={BG_POS_UI_MIN}
+          max={BG_POS_UI_MAX}
+          step={1}
+          disabled={busy || !previewBaseUrl}
+          help="100 が中央です。保存値と同じ意味で上下移動します。"
+          onChange={(n) =>
+            setBackgroundY(clamp(uiBgPosToSaved(n), -1, 1))
+          }
+        />
+
+        <SliderRow
+          label="商品の大きさ"
           value={safeScale}
-          min={20}
-          max={95}
+          min={PRODUCT_SCALE_UI_MIN}
+          max={PRODUCT_SCALE_UI_MAX}
           step={1}
           disabled={busy || !canLiveEdit}
           help={
             canLiveEdit
-              ? "背景を見ながら、その場でリアルタイムに反映されます。"
+              ? "旧より大きく拡張しています。かなり大きく/小さくできます。"
               : "背景または前景が無いため、今は編集プレビューできません。"
           }
-          onChange={(n) => setPlacementScale(clamp(n, 20, 95))}
+          onChange={(n) =>
+            setPlacementScale(
+              uiScaleToSaved(clamp(n, PRODUCT_SCALE_UI_MIN, PRODUCT_SCALE_UI_MAX))
+            )
+          }
         />
 
         <SliderRow
-          label="左右位置"
+          label="切り抜き画像の左右位置"
           value={safeX}
-          min={0}
-          max={100}
+          min={PRODUCT_POS_UI_MIN}
+          max={PRODUCT_POS_UI_MAX}
           step={1}
           disabled={busy || !canLiveEdit}
           help={
             canLiveEdit
-              ? "50 が真ん中です。"
+              ? "100 が中央です。旧より大きく外側まで動かせます。"
               : "背景または前景が無いため、今は編集プレビューできません。"
           }
-          onChange={(n) => setPlacementX(clamp(n, 0, 100))}
+          onChange={(n) =>
+            setPlacementX(
+              uiPosToSaved(clamp(n, PRODUCT_POS_UI_MIN, PRODUCT_POS_UI_MAX))
+            )
+          }
         />
 
         <SliderRow
-          label="上下位置"
+          label="切り抜き画像の上下位置"
           value={safeY}
-          min={0}
-          max={100}
+          min={PRODUCT_POS_UI_MIN}
+          max={PRODUCT_POS_UI_MAX}
           step={1}
           disabled={busy || !canLiveEdit}
           help={
             canLiveEdit
-              ? "数字を小さくすると上、大きくすると下です。"
+              ? "100 が中央です。旧より大きく上下へ動かせます。"
               : "背景または前景が無いため、今は編集プレビューできません。"
           }
-          onChange={(n) => setPlacementY(clamp(n, 0, 100))}
+          onChange={(n) =>
+            setPlacementY(
+              uiPosToSaved(clamp(n, PRODUCT_POS_UI_MIN, PRODUCT_POS_UI_MAX))
+            )
+          }
         />
 
         <SliderRow
@@ -1616,45 +2123,55 @@ const savedCompositeTextUrl = useMemo(() => {
         <SliderRow
           label="影のぼかし"
           value={safeShadowBlur}
-          min={0}
-          max={100}
+          min={SHADOW_BLUR_MIN}
+          max={SHADOW_BLUR_MAX}
           step={1}
           disabled={busy || !canLiveEdit}
-          help="数字が大きいほど影が柔らかく広がります。"
-          onChange={(n) => setShadowBlur(clamp(n, 0, 100))}
+          help="旧より大きく広げています。数字が大きいほど影が柔らかく広がります。"
+          onChange={(n) => setShadowBlur(clamp(n, SHADOW_BLUR_MIN, SHADOW_BLUR_MAX))}
         />
 
         <SliderRow
           label="影の広がり"
           value={Math.round(safeShadowScale * 100)}
-          min={50}
-          max={200}
+          min={Math.round(SHADOW_SCALE_MIN * 100)}
+          max={Math.round(SHADOW_SCALE_MAX * 100)}
           step={1}
           disabled={busy || !canLiveEdit}
-          help="数字が大きいほど影の横幅が広がります。"
-          onChange={(n) => setShadowScale(clamp(n / 100, 0.5, 2))}
+          help="旧より大きく広げています。数字が大きいほど影の横幅が広がります。"
+          onChange={(n) =>
+            setShadowScale(clamp(n / 100, SHADOW_SCALE_MIN, SHADOW_SCALE_MAX))
+          }
         />
 
         <SliderRow
           label="影の左右位置"
-          value={Math.round((safeShadowOffsetX + 1) * 50)}
-          min={0}
-          max={100}
+          value={savedShadowOffsetToUi(safeShadowOffsetX)}
+          min={SHADOW_OFFSET_UI_MIN}
+          max={SHADOW_OFFSET_UI_MAX}
           step={1}
           disabled={busy || !canLiveEdit}
-          help="50 が基準です。小さいと左、大きいと右へずれます。"
-          onChange={(n) => setShadowOffsetX(clamp((n - 50) / 50, -1, 1))}
+          help="100 が基準です。旧より大きく左右へずらせます。"
+          onChange={(n) =>
+            setShadowOffsetX(
+              clamp(uiShadowOffsetToSaved(n), SHADOW_OFFSET_MIN, SHADOW_OFFSET_MAX)
+            )
+          }
         />
 
         <SliderRow
           label="影の上下位置"
-          value={Math.round((safeShadowOffsetY + 1) * 50)}
-          min={0}
-          max={100}
+          value={savedShadowOffsetToUi(safeShadowOffsetY)}
+          min={SHADOW_OFFSET_UI_MIN}
+          max={SHADOW_OFFSET_UI_MAX}
           step={1}
           disabled={busy || !canLiveEdit}
-          help="50 が基準です。小さいと上、大きいと下へずれます。"
-          onChange={(n) => setShadowOffsetY(clamp((n - 50) / 50, -1, 1))}
+          help="100 が基準です。旧より大きく上下へずらせます。"
+          onChange={(n) =>
+            setShadowOffsetY(
+              clamp(uiShadowOffsetToSaved(n), SHADOW_OFFSET_MIN, SHADOW_OFFSET_MAX)
+            )
+          }
         />
       </div>
 
