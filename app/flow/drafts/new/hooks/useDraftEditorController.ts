@@ -1,7 +1,7 @@
 // /app/flow/drafts/new/hooks/useDraftEditorController.ts
 "use client";
 
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type {
   DraftDoc,
   TextOverlay,
@@ -473,156 +473,155 @@ export default function useDraftEditorController(params: Params) {
     }
   }
 
+  const [editingStep, setEditingStep] = useState<"background" | "product" | "shadow">(
+    "background"
+  );
+
+  const [undoStack, setUndoStack] = useState<
+    Array<{
+      placementScale: number;
+      placementX: number;
+      placementY: number;
+      shadowOpacity: number;
+      shadowBlur: number;
+      shadowScale: number;
+      shadowOffsetX: number;
+      shadowOffsetY: number;
+      backgroundScale: number;
+      backgroundX: number;
+      backgroundY: number;
+      activePhotoMode: ProductPhotoMode;
+    }>
+  >([]);
+
+  const [redoStack, setRedoStack] = useState<
+    Array<{
+      placementScale: number;
+      placementX: number;
+      placementY: number;
+      shadowOpacity: number;
+      shadowBlur: number;
+      shadowScale: number;
+      shadowOffsetX: number;
+      shadowOffsetY: number;
+      backgroundScale: number;
+      backgroundX: number;
+      backgroundY: number;
+      activePhotoMode: ProductPhotoMode;
+    }>
+  >([]);
+
+  function createPlacementSnapshot() {
+    return {
+      placementScale: Number(state.placementScale ?? 1),
+      placementX: Number(state.placementX ?? 0.5),
+      placementY: Number(state.placementY ?? 0.5),
+      shadowOpacity: Number(state.shadowOpacity ?? 0.12),
+      shadowBlur: Number(state.shadowBlur ?? 12),
+      shadowScale: Number(state.shadowScale ?? 1),
+      shadowOffsetX: Number(state.shadowOffsetX ?? 0),
+      shadowOffsetY: Number(state.shadowOffsetY ?? 0),
+backgroundScale: Number(
+  toFiniteNumberOrUndefined(stateAny.backgroundScale) ?? 1
+),
+backgroundX: Number(
+  toFiniteNumberOrUndefined(stateAny.backgroundX) ?? 0
+),
+backgroundY: Number(
+  toFiniteNumberOrUndefined(stateAny.backgroundY) ?? 0
+),
+      activePhotoMode: (state.activePhotoMode ?? "ai_bg") as ProductPhotoMode,
+    };
+  }
+
+  async function applyPlacementSnapshot(
+    snapshot: ReturnType<typeof createPlacementSnapshot>
+  ) {
+    await savePlacement("background", {
+      backgroundScale: snapshot.backgroundScale,
+      backgroundX: snapshot.backgroundX,
+      backgroundY: snapshot.backgroundY,
+      activePhotoMode: snapshot.activePhotoMode,
+    });
+
+    await savePlacement("product", {
+      scale: snapshot.placementScale,
+      x: snapshot.placementX,
+      y: snapshot.placementY,
+      activePhotoMode: snapshot.activePhotoMode,
+    });
+
+    await savePlacement("shadow", {
+      shadowOpacity: snapshot.shadowOpacity,
+      shadowBlur: snapshot.shadowBlur,
+      shadowScale: snapshot.shadowScale,
+      shadowOffsetX: snapshot.shadowOffsetX,
+      shadowOffsetY: snapshot.shadowOffsetY,
+      activePhotoMode: snapshot.activePhotoMode,
+    });
+  }
+
+  async function undoPlacement() {
+    if (undoStack.length === 0) return;
+
+    const current = createPlacementSnapshot();
+    const previous = undoStack[undoStack.length - 1];
+
+    setUndoStack((prev) => prev.slice(0, -1));
+    setRedoStack((prev) => [...prev, current]);
+
+    await applyPlacementSnapshot(previous);
+    persistence.showMsg("1つ前の配置に戻しました");
+  }
+
+  async function redoPlacement() {
+    if (redoStack.length === 0) return;
+
+    const current = createPlacementSnapshot();
+    const next = redoStack[redoStack.length - 1];
+
+    setRedoStack((prev) => prev.slice(0, -1));
+    setUndoStack((prev) => [...prev, current]);
+
+    await applyPlacementSnapshot(next);
+    persistence.showMsg("やり直しました");
+  }
+
   /**
    * ① 商品写真の位置・サイズ保存
    *
    * 今回の修正
-   * - shadow 系も partial で受け取って保存する
-   * - 背景ズーム / 背景位置も partial で受け取って保存する
+   * - step 単位保存へ変更
+   * - undo / redo 用に保存前 snapshot を積む
+   * - 保存入口を imageActions 側へ寄せる
    */
-  async function savePlacement(partial?: {
-    scale?: number;
-    x?: number;
-    y?: number;
-    shadowOpacity?: number;
-    shadowBlur?: number;
-    shadowScale?: number;
-    shadowOffsetX?: number;
-    shadowOffsetY?: number;
-    backgroundScale?: number;
-    backgroundX?: number;
-    backgroundY?: number;
-    activePhotoMode?: ProductPhotoMode;
-  }) {
+  async function savePlacement(
+    step: "background" | "product" | "shadow",
+    partial?: {
+      scale?: number;
+      x?: number;
+      y?: number;
+      shadowOpacity?: number;
+      shadowBlur?: number;
+      shadowScale?: number;
+      shadowOffsetX?: number;
+      shadowOffsetY?: number;
+      backgroundScale?: number;
+      backgroundX?: number;
+      backgroundY?: number;
+      activePhotoMode?: ProductPhotoMode;
+    }
+  ) {
+    const snapshot = createPlacementSnapshot();
+    setUndoStack((prev) => [...prev, snapshot]);
+    setRedoStack([]);
+
     if (typeof (imageActions as any).saveProductPlacement === "function") {
-      await (imageActions as any).saveProductPlacement(partial);
+      await (imageActions as any).saveProductPlacement(step, partial);
       return;
     }
 
-    const nextScale =
-      typeof partial?.scale === "number" ? partial.scale : state.placementScale;
-    const nextX = typeof partial?.x === "number" ? partial.x : state.placementX;
-    const nextY = typeof partial?.y === "number" ? partial.y : state.placementY;
-
-    const nextShadowOpacity =
-      typeof partial?.shadowOpacity === "number"
-        ? partial.shadowOpacity
-        : state.shadowOpacity;
-
-    const nextShadowBlur =
-      typeof partial?.shadowBlur === "number"
-        ? partial.shadowBlur
-        : state.shadowBlur;
-
-    const nextShadowScale =
-      typeof partial?.shadowScale === "number"
-        ? partial.shadowScale
-        : state.shadowScale;
-
-    const nextShadowOffsetX =
-      typeof partial?.shadowOffsetX === "number"
-        ? partial.shadowOffsetX
-        : state.shadowOffsetX;
-
-    const nextShadowOffsetY =
-      typeof partial?.shadowOffsetY === "number"
-        ? partial.shadowOffsetY
-        : state.shadowOffsetY;
-
-    /**
-     * 背景編集値
-     * - state 側にまだ無い場合でも壊れないよう any で吸収
-     */
-    const nextBackgroundScale =
-      typeof partial?.backgroundScale === "number"
-        ? partial.backgroundScale
-        : typeof stateAny.backgroundScale === "number"
-          ? stateAny.backgroundScale
-          : 1;
-
-    const nextBackgroundX =
-      typeof partial?.backgroundX === "number"
-        ? partial.backgroundX
-        : typeof stateAny.backgroundX === "number"
-          ? stateAny.backgroundX
-          : 0;
-
-    const nextBackgroundY =
-      typeof partial?.backgroundY === "number"
-        ? partial.backgroundY
-        : typeof stateAny.backgroundY === "number"
-          ? stateAny.backgroundY
-          : 0;
-
-    const nextMode = partial?.activePhotoMode ?? state.activePhotoMode;
-
-    state.setPlacementScale(nextScale);
-    state.setPlacementX(nextX);
-    state.setPlacementY(nextY);
-
-    state.setShadowOpacity(nextShadowOpacity);
-    state.setShadowBlur(nextShadowBlur);
-    state.setShadowScale(nextShadowScale);
-    state.setShadowOffsetX(nextShadowOffsetX);
-    state.setShadowOffsetY(nextShadowOffsetY);
-
-    stateAny.setBackgroundScale?.(nextBackgroundScale);
-    stateAny.setBackgroundX?.(nextBackgroundX);
-    stateAny.setBackgroundY?.(nextBackgroundY);
-
-    state.setActivePhotoMode(nextMode);
-
-    const patch: Partial<DraftDoc> = {
-      activePhotoMode: nextMode,
-      placement: {
-        scale: nextScale,
-        x: nextX,
-        y: nextY,
-        shadow: {
-          opacity: nextShadowOpacity,
-          blur: nextShadowBlur,
-          scale: nextShadowScale,
-          offsetX: nextShadowOffsetX,
-          offsetY: nextShadowOffsetY,
-        },
-        /**
-         * 背景編集値を placement 配下にも保存
-         * - useDraftImageActions 側で同じキーを受け取れるようにする前提
-         */
-        background: {
-          scale: nextBackgroundScale,
-          x: nextBackgroundX,
-          y: nextBackgroundY,
-        },
-      } as any,
-      shadowOpacity: nextShadowOpacity,
-      shadowBlur: nextShadowBlur,
-      shadowScale: nextShadowScale,
-      shadowOffsetX: nextShadowOffsetX,
-      shadowOffsetY: nextShadowOffsetY,
-
-      /**
-       * root にも保持して後方互換を確保
-       */
-      backgroundScale: nextBackgroundScale as any,
-      backgroundX: nextBackgroundX as any,
-      backgroundY: nextBackgroundY as any,
-    };
-
-    commitDraftPatch(patch);
-
-    /**
-     * 修正ポイント
-     * - 直接 await saveDraft を呼ばない
-     * - saveQueueRef に積むことで詰まり防止
-     */
-    state.saveQueueRef.current = state.saveQueueRef.current.then(async () => {
-      await persistence.saveDraft(patch);
-    });
-
-    await state.saveQueueRef.current;
-
-    persistence.showMsg("配置を保存しました");
+    persistence.showMsg("saveProductPlacement が未接続です");
   }
 
   /**
@@ -1463,6 +1462,12 @@ export default function useDraftEditorController(params: Params) {
       (imageActions as any).syncTemplateBgImagesFromStorage,
 
     savePlacement,
+    editingStep,
+    setEditingStep,
+    canUndo: undoStack.length > 0,
+    canRedo: redoStack.length > 0,
+    undoPlacement,
+    redoPlacement,
     generateStoryImage,
     syncStoryImagesFromStorage:
       (imageActions as any).syncStoryImagesFromStorage,

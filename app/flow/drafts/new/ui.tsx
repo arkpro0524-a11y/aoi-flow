@@ -359,11 +359,13 @@ export function PhotoSubmissionGuide() {
           <div className="text-white/90 font-black" style={{ fontSize: UI.FONT.inputPx }}>
             写真提出のお願い（重要）
           </div>
-          <Chip className="text-white/95">提出ルールを統一</Chip>
+          <Chip className="text-white/95">検品情報を増やす</Chip>
         </div>
 
         <div className="text-white/70 mt-2" style={{ fontSize: UI.FONT.labelPx, lineHeight: 1.6 }}>
-          ※ この条件だけ守ってください。誰が撮っても切り抜きと仕上がりが安定しやすくなります。
+          ※ 仕上がりを安定させるだけでなく、
+          <span className="font-black text-white/90"> 商品の確認情報 </span>
+          を増やすための提出ルールです。
         </div>
       </summary>
 
@@ -376,22 +378,35 @@ export function PhotoSubmissionGuide() {
         style={{ color: "rgba(255,255,255,0.88)", fontSize: 13 }}
       >
         <li>背景は「白・薄グレー・無地」にする（白い壁 / 白い紙 / 単色の布でOK）</li>
-        <li>商品を画面の真ん中に大きく写す（小さいと切り抜きが崩れやすい）</li>
-        <li>影は薄くする（強い影は商品本体と誤認されやすい）</li>
+        <li>商品を画面の中央に大きく写す（小さいと切り抜きも検品も弱くなる）</li>
+        <li>影は薄くする（強い影は商品本体や傷と混同しやすい）</li>
         <li>明るい場所で撮る（昼間の窓際が安定）</li>
-        <li>商品の色が背景に溶けないようにする</li>
+        <li>色味補正しすぎない（実物との差が出やすい）</li>
       </ul>
 
       <div className="mt-3 text-white/70 font-bold" style={{ fontSize: UI.FONT.labelPx }}>
-        推奨
+        推奨カット
       </div>
       <ul
         className="list-disc list-inside mt-1 space-y-1"
         style={{ color: "rgba(255,255,255,0.70)", fontSize: 13 }}
       >
-        <li>正面1枚 + 斜め1枚（合計2枚）</li>
-        <li>iPhone / Android の標準カメラでOK</li>
-        <li>加工しないまま提出でOK</li>
+        <li>正面 1枚</li>
+        <li>斜め 1枚</li>
+        <li>側面または背面 1枚</li>
+        <li>傷・擦れ・木目・金属部などの寄り 1枚</li>
+      </ul>
+
+      <div className="mt-3 text-white/70 font-bold" style={{ fontSize: UI.FONT.labelPx }}>
+        さらにあると強い
+      </div>
+      <ul
+        className="list-disc list-inside mt-1 space-y-1"
+        style={{ color: "rgba(255,255,255,0.70)", fontSize: 13 }}
+      >
+        <li>底面 / 天面</li>
+        <li>開閉前 / 開閉後</li>
+        <li>サイズ比較用の補助物（定規など）</li>
       </ul>
 
       <div className="mt-3 text-white/70 font-bold" style={{ fontSize: UI.FONT.labelPx }}>
@@ -409,7 +424,13 @@ export function PhotoSubmissionGuide() {
       </ul>
 
       <div className="mt-3 text-white/55" style={{ fontSize: UI.FONT.labelPx, lineHeight: 1.6 }}>
-        ※ この画像を元に、背景のみをAIが変更して動画を生成します（商品自体は同一性を維持）。
+        ※ AOI FLOW では、この情報をもとに
+        <span className="font-black text-white/80"> 壊れない制御動画 </span>
+        を作る前提です。
+        <br />
+        ※ 商品自体を勝手に変形させる生成ではなく、
+        <span className="font-black text-white/80"> 確認しやすい見せ方 </span>
+        を優先します。
       </div>
     </details>
   );

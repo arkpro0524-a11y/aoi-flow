@@ -72,6 +72,45 @@ type TemplateRecommendResult = {
 };
 
 type Props = {
+  /**
+   * 重要
+   * - 再合成後にAPIが返した本番配置結果
+   * - ProductPlacementEditor へそのまま渡す
+   */
+  serverPlacementMeta?: {
+    canvas?: number;
+    placementInput?: {
+      scale?: number;
+      x?: number;
+      y?: number;
+      shadow?: {
+        opacity?: number;
+        blur?: number;
+        scale?: number;
+        offsetX?: number;
+        offsetY?: number;
+      };
+      background?: {
+        scale?: number;
+        x?: number;
+        y?: number;
+      };
+    } | null;
+    placement?: {
+      left?: number;
+      top?: number;
+      width?: number;
+      height?: number;
+      centerX?: number;
+      centerY?: number;
+      contactY?: number;
+      bottomMarginBase?: number;
+      usedDefaultLeft?: boolean;
+      usedDefaultTop?: boolean;
+    } | null;
+    updatedAt?: number;
+  } | null;
+
   bgDisplayUrl: string;
   backgroundKeyword: string;
   setBackgroundKeyword: React.Dispatch<React.SetStateAction<string>>;
@@ -161,20 +200,33 @@ type Props = {
   backgroundY: number;
   setBackgroundY: React.Dispatch<React.SetStateAction<number>>;
 
-  onSavePlacement: (partial?: {
-    scale?: number;
-    x?: number;
-    y?: number;
-    shadowOpacity?: number;
-    shadowBlur?: number;
-    shadowScale?: number;
-    shadowOffsetX?: number;
-    shadowOffsetY?: number;
-    backgroundScale?: number;
-    backgroundX?: number;
-    backgroundY?: number;
-    activePhotoMode?: ProductPhotoMode;
-  }) => Promise<void> | void;
+  editingStep: "background" | "product" | "shadow";
+  setEditingStep: React.Dispatch<
+    React.SetStateAction<"background" | "product" | "shadow">
+  >;
+
+  canUndo: boolean;
+  canRedo: boolean;
+  onUndo: () => Promise<void> | void;
+  onRedo: () => Promise<void> | void;
+
+  onSavePlacement: (
+    step: "background" | "product" | "shadow",
+    partial?: {
+      scale?: number;
+      x?: number;
+      y?: number;
+      shadowOpacity?: number;
+      shadowBlur?: number;
+      shadowScale?: number;
+      shadowOffsetX?: number;
+      shadowOffsetY?: number;
+      backgroundScale?: number;
+      backgroundX?: number;
+      backgroundY?: number;
+      activePhotoMode?: ProductPhotoMode;
+    }
+  ) => Promise<void> | void;
 };
 
 /* =========================
@@ -576,6 +628,7 @@ function inferPhotoModeFromPreset(preset: ImageUsePreset): ProductPhotoMode {
 ========================= */
 
 export default function BackgroundPanel({
+  serverPlacementMeta,
   bgDisplayUrl,
   backgroundKeyword,
   setBackgroundKeyword,
@@ -651,6 +704,12 @@ export default function BackgroundPanel({
   backgroundY,
   setBackgroundY,
 
+  editingStep,
+  setEditingStep,
+  canUndo,
+  canRedo,
+  onUndo,
+  onRedo,
   onSavePlacement,
 }: Props) {
   /**
@@ -1591,6 +1650,7 @@ export default function BackgroundPanel({
         {innerTab === "composite" ? (
           <div className="flex flex-col gap-3">
             <ProductPlacementEditor
+              serverPlacementMeta={serverPlacementMeta}
               baseImageUrl={d.baseImageUrl}
               foregroundImageUrl={d.foregroundImageUrl}
               bgImageUrl={String(d.bgImageUrl || "").trim()}
@@ -1638,6 +1698,13 @@ export default function BackgroundPanel({
               setBackgroundScale={setBackgroundScale}
               setBackgroundX={setBackgroundX}
               setBackgroundY={setBackgroundY}
+
+              editingStep={editingStep}
+              setEditingStep={setEditingStep}
+              canUndo={canUndo}
+              canRedo={canRedo}
+              onUndo={onUndo}
+              onRedo={onRedo}
 
               onSavePlacement={onSavePlacement}
               busy={busy}

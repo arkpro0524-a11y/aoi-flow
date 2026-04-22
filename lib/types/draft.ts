@@ -1,3 +1,4 @@
+//lib/types/draft.ts
 /**
  * AOI FLOW 用の型定義（統合版）
  *
@@ -7,17 +8,11 @@
  * - Firestore保存の正式意味と、画面内部で使う補助フィールドの両方を持てるようにする
  *
  * 重要
- * - brandId / igCaption / xCaption / shortCopies は正式系
- * - brand / ig / x / ig3 などは画面互換のために残す
- * - baseImageUrl / bgImageUrl / aiImageUrl / compositeImageUrl / videoUrl を中心に統一する
- * - 今回追加した新仕様
- *   ① 商品写真      : 切り抜き + テンプレ背景 + AI背景 + 調整UI
- *   ② 使用シーン    : AI再生成
- *   ③ サイズ        : テンプレ
- *   ④ ディテール    : 元写真
- *   ⑤ ストーリー    : AI再生成
- * - 今回さらに追加
- *   EC販売用文章
+ * - 既存機能は削除しない
+ * - 互換項目は残す
+ * - ただし、今後の主軸は placement / placement.background に寄せる
+ * - root の backgroundScale / backgroundX / backgroundY は後方互換として残す
+ * - 今回は次工程で必要になる step / undo / redo 用の型も追加する
  */
 
 // =========================
@@ -80,7 +75,9 @@ export type ShortCopy = {
 // =========================
 
 export type TextOverlay = {
-  // 新UIで使う本体
+  /**
+   * 新UIで使う本体
+   */
   lines?: string[];
   lineHeight?: number;
   x?: number;
@@ -92,7 +89,9 @@ export type TextOverlay = {
     radius: number;
   };
 
-  // 旧簡易UIで使う本体
+  /**
+   * 旧簡易UIで使う本体
+   */
   text?: string;
   enabled?: boolean;
   fontSize: number;
@@ -188,9 +187,19 @@ export type BgPickLog = {
 
 export type BackgroundSourceTab = "template_bg" | "ai_bg";
 
+/**
+ * テンプレ背景おすすめ
+ *
+ * 重要
+ * - 既存の id / score / reason は残す
+ * - UI 側の都合で url / imageUrl の両方を受けられるようにする
+ * - 実運用では url を主に使う
+ */
 export type TemplateBgRecommendation = {
-  id: string;
-  score: number;
+  id?: string;
+  url?: string;
+  imageUrl?: string;
+  score?: number;
   reason: string;
 };
 
@@ -261,28 +270,87 @@ export type CmVideo = {
 // 新仕様: 商品配置調整
 // =========================
 
+/**
+ * 商品配置編集ステップ
+ *
+ * 今回追加
+ * - 背景 → 商品 → 影 の順番固定UI用
+ */
+export type ProductPlacementStep = "background" | "product" | "shadow";
+
+/**
+ * 影設定
+ *
+ * 重要
+ * - 影は商品従属
+ * - offset は将来的に微調整域へ統一する
+ */
+export type ProductPlacementShadow = {
+  opacity: number;
+  blur: number;
+  scale: number;
+  offsetX: number;
+  offsetY: number;
+};
+
+/**
+ * 背景設定
+ *
+ * 重要
+ * - 背景は別空間
+ * - preview / recomposite の共通基準
+ */
+export type ProductPlacementBackground = {
+  scale: number;
+  x: number;
+  y: number;
+};
+
 export type ProductPlacement = {
   scale: number;
   x: number;
   y: number;
+  shadow?: ProductPlacementShadow;
+  background?: ProductPlacementBackground;
+};
 
-  shadow?: {
-    opacity: number;
-    blur: number;
-    scale: number;
-    offsetX: number;
-    offsetY: number;
-  };
+/**
+ * undo / redo 用のスナップショット
+ *
+ * 重要
+ * - 画面側の履歴管理で使う
+ * - 保存値の意味をそのまま持つ
+ */
+export type ProductPlacementSnapshot = {
+  placement: ProductPlacement;
+  activePhotoMode: ProductPhotoMode;
+  step: ProductPlacementStep;
+};
 
-  /**
-   * ★追加：背景編集値
-   * - 合成時のズーム / 位置
-   */
-  background?: {
-    scale: number;
-    x: number;
-    y: number;
-  };
+/**
+ * step 保存用の partial 型
+ *
+ * 重要
+ * - 背景だけ保存
+ * - 商品だけ保存
+ * - 影だけ保存
+ * のような分割保存に使う
+ */
+export type ProductPlacementPartial = {
+  scale?: number;
+  x?: number;
+  y?: number;
+  shadowOpacity?: number;
+  shadowBlur?: number;
+  shadowScale?: number;
+  shadowOffsetX?: number;
+  shadowOffsetY?: number;
+  backgroundScale?: number;
+  backgroundX?: number;
+  backgroundY?: number;
+  activePhotoMode?: ProductPhotoMode;
+  step?: ProductPlacementStep;
+  autoRecompose?: boolean;
 };
 
 // =========================
@@ -378,7 +446,7 @@ export type DraftDoc = {
   ig3?: string[];
 
   // =================
-  // 今回追加: EC販売用文章
+  // EC販売用文章
   // =================
 
   instagramSales?: string;
@@ -440,8 +508,23 @@ export type DraftDoc = {
   // =================
 
   activePhotoMode?: ProductPhotoMode;
+
+  /**
+   * 今後の正式な保存先
+   * - 商品位置
+   * - 商品影
+   * - 背景位置
+   * をここへ集約する
+   */
   placement?: ProductPlacement;
 
+  /**
+   * 旧 root 値（後方互換）
+   *
+   * 注意
+   * - 既存読込互換のため残す
+   * - 今後の主保存先は placement.shadow
+   */
   shadowOpacity?: number;
   shadowBlur?: number;
   shadowScale?: number;
@@ -449,11 +532,24 @@ export type DraftDoc = {
   shadowOffsetY?: number;
 
   /**
-   * ★追加：root保持（後方互換）
+   * 旧 root 背景値（後方互換）
+   *
+   * 注意
+   * - 既存読込互換のため残す
+   * - 今後の主保存先は placement.background
    */
   backgroundScale?: number;
   backgroundX?: number;
   backgroundY?: number;
+
+  /**
+   * 順番固定UI用
+   *
+   * 注意
+   * - Draft に保存されていても壊れないよう optional
+   * - 未保存運用でも使える
+   */
+  placementStep?: ProductPlacementStep;
 
   backgroundSourceTab?: BackgroundSourceTab;
   templateBgUrl?: string;
@@ -461,6 +557,7 @@ export type DraftDoc = {
   templateBgSelectedId?: string;
   templateBgRecommendedIds?: string[];
   templateBgRecommendations?: TemplateBgRecommendation[];
+  templateBgRecommendReason?: string;
 
   // =================
   // 新仕様: ② 使用シーン

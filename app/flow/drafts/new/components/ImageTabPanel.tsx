@@ -60,6 +60,44 @@ type TemplateRecommendResultForPanel = {
 };
 
 type Props = {
+    /**
+   * 重要
+   * - 再合成後にAPIが返した本番配置結果
+   * - ProductPlacementEditor へそのまま渡す
+   */
+  serverPlacementMeta?: {
+    canvas?: number;
+    placementInput?: {
+      scale?: number;
+      x?: number;
+      y?: number;
+      shadow?: {
+        opacity?: number;
+        blur?: number;
+        scale?: number;
+        offsetX?: number;
+        offsetY?: number;
+      };
+      background?: {
+        scale?: number;
+        x?: number;
+        y?: number;
+      };
+    } | null;
+    placement?: {
+      left?: number;
+      top?: number;
+      width?: number;
+      height?: number;
+      centerX?: number;
+      centerY?: number;
+      contactY?: number;
+      bottomMarginBase?: number;
+      usedDefaultLeft?: boolean;
+      usedDefaultTop?: boolean;
+    } | null;
+    updatedAt?: number;
+  } | null;
   d: DraftDoc;
   uid: string | null;
   busy: boolean;
@@ -205,20 +243,33 @@ type Props = {
   backgroundY: number;
   setBackgroundY: React.Dispatch<React.SetStateAction<number>>;
 
-  onSavePlacement: (partial?: {
-    scale?: number;
-    x?: number;
-    y?: number;
-    shadowOpacity?: number;
-    shadowBlur?: number;
-    shadowScale?: number;
-    shadowOffsetX?: number;
-    shadowOffsetY?: number;
-    backgroundScale?: number;
-    backgroundX?: number;
-    backgroundY?: number;
-    activePhotoMode?: ProductPhotoMode;
-  }) => Promise<void> | void;
+  editingStep: "background" | "product" | "shadow";
+  setEditingStep: React.Dispatch<
+    React.SetStateAction<"background" | "product" | "shadow">
+  >;
+
+  canUndo: boolean;
+  canRedo: boolean;
+  onUndo: () => Promise<void> | void;
+  onRedo: () => Promise<void> | void;
+
+  onSavePlacement: (
+    step: "background" | "product" | "shadow",
+    partial?: {
+      scale?: number;
+      x?: number;
+      y?: number;
+      shadowOpacity?: number;
+      shadowBlur?: number;
+      shadowScale?: number;
+      shadowOffsetX?: number;
+      shadowOffsetY?: number;
+      backgroundScale?: number;
+      backgroundX?: number;
+      backgroundY?: number;
+      activePhotoMode?: ProductPhotoMode;
+    }
+  ) => Promise<void> | void;
 
   sizeTemplateType: SizeTemplateType;
   setSizeTemplateType: React.Dispatch<React.SetStateAction<SizeTemplateType>>;
@@ -231,6 +282,7 @@ export default function ImageTabPanel({
   d,
   uid,
   busy,
+  serverPlacementMeta,
 
   cutoutBusy,
   cutoutReason,
@@ -337,6 +389,13 @@ export default function ImageTabPanel({
   setBackgroundX,
   backgroundY,
   setBackgroundY,
+
+  editingStep,
+  setEditingStep,
+  canUndo,
+  canRedo,
+  onUndo,
+  onRedo,
 
   onSavePlacement,
 
@@ -470,7 +529,14 @@ export default function ImageTabPanel({
         backgroundY={backgroundY}
         setBackgroundY={setBackgroundY}
 
+        editingStep={editingStep}
+        setEditingStep={setEditingStep}
+        canUndo={canUndo}
+        canRedo={canRedo}
+        onUndo={onUndo}
+        onRedo={onRedo}
         onSavePlacement={onSavePlacement}
+        serverPlacementMeta={serverPlacementMeta}
       />
 
       {/* =========================

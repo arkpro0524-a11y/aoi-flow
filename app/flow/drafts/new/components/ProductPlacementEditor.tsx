@@ -1,3 +1,4 @@
+//app/flow/drafts/new/components/ProductPlacementEditor.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -65,7 +66,7 @@ const AI_BG_MODE: ProductPhotoMode = "ai_bg";
 const PREVIEW_CANVAS = 1024;
 
 /**
- * 今回の可動域拡張定数
+ * 今回の可動域定数
  *
  * 商品配置
  * - scale: 旧 0.4〜2.2 → 新 0.2〜4.4
@@ -78,7 +79,9 @@ const PREVIEW_CANVAS = 1024;
  * 影
  * - blur: 旧 0〜100    → 新 0〜200
  * - scale:旧 0.5〜2    → 新 0.25〜4
- * - offset: 旧 -1〜1   → 新 -2〜2
+ * - offset:
+ *   内部の互換レンジは残すが、
+ *   UIでは「微調整」専用としてかなり狭く扱う
  *
  * 背景（編集プレビューのみ）
  * - zoom: 40〜220
@@ -98,10 +101,38 @@ const SHADOW_BLUR_MIN = 0;
 const SHADOW_BLUR_MAX = 200;
 const SHADOW_SCALE_MIN = 0.25;
 const SHADOW_SCALE_MAX = 4;
-const SHADOW_OFFSET_MIN = -2;
-const SHADOW_OFFSET_MAX = 2;
+const SHADOW_OFFSET_MIN = -8;
+const SHADOW_OFFSET_MAX = 8;
 const SHADOW_OFFSET_UI_MIN = 0;
 const SHADOW_OFFSET_UI_MAX = 200;
+
+/**
+ * 影は「商品の補助」なので、
+ * UIでは自由移動ではなく微調整だけ許可する
+ */
+const SHADOW_FINE_UI_MIN = 90;
+const SHADOW_FINE_UI_MAX = 110;
+
+/**
+ * 大きく動かす用
+ * - 保存値は -4〜4
+ * - UI は 0〜200
+ */
+const SHADOW_OFFSET_COARSE_MIN = -8;
+const SHADOW_OFFSET_COARSE_MAX = 8;
+
+/**
+ * 微調整用
+ * - 保存値は -0.25〜0.25
+ * - UI は 90〜110
+ */
+// ★修正
+// 微調整をやめて、通常操作だけでしっかり動かす
+const SHADOW_OFFSET_X_EFFECTIVE_MIN = -8;
+const SHADOW_OFFSET_X_EFFECTIVE_MAX = 8;
+
+const SHADOW_OFFSET_Y_EFFECTIVE_MIN = -8;
+const SHADOW_OFFSET_Y_EFFECTIVE_MAX = 8;
 
 const BG_SCALE_UI_MIN = 40;
 const BG_SCALE_UI_MAX = 220;
@@ -109,6 +140,44 @@ const BG_POS_UI_MIN = 0;
 const BG_POS_UI_MAX = 200;
 
 type Props = {
+    /**
+   * 重要
+   * - 再合成後にAPIが返した本番配置結果
+   * - これを次回編集プレビューの基準に使う
+   */
+  serverPlacementMeta?: {
+    canvas?: number;
+    placementInput?: {
+      scale?: number;
+      x?: number;
+      y?: number;
+      shadow?: {
+        opacity?: number;
+        blur?: number;
+        scale?: number;
+        offsetX?: number;
+        offsetY?: number;
+      };
+      background?: {
+        scale?: number;
+        x?: number;
+        y?: number;
+      };
+    } | null;
+    placement?: {
+      left?: number;
+      top?: number;
+      width?: number;
+      height?: number;
+      centerX?: number;
+      centerY?: number;
+      contactY?: number;
+      bottomMarginBase?: number;
+      usedDefaultLeft?: boolean;
+      usedDefaultTop?: boolean;
+    } | null;
+    updatedAt?: number;
+  } | null;
   baseImageUrl?: string;
   foregroundImageUrl?: string;
   bgImageUrl?: string;
@@ -129,14 +198,6 @@ type Props = {
   groundingType?: GroundingType;
   bgScene?: BgScene;
 
-  /**
-   * 文字オーバーレイ
-   *
-   * 重要:
-   * - 今は optional にしておく
-   * - 親がまだ渡していなくても既存機能を壊さない
-   * - 受け取れた時だけ ④編集プレビューに反映する
-   */
   textOverlay?: TextOverlay | null;
 
   activePhotoMode: ProductPhotoMode;
@@ -155,12 +216,6 @@ type Props = {
   shadowOffsetX: number;
   shadowOffsetY: number;
 
-  /**
-   * ★追加
-   * 背景編集値（保存値）
-   * - scale は 0.5〜3
-   * - x / y は -1〜1（0 が中央）
-   */
   backgroundScale: number;
   backgroundX: number;
   backgroundY: number;
@@ -174,33 +229,37 @@ type Props = {
   setShadowOffsetX: React.Dispatch<React.SetStateAction<number>>;
   setShadowOffsetY: React.Dispatch<React.SetStateAction<number>>;
 
-  /**
-   * ★追加
-   */
   setBackgroundScale: React.Dispatch<React.SetStateAction<number>>;
   setBackgroundX: React.Dispatch<React.SetStateAction<number>>;
   setBackgroundY: React.Dispatch<React.SetStateAction<number>>;
 
-  onSavePlacement: (partial?: {
-    scale?: number;
-    x?: number;
-    y?: number;
-    shadowOpacity?: number;
-    shadowBlur?: number;
-    shadowScale?: number;
-    shadowOffsetX?: number;
-    shadowOffsetY?: number;
+  editingStep: "background" | "product" | "shadow";
+  setEditingStep: React.Dispatch<
+    React.SetStateAction<"background" | "product" | "shadow">
+  >;
 
-    /**
-     * ★追加
-     * 0〜1 基準で保存する
-     */
-    backgroundScale?: number;
-    backgroundX?: number;
-    backgroundY?: number;
+  canUndo: boolean;
+  canRedo: boolean;
+  onUndo: () => void | Promise<void>;
+  onRedo: () => void | Promise<void>;
 
-    activePhotoMode?: ProductPhotoMode;
-  }) => void | Promise<void>;
+  onSavePlacement: (
+    step: "background" | "product" | "shadow",
+    partial?: {
+      scale?: number;
+      x?: number;
+      y?: number;
+      shadowOpacity?: number;
+      shadowBlur?: number;
+      shadowScale?: number;
+      shadowOffsetX?: number;
+      shadowOffsetY?: number;
+      backgroundScale?: number;
+      backgroundX?: number;
+      backgroundY?: number;
+      activePhotoMode?: ProductPhotoMode;
+    }
+  ) => void | Promise<void>;
 
   busy?: boolean;
   showMsg?: (msg: string) => void;
@@ -279,7 +338,55 @@ function uiShadowOffsetToSaved(ui: number) {
 
   return SHADOW_OFFSET_MIN + ratio * (SHADOW_OFFSET_MAX - SHADOW_OFFSET_MIN);
 }
+function savedShadowFineXToUi(saved: number) {
+  const safe = clamp(
+    saved,
+    SHADOW_OFFSET_X_EFFECTIVE_MIN,
+    SHADOW_OFFSET_X_EFFECTIVE_MAX
+  );
+  const ratio =
+    (safe - SHADOW_OFFSET_X_EFFECTIVE_MIN) /
+    (SHADOW_OFFSET_X_EFFECTIVE_MAX - SHADOW_OFFSET_X_EFFECTIVE_MIN);
 
+  return SHADOW_FINE_UI_MIN + ratio * (SHADOW_FINE_UI_MAX - SHADOW_FINE_UI_MIN);
+}
+
+function uiShadowFineXToSaved(ui: number) {
+  const safe = clamp(ui, SHADOW_FINE_UI_MIN, SHADOW_FINE_UI_MAX);
+  const ratio =
+    (safe - SHADOW_FINE_UI_MIN) /
+    (SHADOW_FINE_UI_MAX - SHADOW_FINE_UI_MIN);
+
+  return (
+    SHADOW_OFFSET_X_EFFECTIVE_MIN +
+    ratio * (SHADOW_OFFSET_X_EFFECTIVE_MAX - SHADOW_OFFSET_X_EFFECTIVE_MIN)
+  );
+}
+
+function savedShadowFineYToUi(saved: number) {
+  const safe = clamp(
+    saved,
+    SHADOW_OFFSET_Y_EFFECTIVE_MIN,
+    SHADOW_OFFSET_Y_EFFECTIVE_MAX
+  );
+  const ratio =
+    (safe - SHADOW_OFFSET_Y_EFFECTIVE_MIN) /
+    (SHADOW_OFFSET_Y_EFFECTIVE_MAX - SHADOW_OFFSET_Y_EFFECTIVE_MIN);
+
+  return SHADOW_FINE_UI_MIN + ratio * (SHADOW_FINE_UI_MAX - SHADOW_FINE_UI_MIN);
+}
+
+function uiShadowFineYToSaved(ui: number) {
+  const safe = clamp(ui, SHADOW_FINE_UI_MIN, SHADOW_FINE_UI_MAX);
+  const ratio =
+    (safe - SHADOW_FINE_UI_MIN) /
+    (SHADOW_FINE_UI_MAX - SHADOW_FINE_UI_MIN);
+
+  return (
+    SHADOW_OFFSET_Y_EFFECTIVE_MIN +
+    ratio * (SHADOW_OFFSET_Y_EFFECTIVE_MAX - SHADOW_OFFSET_Y_EFFECTIVE_MIN)
+  );
+}
 /**
  * 背景位置UI → transform用値
  * 100 が中央
@@ -316,6 +423,17 @@ function uiBgScaleToSaved(ui: number) {
   const safe = clamp(ui, BG_SCALE_UI_MIN, BG_SCALE_UI_MAX);
   return clamp(safe / 100, 0.5, 3);
 }
+
+function softenShadowScale(input: number) {
+  const safe = clamp(input, 0.25, 4);
+
+  if (safe <= 1) {
+    return safe;
+  }
+
+  return 1 + (safe - 1) * 0.7;
+}
+
 
 /**
  * overlay.lines を安全に整形する
@@ -467,7 +585,7 @@ function resolvePlacementRect(args: {
   const defaultTop = Math.max(30, canvas - fgHeight - baseBottomMargin);
 
   let left = Math.round(placement.x * canvas - fgWidth / 2);
-  let top = Math.round(placement.y * canvas - fgHeight / 2);
+let top = Math.round(placement.y * canvas - fgHeight / 2);
 
   /**
    * 今回の拡張
@@ -517,7 +635,11 @@ function resolvePlacementRect(args: {
 
 /**
  * backend の makeGroundShadow() とできるだけ合わせた preview 用影矩形
- * 今回は offset 可動域も拡張
+ *
+ * 重要
+ * - 影は商品の補助扱い
+ * - UIでも内部計算でも暴れないように、
+ *   offset は微調整レンジへ制限する
  */
 function resolvePreviewShadowRect(args: {
   canvas: number;
@@ -562,29 +684,33 @@ function resolvePreviewShadowRect(args: {
     groundingType === "table" ? 0.5 :
     0.6;
 
-  const w = Math.max(60, Math.round(shadowWidth * baseScale * shadowScale));
-  const h = Math.max(8, Math.round(w * 0.08));
+const safeOffsetX = clamp(
+  shadowOffsetX,
+  SHADOW_OFFSET_COARSE_MIN,
+  SHADOW_OFFSET_COARSE_MAX
+);
 
-  /**
-   * 今回の拡張
-   * - 旧: * 40
-   * - 新: * 80
-   */
-  const cx = clamp(
-    Math.round(centerX + shadowOffsetX * 80),
-    -Math.round(w),
-    canvas + Math.round(w)
-  );
+const safeOffsetY = clamp(
+  shadowOffsetY,
+  SHADOW_OFFSET_COARSE_MIN,
+  SHADOW_OFFSET_COARSE_MAX
+);
 
-  const cy = clamp(
-    Math.round(contactY + 2 + shadowOffsetY * 80),
-    -Math.round(h),
-    canvas + Math.round(h)
-  );
+const scale = softenShadowScale(shadowScale);
 
-  const opacity = clamp(0.12 + shadowOpacity * 0.6, 0, 0.5);
-  const blurPx = Math.max(1, shadowBlur * 0.8);
+const w = Math.max(60, Math.round(shadowWidth * baseScale * scale));
+const h = Math.max(8, Math.round(w * 0.08));
 
+const cx = clamp(
+  Math.round(centerX + safeOffsetX * 24),
+  -Math.round(w),
+  canvas + Math.round(w)
+);
+
+const cy = Math.round(contactY + 2 + safeOffsetY * 80);
+
+const opacity = clamp(0.12 + shadowOpacity * 0.5, 0, 0.5);
+const blurPx = Math.max(1, shadowBlur * 0.8);
   return {
     leftPx: cx - w / 2,
     topPx: cy - h / 2,
@@ -640,6 +766,100 @@ function resolveBackgroundCoverRect(args: {
     top,
     width: drawW,
     height: drawH,
+  };
+}
+
+/**
+ * 前景画像の「透明余白を除いた見た目サイズ」を測る
+ *
+ * 重要
+ * - 本番側は trim 後のサイズ感で配置計算される
+ * - preview 側も同じ思想にそろえるため、
+ *   alpha > 0 の範囲だけを bounding box として使う
+ */
+async function measureTrimmedImageBounds(src: string): Promise<{
+  width: number;
+  height: number;
+  trimmedWidth: number;
+  trimmedHeight: number;
+}> {
+  const url = String(src || "").trim();
+
+  if (!url) {
+    return {
+      width: 0,
+      height: 0,
+      trimmedWidth: 0,
+      trimmedHeight: 0,
+    };
+  }
+
+  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const el = new Image();
+    el.crossOrigin = "anonymous";
+    el.onload = () => resolve(el);
+    el.onerror = () => reject(new Error("前景画像の読み込みに失敗しました"));
+    el.src = url;
+  });
+
+  const width = Math.max(1, Number(img.naturalWidth || 0));
+  const height = Math.max(1, Number(img.naturalHeight || 0));
+
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx) {
+    return {
+      width,
+      height,
+      trimmedWidth: width,
+      trimmedHeight: height,
+    };
+  }
+
+  ctx.clearRect(0, 0, width, height);
+  ctx.drawImage(img, 0, 0, width, height);
+
+  const imageData = ctx.getImageData(0, 0, width, height);
+  const data = imageData.data;
+
+  let minX = width;
+  let minY = height;
+  let maxX = -1;
+  let maxY = -1;
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const alpha = data[(y * width + x) * 4 + 3];
+
+if (alpha >= 8) {
+        if (x < minX) minX = x;
+        if (y < minY) minY = y;
+        if (x > maxX) maxX = x;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+
+  /**
+   * 全透明だった場合は natural をそのまま返す
+   */
+  if (maxX < minX || maxY < minY) {
+    return {
+      width,
+      height,
+      trimmedWidth: width,
+      trimmedHeight: height,
+    };
+  }
+
+  return {
+    width,
+    height,
+    trimmedWidth: Math.max(1, maxX - minX + 1),
+    trimmedHeight: Math.max(1, maxY - minY + 1),
   };
 }
 
@@ -704,6 +924,7 @@ function SliderRow({
   max,
   step,
   onChange,
+  onCommit,
   disabled,
   help,
 }: {
@@ -713,6 +934,7 @@ function SliderRow({
   max: number;
   step: number;
   onChange: (n: number) => void;
+  onCommit?: () => void;
   disabled?: boolean;
   help?: string;
 }) {
@@ -735,6 +957,9 @@ function SliderRow({
         value={value}
         disabled={disabled}
         onChange={(e) => onChange(Number(e.target.value))}
+        onMouseUp={() => onCommit?.()}
+        onTouchEnd={() => onCommit?.()}
+        onPointerUp={() => onCommit?.()}
         className="mt-3 w-full"
       />
 
@@ -787,6 +1012,7 @@ export default function ProductPlacementEditor({
   templateRecommended = [],
   templateRecommendTopReason = "",
   isCompositeFresh = false,
+    serverPlacementMeta = null,
 
   productCategory = "other",
   productSize = "medium",
@@ -810,9 +1036,6 @@ export default function ProductPlacementEditor({
   shadowOffsetX,
   shadowOffsetY,
 
-  /**
-   * ★追加
-   */
   backgroundScale,
   backgroundX,
   backgroundY,
@@ -826,78 +1049,95 @@ export default function ProductPlacementEditor({
   setShadowOffsetX,
   setShadowOffsetY,
 
-  /**
-   * ★追加
-   */
   setBackgroundScale,
   setBackgroundX,
   setBackgroundY,
+
+  editingStep,
+  setEditingStep,
+  canUndo,
+  canRedo,
+  onUndo,
+  onRedo,
 
   onSavePlacement,
   busy = false,
   showMsg,
 }: Props) {
   /**
+   * 今回は UI からだけ外す
+   * - props 契約は壊さない
+   * - 上流の既存機能は削除しない
+   */
+  void canUndo;
+  void canRedo;
+  void onUndo;
+  void onRedo;
+
+  /**
    * 現在表示している前景画像の実サイズ
    * - 既存機能維持のため残す
    * - 直接の配置計算基準には使わない
    */
-  const [foregroundNaturalSize, setForegroundNaturalSize] = useState({
-    width: 0,
-    height: 0,
-  });
+/**
+ * 前景画像サイズ
+ *
+ * 重要
+ * - natural は元画像全体サイズ
+ * - trimmed は透明余白を除いた実見た目サイズ
+ * - 今回のズレ対策では trimmed を最優先で使う
+ */
+const [foregroundNaturalSize, setForegroundNaturalSize] = useState({
+  width: 0,
+  height: 0,
+  trimmedWidth: 0,
+  trimmedHeight: 0,
+});
 
-  /**
-   * 配置計算専用の固定基準サイズ
-   *
-   * 重要
-   * - 再合成後に foregroundImageUrl が変わっても、
-   *   baseImageUrl が同じ間はこの基準を維持する
-   * - これで「合成後だけ動きの幅が変わる」違和感を減らす
-   */
-  const [placementBasisSize, setPlacementBasisSize] = useState({
-    width: 0,
-    height: 0,
-  });
+const [foregroundTrimmedSize, setForegroundTrimmedSize] = useState({
+  width: 0,
+  height: 0,
+});
 
-  /**
-   * どの baseImageUrl を基準に basisSize を取ったか
-   */
-  const [placementBasisBaseKey, setPlacementBasisBaseKey] = useState("");
+/**
+ * 追加
+ * - 今どの前景URLを計測済みか
+ * - その計測が完了しているか
+ *
+ * 重要
+ * - foregroundImageUrl が更新された直後は、
+ *   まだ新しい trimmed 計測が終わっていない可能性がある
+ * - その状態で再合成すると「古い座標基準」で再合成してしまう
+ */
+const [measuredForegroundUrl, setMeasuredForegroundUrl] = useState("");
+const [isForegroundMeasureReady, setIsForegroundMeasureReady] = useState(false);
 
-  const [backgroundNaturalSize, setBackgroundNaturalSize] = useState({
-    width: 0,
-    height: 0,
-  });
+/**
+ * 背景画像サイズ（←これが不足していた）
+ * - 背景ズームや位置計算で使用
+ * - onLoadでセットされる
+ */
+const [backgroundNaturalSize, setBackgroundNaturalSize] = useState({
+  width: 0,
+  height: 0,
+});
 
-  const [activePreviewTab, setActivePreviewTab] = useState<"edit" | "final">("edit");
+/**
+ * プレビュータブ状態
+ * - edit：編集プレビュー
+ * - final：保存済み画像
+ */
+const [activePreviewTab, setActivePreviewTab] = useState<"edit" | "final">("edit");
 
-  /**
-   * baseImageUrl が変わった時だけ、
-   * 配置計算用の基準サイズを取り直せるようにリセットする
-   */
-  useEffect(() => {
-    const nextBaseKey = String(baseImageUrl || "").trim();
+/**
+ * 背景座標を固定したかどうか
+ *
+ * 重要
+ * - false の間は ②商品 / ③影 に進めない
+ * - 背景を選び直したら false に戻す
+ */
+const [isBackgroundLocked, setIsBackgroundLocked] = useState(false);
 
-    setPlacementBasisBaseKey((prev) => {
-      if (prev === nextBaseKey) return prev;
-      return nextBaseKey;
-    });
-
-    setPlacementBasisSize((prev) => {
-      if (
-        placementBasisBaseKey === nextBaseKey &&
-        (prev.width > 0 || prev.height > 0)
-      ) {
-        return prev;
-      }
-
-      return {
-        width: 0,
-        height: 0,
-      };
-    });
-  }, [baseImageUrl, placementBasisBaseKey]);
 
   /**
    * ★修正
@@ -956,21 +1196,18 @@ export default function ProductPlacementEditor({
   const safeShadowBlur = clamp(shadowBlur || 12, SHADOW_BLUR_MIN, SHADOW_BLUR_MAX);
   const safeShadowScale = clamp(shadowScale || 1, SHADOW_SCALE_MIN, SHADOW_SCALE_MAX);
 
-  const safeShadowOffsetX = clamp(
-    shadowOffsetX >= SHADOW_OFFSET_MIN && shadowOffsetX <= SHADOW_OFFSET_MAX
-      ? shadowOffsetX
-      : 0,
-    SHADOW_OFFSET_MIN,
-    SHADOW_OFFSET_MAX
-  );
+// ★serverと一致させる（微調整レンジ）
+const safeShadowOffsetX = clamp(
+  Number.isFinite(Number(shadowOffsetX)) ? Number(shadowOffsetX) : 0,
+  SHADOW_OFFSET_COARSE_MIN,
+  SHADOW_OFFSET_COARSE_MAX
+);
 
-  const safeShadowOffsetY = clamp(
-    shadowOffsetY >= SHADOW_OFFSET_MIN && shadowOffsetY <= SHADOW_OFFSET_MAX
-      ? shadowOffsetY
-      : 0.02,
-    SHADOW_OFFSET_MIN,
-    SHADOW_OFFSET_MAX
-  );
+const safeShadowOffsetY = clamp(
+  Number.isFinite(Number(shadowOffsetY)) ? Number(shadowOffsetY) : 0.02,
+  SHADOW_OFFSET_COARSE_MIN,
+  SHADOW_OFFSET_COARSE_MAX
+);
 
   /**
    * 文字オーバーレイの安全な表示値を作る
@@ -1036,15 +1273,19 @@ export default function ProductPlacementEditor({
    * 2. まだ基準が無い時だけ現在の表示画像サイズ
    * 3. 最後は targetWidth fallback
    */
-  const placementNaturalWidthForPreview =
-    placementBasisSize.width > 0
-      ? placementBasisSize.width
-      : foregroundNaturalSize.width;
+/**
+ * 商品の配置計算は trimmed 後の実見た目寸法を最優先で使う
+ *
+ * 重要
+ * - 透明余白込み natural ではなく、
+ *   alpha から測った trimmed を使う
+ * - これで本番の trim 後配置に寄せる
+ */
+const placementNaturalWidthForPreview =
+  foregroundNaturalSize.trimmedWidth || foregroundNaturalSize.width;
 
-  const placementNaturalHeightForPreview =
-    placementBasisSize.height > 0
-      ? placementBasisSize.height
-      : foregroundNaturalSize.height;
+const placementNaturalHeightForPreview =
+  foregroundNaturalSize.trimmedHeight || foregroundNaturalSize.height;
 
   const previewGeometry = useMemo(() => {
     const canvas = PREVIEW_CANVAS;
@@ -1055,36 +1296,183 @@ export default function ProductPlacementEditor({
       y: safePlacementYSaved,
     };
 
-    const baseProductWidthRatio = 0.42;
-    const effectiveProductWidthRatio = clamp(
-      baseProductWidthRatio * normalizedSavedScaleForPreview,
-      0.18,
-      0.82
-    );
+    /**
+     * 重要
+     * - 再合成後にAPIが返した本番配置結果があるなら、
+     *   それを編集プレビューの基準に使う
+     * - これにより「再合成後だけ急にズレる」を減らす
+     * - 無い時だけ従来ロジックへフォールバックする
+     */
+    const serverPlacement =
+      serverPlacementMeta &&
+      typeof serverPlacementMeta === "object" &&
+      serverPlacementMeta.placement &&
+      typeof serverPlacementMeta.placement === "object"
+        ? serverPlacementMeta.placement
+        : null;
 
-    const productTargetWidth = Math.round(canvas * effectiveProductWidthRatio);
+    const serverPlacementInput =
+      serverPlacementMeta &&
+      typeof serverPlacementMeta === "object" &&
+      serverPlacementMeta.placementInput &&
+      typeof serverPlacementMeta.placementInput === "object"
+        ? serverPlacementMeta.placementInput
+        : null;
 
-    const previewFgSize = resolvePreviewForegroundSize({
-      naturalWidth: placementNaturalWidthForPreview || productTargetWidth,
-      naturalHeight: placementNaturalHeightForPreview || productTargetWidth,
-      targetWidth: productTargetWidth,
-      productSize,
-    });
+const canUseServerPlacementBasis =
+  !!serverPlacement &&
+  Number.isFinite(Number(serverPlacement.left)) &&
+  Number.isFinite(Number(serverPlacement.top)) &&
+  Number.isFinite(Number(serverPlacement.width)) &&
+  Number.isFinite(Number(serverPlacement.height));
 
-    const rect = resolvePlacementRect({
-      canvas,
-      fgWidth: previewFgSize.width,
-      fgHeight: previewFgSize.height,
-      placement,
-      groundingType,
-      productCategory,
-      productSize,
-      bgScene,
-    });
+    let fgWidth = 0;
+    let fgHeight = 0;
+    let rect: {
+      left: number;
+      top: number;
+      centerX: number;
+      centerY: number;
+      contactY: number;
+      bottomMarginBase: number;
+      usedDefaultLeft: boolean;
+      usedDefaultTop: boolean;
+    };
+
+    if (canUseServerPlacementBasis) {
+      /**
+       * 本番で確定した矩形
+       */
+      const baseLeft = Number(serverPlacement!.left ?? 0);
+      const baseTop = Number(serverPlacement!.top ?? 0);
+      const baseWidth = Math.max(1, Number(serverPlacement!.width ?? 1));
+      const baseHeight = Math.max(1, Number(serverPlacement!.height ?? 1));
+
+      /**
+       * その本番矩形を作った時の入力値
+       */
+const baseInputScale = clamp(
+  Number(serverPlacementInput?.scale ?? 1),
+        PRODUCT_SCALE_SAVED_MIN,
+        PRODUCT_SCALE_SAVED_MAX
+      );
+const baseInputX = clamp(
+  Number(serverPlacementInput?.x ?? 0.5),
+        PRODUCT_POS_SAVED_MIN,
+        PRODUCT_POS_SAVED_MAX
+      );
+const baseInputY = clamp(
+  Number(serverPlacementInput?.y ?? 0.5),
+        PRODUCT_POS_SAVED_MIN,
+        PRODUCT_POS_SAVED_MAX
+      );
+
+      /**
+       * 重要
+       * - 幅高さは「本番確定矩形」に対して scale 差分だけ反映
+       * - 位置は「本番確定中心点」に対して x/y 差分だけ反映
+       */
+      const scaleRatio = safePlacementScaleSaved / Math.max(0.0001, baseInputScale);
+
+      fgWidth = Math.max(1, Math.round(baseWidth * scaleRatio));
+      fgHeight = Math.max(1, Math.round(baseHeight * scaleRatio));
+
+      const baseCenterX =
+        Number(serverPlacement!.centerX ?? baseLeft + baseWidth / 2);
+      const baseCenterY =
+        Number(serverPlacement!.centerY ?? baseTop + baseHeight / 2);
+
+      const nextCenterX = baseCenterX + (safePlacementXSaved - baseInputX) * canvas;
+      const nextCenterY = baseCenterY + (safePlacementYSaved - baseInputY) * canvas;
+
+      let nextLeft = Math.round(nextCenterX - fgWidth / 2);
+      let nextTop = Math.round(nextCenterY - fgHeight / 2);
+
+      /**
+       * 既存の可動域思想は維持
+       */
+      const overflowX = Math.round(fgWidth * 0.75);
+      const overflowY = Math.round(fgHeight * 0.75);
+
+      nextLeft = clamp(
+        nextLeft,
+        -overflowX,
+        Math.max(-overflowX, canvas - fgWidth + overflowX)
+      );
+
+      const maxTop =
+        groundingType === "hanging"
+          ? canvas - fgHeight - 20
+          : groundingType === "wall"
+            ? canvas - fgHeight - 40
+            : canvas - fgHeight - 10;
+
+      nextTop = clamp(
+        nextTop,
+        -overflowY,
+        Math.max(-overflowY, maxTop + overflowY)
+      );
+
+      rect = {
+        left: nextLeft,
+        top: nextTop,
+        centerX: nextLeft + fgWidth / 2,
+        centerY: nextTop + fgHeight / 2,
+        contactY: nextTop + fgHeight,
+        bottomMarginBase: resolveBottomMargin(
+          groundingType,
+          productCategory,
+          productSize,
+          bgScene
+        ),
+        usedDefaultLeft: false,
+        usedDefaultTop: false,
+      };
+    } else {
+      /**
+       * 従来フォールバック
+       * - 本番metaが無い時は今までの計算を使う
+       * - 既存機能は削除しない
+       */
+      const baseProductWidthRatio = 0.42;
+      const effectiveProductWidthRatio = clamp(
+        baseProductWidthRatio * normalizedSavedScaleForPreview,
+        0.18,
+        0.82
+      );
+
+      const productTargetWidth = Math.round(canvas * effectiveProductWidthRatio);
+
+      const previewFgSize = (() => {
+        const baseW = placementNaturalWidthForPreview || productTargetWidth;
+        const baseH = placementNaturalHeightForPreview || productTargetWidth;
+
+        const scale = normalizedSavedScaleForPreview;
+
+        return {
+          width: Math.max(1, Math.round(baseW * scale)),
+          height: Math.max(1, Math.round(baseH * scale)),
+        };
+      })();
+
+      fgWidth = previewFgSize.width;
+      fgHeight = previewFgSize.height;
+
+      rect = resolvePlacementRect({
+        canvas,
+        fgWidth,
+        fgHeight,
+        placement,
+        groundingType,
+        productCategory,
+        productSize,
+        bgScene,
+      });
+    }
 
     const shadowRect = resolvePreviewShadowRect({
       canvas,
-      fgWidth: previewFgSize.width,
+      fgWidth,
       centerX: rect.centerX,
       contactY: rect.contactY,
       groundingType,
@@ -1097,12 +1485,13 @@ export default function ProductPlacementEditor({
 
     return {
       canvas,
-      fgWidth: previewFgSize.width,
-      fgHeight: previewFgSize.height,
+      fgWidth,
+      fgHeight,
       rect,
       shadowRect,
     };
   }, [
+    serverPlacementMeta,
     normalizedSavedScaleForPreview,
     safePlacementScaleSaved,
     safePlacementXSaved,
@@ -1195,12 +1584,111 @@ export default function ProductPlacementEditor({
   }, [overlayTextColor, overlayFontSizePx, overlayLineHeight, overlayXPercent]);
 
   /**
-   * 前景は切り抜き済み foreground を最優先し、
-   * 無ければ元画像を使う
+   * 表示用前景
+   * - 見た目は切り抜き済み foreground を優先
+   * - 無ければ元画像を使う
    */
-  const unifiedForegroundUrl = useMemo(() => {
-    return String(foregroundImageUrl || baseImageUrl || "").trim();
-  }, [foregroundImageUrl, baseImageUrl]);
+const displayForegroundUrl = useMemo(() => {
+  return String(foregroundImageUrl || baseImageUrl || "").trim();
+}, [foregroundImageUrl, baseImageUrl]);
+
+/**
+ * 配置計算用前景
+ *
+ * 重要
+ * - 合成前プレビューを「合成後と同じ前景基準」に寄せるため、
+ *   foregroundImageUrl を最優先にする
+ * - foregroundImageUrl がまだ無い時だけ baseImageUrl にフォールバックする
+ */
+const measurementForegroundUrl = useMemo(() => {
+  return String(foregroundImageUrl || baseImageUrl || "").trim();
+}, [foregroundImageUrl, baseImageUrl]);
+
+useEffect(() => {
+  let cancelled = false;
+
+  async function run() {
+    const src = String(measurementForegroundUrl || "").trim();
+
+    /**
+     * 新しい前景URLへ切り替わった直後は、
+     * まだそのURLの trimmed 計測が終わっていないので false に戻す
+     */
+    if (!cancelled) {
+      setIsForegroundMeasureReady(false);
+    }
+
+    if (!src) {
+      if (!cancelled) {
+        setForegroundNaturalSize({
+          width: 0,
+          height: 0,
+          trimmedWidth: 0,
+          trimmedHeight: 0,
+        });
+        setMeasuredForegroundUrl("");
+        setIsForegroundMeasureReady(false);
+      }
+      return;
+    }
+
+    try {
+      const measured = await measureTrimmedImageBounds(src);
+
+      if (cancelled) return;
+
+      setForegroundNaturalSize((prev) => {
+        if (
+          prev.width === measured.width &&
+          prev.height === measured.height &&
+          prev.trimmedWidth === measured.trimmedWidth &&
+          prev.trimmedHeight === measured.trimmedHeight
+        ) {
+          return prev;
+        }
+
+        return measured;
+      });
+
+      setForegroundTrimmedSize({
+        width: measured.trimmedWidth,
+        height: measured.trimmedHeight,
+      });
+
+      /**
+       * ここまで来て初めて、
+       * 「今の measurementForegroundUrl の計測が完了した」とみなす
+       */
+      setMeasuredForegroundUrl(src);
+      setIsForegroundMeasureReady(true);
+    } catch (error) {
+      console.error(error);
+
+      if (cancelled) return;
+
+      setForegroundNaturalSize({
+        width: 0,
+        height: 0,
+        trimmedWidth: 0,
+        trimmedHeight: 0,
+      });
+
+      setForegroundTrimmedSize({
+        width: 0,
+        height: 0,
+      });
+
+      setMeasuredForegroundUrl("");
+      setIsForegroundMeasureReady(false);
+    }
+  }
+
+  void run();
+
+  return () => {
+    cancelled = true;
+  };
+}, [measurementForegroundUrl]);
 
   /**
    * テンプレ背景
@@ -1255,7 +1743,7 @@ export default function ProductPlacementEditor({
    * - 完成画像は別枠表示にするため、ここでは aiImageUrl を編集ベースに使わない
    */
   const shouldShowProductOverlay = useMemo(() => {
-    if (!unifiedForegroundUrl) return false;
+    if (!displayForegroundUrl) return false;
 
     if (activePhotoMode === TEMPLATE_MODE) {
       return !!templatePreviewBackgroundUrl;
@@ -1267,7 +1755,7 @@ export default function ProductPlacementEditor({
 
     return false;
   }, [
-    unifiedForegroundUrl,
+    displayForegroundUrl,
     activePhotoMode,
     templatePreviewBackgroundUrl,
     aiEditorBackgroundUrl,
@@ -1351,61 +1839,173 @@ export default function ProductPlacementEditor({
     };
   }, [previewBackgroundRect]);
 
-  async function handleSavePlacement() {
-    await onSavePlacement({
-      scale: uiScaleToSaved(safeScale),
-      x: uiPosToSaved(safeX),
-      y: uiPosToSaved(safeY),
-      shadowOpacity: safeShadowOpacity,
-      shadowBlur: safeShadowBlur,
-      shadowScale: safeShadowScale,
-      shadowOffsetX: safeShadowOffsetX,
-      shadowOffsetY: safeShadowOffsetY,
+async function handleSavePlacement(step: "background" | "product" | "shadow") {
+  await onSavePlacement(step, {
+    scale: uiScaleToSaved(safeScale),
+    x: uiPosToSaved(safeX),
+    y: uiPosToSaved(safeY),
+    shadowOpacity: safeShadowOpacity,
+    shadowBlur: safeShadowBlur,
+    shadowScale: safeShadowScale,
+    shadowOffsetX: safeShadowOffsetX,
+    shadowOffsetY: safeShadowOffsetY,
+    backgroundScale:
+      typeof backgroundScale === "number"
+        ? clamp(backgroundScale, 0.5, 3)
+        : 1,
+    backgroundX:
+      typeof backgroundX === "number"
+        ? clamp(backgroundX, -1, 1)
+        : 0,
+    backgroundY:
+      typeof backgroundY === "number"
+        ? clamp(backgroundY, -1, 1)
+        : 0,
+    activePhotoMode,
+  });
 
-      /**
-       * ★追加
-       * 背景も保存対象にする
-       */
-      backgroundScale:
-        typeof backgroundScale === "number"
-          ? clamp(backgroundScale, 0.5, 3)
-          : 1,
-      backgroundX:
-        typeof backgroundX === "number"
-          ? clamp(backgroundX, -1, 1)
-          : 0,
-      backgroundY:
-        typeof backgroundY === "number"
-          ? clamp(backgroundY, -1, 1)
-          : 0,
+  showMsg?.(`${step} を保存しました`);
+}
+const canRecomposeWithMeasuredForeground = useMemo(() => {
+  const currentMeasurementUrl = String(measurementForegroundUrl || "").trim();
+  const currentMeasuredUrl = String(measuredForegroundUrl || "").trim();
 
-      activePhotoMode,
-    });
+  if (!previewBaseUrl) return false;
+  if (!currentMeasurementUrl) return false;
+  if (!isForegroundMeasureReady) return false;
 
-    showMsg?.("配置を保存しました");
+  /**
+   * 重要
+   * - 「今使うべき前景URL」と
+   *   「計測が終わった前景URL」が一致している時だけ true
+   */
+  return currentMeasurementUrl === currentMeasuredUrl;
+}, [
+  previewBaseUrl,
+  measurementForegroundUrl,
+  measuredForegroundUrl,
+  isForegroundMeasureReady,
+]);
+
+async function handleRecompose() {
+  if (!canRecomposeWithMeasuredForeground) {
+    showMsg?.("前景サイズの反映中です。少し待ってから再合成してください。");
+    return;
   }
 
-  async function handleRecompose() {
-    await handleSavePlacement();
-    await onRecompose?.();
-    setActivePreviewTab("final");
+  await handleSavePlacement(editingStep);
+  await onRecompose?.();
+  setActivePreviewTab("final");
+}
+
+/**
+ * 背景座標を固定する
+ *
+ * 重要
+ * - 実体は background step の保存
+ * - ただし UI 上は「座標固定」という意味で見せる
+ * - 固定後にだけ ②商品 / ③影 を触れる
+ */
+async function handleLockBackgroundCoordinates() {
+  if (!previewBaseUrl) {
+    showMsg?.("先に背景を選択してください");
+    return;
   }
 
-  return (
-    <div className="rounded-2xl border border-white/10 bg-black/15 p-3">
-      <div>
-        <div className="text-white/86 font-bold" style={{ fontSize: 13 }}>
-          ④ 合成画像の配置調整
-        </div>
-        <div
-          className="mt-1 text-white/55"
-          style={{ fontSize: 12, lineHeight: 1.5 }}
-        >
-          背景を選びながら、その場で商品の大きさ・位置・影を調整します。
-        </div>
+  await onSavePlacement("background", {
+    backgroundScale:
+      typeof backgroundScale === "number"
+        ? clamp(backgroundScale, 0.5, 3)
+        : 1,
+    backgroundX:
+      typeof backgroundX === "number"
+        ? clamp(backgroundX, -1, 1)
+        : 0,
+    backgroundY:
+      typeof backgroundY === "number"
+        ? clamp(backgroundY, -1, 1)
+        : 0,
+    activePhotoMode,
+  });
+  await onRecompose?.();
+
+  setIsBackgroundLocked(true);
+  setEditingStep("product");
+  showMsg?.("背景座標を固定しました。②商品へ進めます");
+}
+
+/**
+ * 今回追加
+ * - 配置保存ボタンをやめる代わりに、
+ *   すべての調整値を初期値へ戻して①からやり直せるようにする
+ * - 背景そのものの選択URLは消さない
+ * - あくまで「座標・影・背景ズーム位置」の調整だけを初期化する
+ */
+async function handleResetAdjustments() {
+  const resetScale = 1;
+  const resetX = 0.5;
+  const resetY = 0.5;
+
+  const resetShadowOpacity = 0.12;
+  const resetShadowBlur = 12;
+  const resetShadowScale = 1;
+  const resetShadowOffsetX = 0;
+  const resetShadowOffsetY = 0.02;
+
+  const resetBackgroundScale = 1;
+  const resetBackgroundX = 0;
+  const resetBackgroundY = 0;
+
+  setPlacementScale(resetScale);
+  setPlacementX(resetX);
+  setPlacementY(resetY);
+
+  setShadowOpacity(resetShadowOpacity);
+  setShadowBlur(resetShadowBlur);
+  setShadowScale(resetShadowScale);
+  setShadowOffsetX(resetShadowOffsetX);
+  setShadowOffsetY(resetShadowOffsetY);
+
+  setBackgroundScale(resetBackgroundScale);
+  setBackgroundX(resetBackgroundX);
+  setBackgroundY(resetBackgroundY);
+
+  setEditingStep("background");
+  setActivePreviewTab("edit");
+  setIsBackgroundLocked(false);
+
+  await onSavePlacement("background", {
+    scale: resetScale,
+    x: resetX,
+    y: resetY,
+    shadowOpacity: resetShadowOpacity,
+    shadowBlur: resetShadowBlur,
+    shadowScale: resetShadowScale,
+    shadowOffsetX: resetShadowOffsetX,
+    shadowOffsetY: resetShadowOffsetY,
+    backgroundScale: resetBackgroundScale,
+    backgroundX: resetBackgroundX,
+    backgroundY: resetBackgroundY,
+    activePhotoMode,
+  });
+
+  showMsg?.("調整をリセットして①からやり直せる状態に戻しました");
+}
+return (
+  <div className="rounded-2xl border border-white/10 bg-black/15 p-3">
+    <div>
+      <div className="text-white/86 font-bold" style={{ fontSize: 13 }}>
+        ④ 合成画像の調整
       </div>
+<div
+  className="mt-1 text-white/55"
+  style={{ fontSize: 12, lineHeight: 1.5 }}
+>
+  ① 背景 → 座標固定 → ② 商品 → ③ 影 の順で調整し、④合成で最終画像を更新します。
+</div>
+    </div>
 
-      <div className="mt-3 rounded-2xl border border-white/10 bg-black/15 p-3">
+    <div className="mt-3 rounded-2xl border border-white/10 bg-black/15 p-3">
         <div className="flex items-center justify-between gap-3">
           <div className="text-white/72" style={{ fontSize: 12 }}>
             背景選択
@@ -1444,11 +2044,13 @@ export default function ProductPlacementEditor({
                       key={`${u}-${i}`}
                       type="button"
                       disabled={busy}
-                      onClick={async () => {
-                        await onSelectTemplateBg?.(u);
-                        await onChangePhotoMode(TEMPLATE_MODE);
-                        setActivePreviewTab("edit");
-                      }}
+onClick={async () => {
+  await onSelectTemplateBg?.(u);
+  await onChangePhotoMode(TEMPLATE_MODE);
+  setIsBackgroundLocked(false);
+  setEditingStep("background");
+  setActivePreviewTab("edit");
+}}
                       className="rounded-xl border px-3 py-3 text-left transition hover:bg-white/5"
                       style={{
                         borderColor: isCurrent
@@ -1513,11 +2115,13 @@ export default function ProductPlacementEditor({
                       key={`${u}-${i}`}
                       type="button"
                       disabled={busy}
-                      onClick={async () => {
-                        await onSelectAiBg?.(u);
-                        await onChangePhotoMode(AI_BG_MODE);
-                        setActivePreviewTab("edit");
-                      }}
+onClick={async () => {
+  await onSelectAiBg?.(u);
+  await onChangePhotoMode(AI_BG_MODE);
+  setIsBackgroundLocked(false);
+  setEditingStep("background");
+  setActivePreviewTab("edit");
+}}
                       className="rounded-xl border px-3 py-3 text-left transition hover:bg-white/5"
                       style={{
                         borderColor: isCurrent
@@ -1607,11 +2211,13 @@ export default function ProductPlacementEditor({
                     key={`${item.url}-placement-${index}`}
                     type="button"
                     disabled={busy}
-                    onClick={async () => {
-                      await onSelectTemplateBg?.(item.url);
-                      await onChangePhotoMode(TEMPLATE_MODE);
-                      setActivePreviewTab("edit");
-                    }}
+onClick={async () => {
+  await onSelectTemplateBg?.(item.url);
+  await onChangePhotoMode(TEMPLATE_MODE);
+  setIsBackgroundLocked(false);
+  setEditingStep("background");
+  setActivePreviewTab("edit");
+}}
                     className="rounded-xl border px-3 py-3 text-left transition hover:bg-white/5"
                     style={{
                       borderColor: isCurrent
@@ -1649,47 +2255,106 @@ export default function ProductPlacementEditor({
         </div>
       ) : null}
 
-      <div className="mt-3 flex flex-wrap gap-2">
-        <Btn
-          variant="secondary"
-          disabled={busy}
-          onClick={handleSavePlacement}
-        >
-          配置を保存
-        </Btn>
+<div className="mt-3 flex flex-wrap gap-2">
+  <Btn
+    variant="secondary"
+    disabled={!canRecomposeWithMeasuredForeground || busy}
+    onClick={handleRecompose}
+  >
+    ④合成
+  </Btn>
 
-        <Btn
-          variant="secondary"
-          disabled={!previewBaseUrl || busy}
-          onClick={handleRecompose}
-        >
-          再合成
-        </Btn>
+  <Btn
+    variant="secondary"
+    disabled={busy}
+    onClick={() => {
+      void handleResetAdjustments();
+    }}
+  >
+    リセット
+  </Btn>
 
-        <Btn
-          variant="secondary"
-          disabled={!savedCompositeUrl || !hasOverlayText || busy}
-          onClick={() => {
-            void onSaveCompositeTextImageFromCompositeSlot?.();
-          }}
-        >
-          文字焼き込み保存
-        </Btn>
-      </div>
+  <Btn
+    variant="secondary"
+    disabled={!savedCompositeUrl || !hasOverlayText || busy}
+    onClick={() => {
+      void onSaveCompositeTextImageFromCompositeSlot?.();
+    }}
+  >
+    ④-2 文字焼き込み保存
+  </Btn>
+</div>
 
-      <div className="mt-3 flex gap-2">
-        <PreviewTabButton
-          active={activePreviewTab === "edit"}
-          label="編集プレビュー"
-          onClick={() => setActivePreviewTab("edit")}
-        />
+<div className="mt-3 flex gap-2">
+  <PreviewTabButton
+    active={activePreviewTab === "edit"}
+    label="編集プレビュー"
+    onClick={() => setActivePreviewTab("edit")}
+  />
+  <PreviewTabButton
+    active={activePreviewTab === "final"}
+    label="保存済み完成画像"
+    onClick={() => setActivePreviewTab("final")}
+  />
+</div>
 
-        <PreviewTabButton
-          active={activePreviewTab === "final"}
-          label="保存済み完成画像"
-          onClick={() => setActivePreviewTab("final")}
-        />
-      </div>
+<div className="mt-3 flex gap-2 flex-wrap items-center">
+  <ModeButton
+    active={editingStep === "background"}
+    label="① 背景"
+    onClick={() => setEditingStep("background")}
+  />
+
+  <Btn
+    variant="secondary"
+    disabled={busy || !previewBaseUrl}
+    onClick={() => {
+      void handleLockBackgroundCoordinates();
+    }}
+  >
+    座標固定
+  </Btn>
+
+  <ModeButton
+    active={editingStep === "product"}
+    label="② 商品"
+    disabled={!isBackgroundLocked}
+    onClick={() => {
+      if (!isBackgroundLocked) return;
+      setEditingStep("product");
+    }}
+  />
+  <ModeButton
+    active={editingStep === "shadow"}
+    label="③ 影"
+    disabled={!isBackgroundLocked}
+    onClick={() => {
+      if (!isBackgroundLocked) return;
+      setEditingStep("shadow");
+    }}
+  />
+</div>
+
+<div className="mt-2">
+  <Btn
+    variant="secondary"
+    disabled={
+      busy ||
+      editingStep === "shadow" ||
+      (editingStep === "background" && !isBackgroundLocked)
+    }
+    onClick={() => {
+      if (editingStep === "background") {
+        if (!isBackgroundLocked) return;
+        setEditingStep("product");
+      } else if (editingStep === "product") {
+        setEditingStep("shadow");
+      }
+    }}
+  >
+    次へ
+  </Btn>
+</div>
 
       {activePreviewTab === "edit" && (
         <div className="mt-3 overflow-hidden rounded-2xl border border-white/10 bg-black/25">
@@ -1759,65 +2424,11 @@ export default function ProductPlacementEditor({
             {shouldShowProductOverlay ? (
               <>
                 <div style={shadowStyle} />
-                <img
-                  src={unifiedForegroundUrl}
-                  alt="product preview"
-                  style={productStyle}
-                  onLoad={(e) => {
-                    const img = e.currentTarget;
-                    const naturalWidth = Number(img.naturalWidth || 0);
-                    const naturalHeight = Number(img.naturalHeight || 0);
-
-                    /**
-                     * 現在表示画像の実サイズは常に更新する
-                     * - 既存機能維持
-                     */
-                    if (naturalWidth > 0 && naturalHeight > 0) {
-                      setForegroundNaturalSize((prev) => {
-                        if (prev.width === naturalWidth && prev.height === naturalHeight) {
-                          return prev;
-                        }
-
-                        return {
-                          width: naturalWidth,
-                          height: naturalHeight,
-                        };
-                      });
-                    }
-
-                    /**
-                     * 配置計算用の基準サイズは、
-                     * 同じ baseImageUrl の間は最初の1回だけ固定する
-                     *
-                     * これで再合成後に foregroundImageUrl が変わっても、
-                     * バーの動きの感じが急に変わりにくくなる
-                     */
-                    const currentBaseKey = String(baseImageUrl || "").trim();
-
-                    if (naturalWidth > 0 && naturalHeight > 0) {
-                      setPlacementBasisSize((prev) => {
-                        const shouldReplace =
-                          placementBasisBaseKey !== currentBaseKey ||
-                          prev.width <= 0 ||
-                          prev.height <= 0;
-
-                        if (!shouldReplace) {
-                          return prev;
-                        }
-
-                        return {
-                          width: naturalWidth,
-                          height: naturalHeight,
-                        };
-                      });
-
-                      setPlacementBasisBaseKey((prev) => {
-                        if (prev === currentBaseKey) return prev;
-                        return currentBaseKey;
-                      });
-                    }
-                  }}
-                />
+<img
+  src={displayForegroundUrl}
+  alt="product preview"
+  style={productStyle}
+/>
               </>
             ) : null}
 
@@ -1840,7 +2451,7 @@ export default function ProductPlacementEditor({
               </div>
             ) : null}
 
-            {!shouldShowProductOverlay && !unifiedForegroundUrl ? (
+            {!shouldShowProductOverlay && !displayForegroundUrl ? (
               <div
                 className="absolute inset-0 flex items-center justify-center text-white/50"
                 style={{ fontSize: 12 }}
@@ -1850,7 +2461,7 @@ export default function ProductPlacementEditor({
             ) : null}
 
             {!shouldShowProductOverlay &&
-            !!unifiedForegroundUrl &&
+            !!displayForegroundUrl &&
             activePhotoMode === AI_BG_MODE &&
             !!savedCompositeUrl &&
             !String(bgImageUrl || "").trim() ? (
@@ -1908,11 +2519,11 @@ export default function ProductPlacementEditor({
                 }}
               >
                 {savedCompositeUrl ? (
-                  <img
-                    src={savedCompositeUrl}
-                    alt="saved composite"
-                    className="absolute inset-0 h-full w-full object-cover"
-                  />
+<img
+  src={savedCompositeUrl}
+  alt="saved composite"
+  className="absolute inset-0 h-full w-full object-contain"
+/>
                 ) : (
                   <div
                     className="absolute inset-0 flex items-center justify-center text-white/40"
@@ -1942,11 +2553,11 @@ export default function ProductPlacementEditor({
                 }}
               >
                 {savedCompositeTextUrl ? (
-                  <img
-                    src={savedCompositeTextUrl}
-                    alt="saved composite text"
-                    className="absolute inset-0 h-full w-full object-cover"
-                  />
+<img
+  src={savedCompositeTextUrl}
+  alt="saved composite text"
+  className="absolute inset-0 h-full w-full object-contain"
+/>
                 ) : (
                   <div
                     className="absolute inset-0 flex items-center justify-center text-white/40"
@@ -2009,170 +2620,306 @@ export default function ProductPlacementEditor({
       </div>
 
       <div className="mt-3 grid grid-cols-1 gap-3">
-        <SliderRow
-          label="背景ズーム（編集プレビュー）"
-          value={backgroundScaleUi}
-          min={BG_SCALE_UI_MIN}
-          max={BG_SCALE_UI_MAX}
-          step={1}
-          disabled={busy || !previewBaseUrl}
-          help="背景だけを拡大・縮小します。保存値と同じ意味で反映されます。"
-          onChange={(n) =>
-            setBackgroundScale(clamp(uiBgScaleToSaved(n), 0.5, 3))
-          }
-        />
+<SliderRow
+  label="背景ズーム（編集プレビュー）"
+  value={backgroundScaleUi}
+  min={BG_SCALE_UI_MIN}
+  max={BG_SCALE_UI_MAX}
+  step={1}
+  disabled={busy || !previewBaseUrl || editingStep !== "background"}
+  help="背景だけを拡大・縮小します。保存値と同じ意味で反映されます。"
+  onChange={(n) => {
+    const next = clamp(uiBgScaleToSaved(n), 0.5, 3);
+    setBackgroundScale(next);
+  }}
+  onCommit={() => {
+    const next = clamp(backgroundScale, 0.5, 3);
+    void onSavePlacement("background", {
+      backgroundScale: next,
+      backgroundX,
+      backgroundY,
+      activePhotoMode,
+    });
+  }}
+/>
 
-        <SliderRow
-          label="背景の左右位置（編集プレビュー）"
-          value={backgroundXUi}
-          min={BG_POS_UI_MIN}
-          max={BG_POS_UI_MAX}
-          step={1}
-          disabled={busy || !previewBaseUrl}
-          help="100 が中央です。保存値と同じ意味で左右移動します。"
-          onChange={(n) =>
-            setBackgroundX(clamp(uiBgPosToSaved(n), -1, 1))
-          }
-        />
+<SliderRow
+  label="背景の左右位置（編集プレビュー）"
+  value={backgroundXUi}
+  min={BG_POS_UI_MIN}
+  max={BG_POS_UI_MAX}
+  step={1}
+  disabled={busy || !previewBaseUrl || editingStep !== "background"}
+  help="100 が中央です。保存値と同じ意味で左右移動します。"
+  onChange={(n) => {
+    const next = clamp(uiBgPosToSaved(n), -1, 1);
+    setBackgroundX(next);
+  }}
+  onCommit={() => {
+    const next = clamp(backgroundX, -1, 1);
+    void onSavePlacement("background", {
+      backgroundScale,
+      backgroundX: next,
+      backgroundY,
+      activePhotoMode,
+    });
+  }}
+/>
 
-        <SliderRow
-          label="背景の上下位置（編集プレビュー）"
-          value={backgroundYUi}
-          min={BG_POS_UI_MIN}
-          max={BG_POS_UI_MAX}
-          step={1}
-          disabled={busy || !previewBaseUrl}
-          help="100 が中央です。保存値と同じ意味で上下移動します。"
-          onChange={(n) =>
-            setBackgroundY(clamp(uiBgPosToSaved(n), -1, 1))
-          }
-        />
+<SliderRow
+  label="背景の上下位置（編集プレビュー）"
+  value={backgroundYUi}
+  min={BG_POS_UI_MIN}
+  max={BG_POS_UI_MAX}
+  step={1}
+  disabled={busy || !previewBaseUrl || editingStep !== "background"}
+  help="100 が中央です。保存値と同じ意味で上下移動します。"
+  onChange={(n) => {
+    const next = clamp(uiBgPosToSaved(n), -1, 1);
+    setBackgroundY(next);
+  }}
+  onCommit={() => {
+    const next = clamp(backgroundY, -1, 1);
+    void onSavePlacement("background", {
+      backgroundScale,
+      backgroundX,
+      backgroundY: next,
+      activePhotoMode,
+    });
+  }}
+/>
 
-        <SliderRow
-          label="商品の大きさ"
-          value={safeScale}
-          min={PRODUCT_SCALE_UI_MIN}
-          max={PRODUCT_SCALE_UI_MAX}
-          step={1}
-          disabled={busy || !canLiveEdit}
-          help={
-            canLiveEdit
-              ? "旧より大きく拡張しています。かなり大きく/小さくできます。"
-              : "背景または前景が無いため、今は編集プレビューできません。"
-          }
-          onChange={(n) =>
-            setPlacementScale(
-              uiScaleToSaved(clamp(n, PRODUCT_SCALE_UI_MIN, PRODUCT_SCALE_UI_MAX))
-            )
-          }
-        />
+<SliderRow
+  label="商品の大きさ"
+  value={safeScale}
+  min={PRODUCT_SCALE_UI_MIN}
+  max={PRODUCT_SCALE_UI_MAX}
+  step={1}
+disabled={busy || !canLiveEdit || !isBackgroundLocked || editingStep !== "product"}
+  help={
+    canLiveEdit
+      ? "旧より大きく拡張しています。かなり大きく/小さくできます。"
+      : "背景または前景が無いため、今は編集プレビューできません。"
+  }
+  onChange={(n) => {
+    const next = uiScaleToSaved(clamp(n, PRODUCT_SCALE_UI_MIN, PRODUCT_SCALE_UI_MAX));
+    setPlacementScale(next);
+  }}
+  onCommit={() => {
+    const next = clamp(placementScale, PRODUCT_SCALE_SAVED_MIN, PRODUCT_SCALE_SAVED_MAX);
+    void onSavePlacement("product", {
+      scale: next,
+      x: placementX,
+      y: placementY,
+      activePhotoMode,
+    });
+  }}
+/>
 
-        <SliderRow
-          label="切り抜き画像の左右位置"
-          value={safeX}
-          min={PRODUCT_POS_UI_MIN}
-          max={PRODUCT_POS_UI_MAX}
-          step={1}
-          disabled={busy || !canLiveEdit}
-          help={
-            canLiveEdit
-              ? "100 が中央です。旧より大きく外側まで動かせます。"
-              : "背景または前景が無いため、今は編集プレビューできません。"
-          }
-          onChange={(n) =>
-            setPlacementX(
-              uiPosToSaved(clamp(n, PRODUCT_POS_UI_MIN, PRODUCT_POS_UI_MAX))
-            )
-          }
-        />
+<SliderRow
+  label="切り抜き画像の左右位置"
+  value={safeX}
+  min={PRODUCT_POS_UI_MIN}
+  max={PRODUCT_POS_UI_MAX}
+  step={1}
+disabled={busy || !canLiveEdit || !isBackgroundLocked || editingStep !== "product"}
+  help={
+    canLiveEdit
+      ? "100 が中央です。旧より大きく外側まで動かせます。"
+      : "背景または前景が無いため、今は編集プレビューできません。"
+  }
+  onChange={(n) => {
+    const next = uiPosToSaved(clamp(n, PRODUCT_POS_UI_MIN, PRODUCT_POS_UI_MAX));
+    setPlacementX(next);
+  }}
+  onCommit={() => {
+    const next = clamp(placementX, PRODUCT_POS_SAVED_MIN, PRODUCT_POS_SAVED_MAX);
+    void onSavePlacement("product", {
+      scale: placementScale,
+      x: next,
+      y: placementY,
+      activePhotoMode,
+    });
+  }}
+/>
 
-        <SliderRow
-          label="切り抜き画像の上下位置"
-          value={safeY}
-          min={PRODUCT_POS_UI_MIN}
-          max={PRODUCT_POS_UI_MAX}
-          step={1}
-          disabled={busy || !canLiveEdit}
-          help={
-            canLiveEdit
-              ? "100 が中央です。旧より大きく上下へ動かせます。"
-              : "背景または前景が無いため、今は編集プレビューできません。"
-          }
-          onChange={(n) =>
-            setPlacementY(
-              uiPosToSaved(clamp(n, PRODUCT_POS_UI_MIN, PRODUCT_POS_UI_MAX))
-            )
-          }
-        />
+<SliderRow
+  label="切り抜き画像の上下位置"
+  value={safeY}
+  min={PRODUCT_POS_UI_MIN}
+  max={PRODUCT_POS_UI_MAX}
+  step={1}
+disabled={busy || !canLiveEdit || !isBackgroundLocked || editingStep !== "product"}
+  help={
+    canLiveEdit
+      ? "100 が中央です。旧より大きく上下へ動かせます。"
+      : "背景または前景が無いため、今は編集プレビューできません。"
+  }
+  onChange={(n) => {
+    const next = uiPosToSaved(clamp(n, PRODUCT_POS_UI_MIN, PRODUCT_POS_UI_MAX));
+    setPlacementY(next);
+  }}
+  onCommit={() => {
+    const next = clamp(placementY, PRODUCT_POS_SAVED_MIN, PRODUCT_POS_SAVED_MAX);
+    void onSavePlacement("product", {
+      scale: placementScale,
+      x: placementX,
+      y: next,
+      activePhotoMode,
+    });
+  }}
+/>
 
-        <SliderRow
-          label="影の濃さ"
-          value={Math.round(safeShadowOpacity * 100)}
-          min={0}
-          max={100}
-          step={1}
-          disabled={busy || !canLiveEdit}
-          help={
-            canLiveEdit
-              ? "精密ロジックの影計算で、その場で反映されます。"
-              : "背景または前景が無いため、今は編集プレビューできません。"
-          }
-          onChange={(n) => setShadowOpacity(clamp(n / 100, 0, 1))}
-        />
+<SliderRow
+  label="影の濃さ"
+  value={Math.round(safeShadowOpacity * 100)}
+  min={0}
+  max={100}
+  step={1}
+disabled={busy || !canLiveEdit || !isBackgroundLocked || editingStep !== "shadow"}
+  help={
+    canLiveEdit
+      ? "精密ロジックの影計算で、その場で反映されます。"
+      : "背景または前景が無いため、今は編集プレビューできません。"
+  }
+  onChange={(n) => {
+    const next = clamp(n / 100, 0, 1);
+    setShadowOpacity(next);
+  }}
+  onCommit={() => {
+    const next = clamp(shadowOpacity, 0, 1);
+    void onSavePlacement("shadow", {
+      shadowOpacity: next,
+      shadowBlur,
+      shadowScale,
+      shadowOffsetX,
+      shadowOffsetY,
+      activePhotoMode,
+    });
+  }}
+/>
 
-        <SliderRow
-          label="影のぼかし"
-          value={safeShadowBlur}
-          min={SHADOW_BLUR_MIN}
-          max={SHADOW_BLUR_MAX}
-          step={1}
-          disabled={busy || !canLiveEdit}
-          help="旧より大きく広げています。数字が大きいほど影が柔らかく広がります。"
-          onChange={(n) => setShadowBlur(clamp(n, SHADOW_BLUR_MIN, SHADOW_BLUR_MAX))}
-        />
+<SliderRow
+  label="影のぼかし"
+  value={safeShadowBlur}
+  min={SHADOW_BLUR_MIN}
+  max={SHADOW_BLUR_MAX}
+  step={1}
+disabled={busy || !canLiveEdit || !isBackgroundLocked || editingStep !== "shadow"}
+  help="旧より大きく広げています。数字が大きいほど影が柔らかく広がります。"
+  onChange={(n) => {
+    const next = clamp(n, SHADOW_BLUR_MIN, SHADOW_BLUR_MAX);
+    setShadowBlur(next);
+  }}
+  onCommit={() => {
+    const next = clamp(shadowBlur, SHADOW_BLUR_MIN, SHADOW_BLUR_MAX);
+    void onSavePlacement("shadow", {
+      shadowOpacity,
+      shadowBlur: next,
+      shadowScale,
+      shadowOffsetX,
+      shadowOffsetY,
+      activePhotoMode,
+    });
+  }}
+/>
+<SliderRow
+  label="影の広がり"
+  value={Math.round(safeShadowScale * 100)}
+  min={Math.round(SHADOW_SCALE_MIN * 100)}
+  max={Math.round(SHADOW_SCALE_MAX * 100)}
+  step={1}
+disabled={busy || !canLiveEdit || !isBackgroundLocked || editingStep !== "shadow"}
+  help="旧より大きく広げています。数字が大きいほど影の横幅が広がります。"
+  onChange={(n) => {
+    const next = clamp(n / 100, SHADOW_SCALE_MIN, SHADOW_SCALE_MAX);
+    setShadowScale(next);
+  }}
+  onCommit={() => {
+    const next = clamp(shadowScale, SHADOW_SCALE_MIN, SHADOW_SCALE_MAX);
+    void onSavePlacement("shadow", {
+      shadowOpacity,
+      shadowBlur,
+      shadowScale: next,
+      shadowOffsetX,
+      shadowOffsetY,
+      activePhotoMode,
+    });
+  }}
+/>
 
-        <SliderRow
-          label="影の広がり"
-          value={Math.round(safeShadowScale * 100)}
-          min={Math.round(SHADOW_SCALE_MIN * 100)}
-          max={Math.round(SHADOW_SCALE_MAX * 100)}
-          step={1}
-          disabled={busy || !canLiveEdit}
-          help="旧より大きく広げています。数字が大きいほど影の横幅が広がります。"
-          onChange={(n) =>
-            setShadowScale(clamp(n / 100, SHADOW_SCALE_MIN, SHADOW_SCALE_MAX))
-          }
-        />
+{/* =========================================
+ 影の位置 → 微調整UIへ変更
+ ・可動域を縮小
+ ・「自由移動」ではなく「補正」にする
+========================================= */}
 
-        <SliderRow
-          label="影の左右位置"
-          value={savedShadowOffsetToUi(safeShadowOffsetX)}
-          min={SHADOW_OFFSET_UI_MIN}
-          max={SHADOW_OFFSET_UI_MAX}
-          step={1}
-          disabled={busy || !canLiveEdit}
-          help="100 が基準です。旧より大きく左右へずらせます。"
-          onChange={(n) =>
-            setShadowOffsetX(
-              clamp(uiShadowOffsetToSaved(n), SHADOW_OFFSET_MIN, SHADOW_OFFSET_MAX)
-            )
-          }
-        />
+<SliderRow
+  label="影の左右位置（大きく移動）"
+  value={savedShadowOffsetToUi(safeShadowOffsetX)}
+  min={SHADOW_OFFSET_UI_MIN}
+  max={SHADOW_OFFSET_UI_MAX}
+  step={1}
+disabled={busy || !canLiveEdit || !isBackgroundLocked || editingStep !== "shadow"}
+  help="接地面から大きく外れた時に使います。まずはこのバーで大きく戻してください。"
+  onChange={(n) => {
+    const next = clamp(
+      uiShadowOffsetToSaved(n),
+      SHADOW_OFFSET_COARSE_MIN,
+      SHADOW_OFFSET_COARSE_MAX
+    );
+    setShadowOffsetX(next);
+  }}
+  onCommit={() => {
+    const next = clamp(
+      shadowOffsetX,
+      SHADOW_OFFSET_COARSE_MIN,
+      SHADOW_OFFSET_COARSE_MAX
+    );
+    void onSavePlacement("shadow", {
+      shadowOpacity,
+      shadowBlur,
+      shadowScale,
+      shadowOffsetX: next,
+      shadowOffsetY,
+      activePhotoMode,
+    });
+  }}
+/>
 
-        <SliderRow
-          label="影の上下位置"
-          value={savedShadowOffsetToUi(safeShadowOffsetY)}
-          min={SHADOW_OFFSET_UI_MIN}
-          max={SHADOW_OFFSET_UI_MAX}
-          step={1}
-          disabled={busy || !canLiveEdit}
-          help="100 が基準です。旧より大きく上下へずらせます。"
-          onChange={(n) =>
-            setShadowOffsetY(
-              clamp(uiShadowOffsetToSaved(n), SHADOW_OFFSET_MIN, SHADOW_OFFSET_MAX)
-            )
-          }
-        />
+<SliderRow
+  label="影の上下位置（大きく移動）"
+  value={savedShadowOffsetToUi(safeShadowOffsetY)}
+  min={SHADOW_OFFSET_UI_MIN}
+  max={SHADOW_OFFSET_UI_MAX}
+  step={1}
+disabled={busy || !canLiveEdit || !isBackgroundLocked || editingStep !== "shadow"}
+  help="接地位置が大きくずれた時に使います。まずはこのバーで大きく戻してください。"
+  onChange={(n) => {
+    const next = clamp(
+      uiShadowOffsetToSaved(n),
+      SHADOW_OFFSET_COARSE_MIN,
+      SHADOW_OFFSET_COARSE_MAX
+    );
+    setShadowOffsetY(next);
+  }}
+  onCommit={() => {
+    const next = clamp(
+      shadowOffsetY,
+      SHADOW_OFFSET_COARSE_MIN,
+      SHADOW_OFFSET_COARSE_MAX
+    );
+    void onSavePlacement("shadow", {
+      shadowOpacity,
+      shadowBlur,
+      shadowScale,
+      shadowOffsetX,
+      shadowOffsetY: next,
+      activePhotoMode,
+    });
+  }}
+/>
+
       </div>
 
       <div
@@ -2194,9 +2941,9 @@ export default function ProductPlacementEditor({
           テンプレ背景も AI背景も、この画面で背景を切り替えながら配置調整できます。
         </div>
 
-        <div className="mt-1">
-          最終反映は「再合成」で更新します。
-        </div>
+<div className="mt-1">
+  まず①背景で位置を決めて「座標固定」を押してください。その後に②商品、③影を調整し、最後に「④合成」で更新します。
+</div>
       </div>
     </div>
   );

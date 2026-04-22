@@ -8,18 +8,28 @@ export const runtime = "nodejs";
  * AOI FLOW
  * 商品 + 背景 合成API
  *
- * 今回の整理
- * - 背景生成の主犯ではないが、
- *   テンプレ背景時は「商品を主役に見せる」寄せ方を少し強める
- * - AI背景時は世界観を少し残す
+ * このファイルの役割
+ * - 背景画像と商品画像を受け取る
+ * - 背景のズーム / 位置を反映する
+ * - 商品の大きさ / 位置を反映する
+ * - 商品に付随する影を生成する
+ * - 最終合成画像を PNG で返す
  *
- * 今回の追加修正
- * - 商品位置 / 影位置 / 影広がり / 影ぼかし の可動域を拡張
- * - UI側の「旧より約2倍広い」調整レンジを受けられるようにする
+ * 今回の修正方針
+ * - 既存機能は削除しない
+ * - ただし「影を自由物体として動かす」思想を弱める
+ * - 影はあくまで商品に従属する補助表現として扱う
  *
- * 注意
- * - 背景ズーム / 背景位置の最終保存反映は、controller / hook 配線が別途必要
- * - 今回のこのAPIでは、商品側拡張レンジを主に受ける
+ * 今回の重要修正
+ * 1. shadow offset の保存値受け幅を縮小
+ * 2. API内部の offset 反映係数を縮小
+ * 3. shadow scale の効き方を少し弱める
+ * 4. ProductPlacementEditor 側の思想と一致するように、影の扱いを整理
+ *
+ * これにより
+ * - UIで微調整にした思想
+ * - API側の実処理
+ * のズレを減らす
  */
 
 type LightDirection = "left" | "center" | "right";
@@ -60,6 +70,58 @@ type Matrix3x3 = [
   [number, number, number]
 ];
 
+/**
+ * 影制御用定数
+ *
+ * 重要
+ * - UI側では「微調整」にしたので、
+ *   API側もその思想に合わせる
+ * - 将来また微調整したい時はこの定数を見ればよい
+ */
+
+/**
+ * 影の左右ズレ
+ * - ProductPlacementEditor 側に合わせる
+ */
+const SHADOW_OFFSET_X_EFFECTIVE_MIN = -0.25;
+const SHADOW_OFFSET_X_EFFECTIVE_MAX = 0.25;
+
+/**
+ * 影の上下ズレ
+ * - ProductPlacementEditor 側に合わせる
+ */
+const SHADOW_OFFSET_Y_EFFECTIVE_MIN = -0.25;
+const SHADOW_OFFSET_Y_EFFECTIVE_MAX = 0.25;
+
+/**
+ * UIで微調整にしたので、実ピクセル移動量も弱める
+ * - 以前は 80 相当で強すぎた
+ * - 今回は preview 側の思想に寄せる
+ */
+const SHADOW_OFFSET_X_PIXELS = 24;
+const SHADOW_OFFSET_Y_PIXELS = 24;
+
+/**
+ * grounding別の影スケール補正
+ * - 影は商品従属なので、床/机/壁/棚で少し差を出す
+ */
+function softenShadowScale(input: number) {
+  const safe = clamp(input, 0.25, 4);
+
+  if (safe <= 1) {
+    return safe;
+  }
+
+  /**
+   * 1を超えた分を 70% だけ効かせる
+   * 例:
+   * - 1.0 -> 1.0
+   * - 2.0 -> 1.7
+   * - 4.0 -> 3.1
+   */
+  return 1 + (safe - 1) * 0.7;
+}
+
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
 }
@@ -79,40 +141,62 @@ function normalizeProductWidthRatio(input: unknown): number {
 }
 
 function normalizePlacement(input: unknown): PlacementInput {
-  const raw = input && typeof input === "object" ? (input as Record<string, any>) : {};
+  const raw = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
 
   const shadowRaw =
-    raw.shadow && typeof raw.shadow === "object" ? (raw.shadow as Record<string, any>) : {};
+    raw.shadow && typeof raw.shadow === "object"
+      ? (raw.shadow as Record<string, unknown>)
+      : {};
 
   const backgroundRaw =
     raw.background && typeof raw.background === "object"
-      ? (raw.background as Record<string, any>)
+      ? (raw.background as Record<string, unknown>)
       : {};
 
   /**
-   * 今回の拡張
-   * - scale: 0.2〜4.4
-   * - x/y: -0.5〜1.5
-   * - shadow.blur: 0〜200
-   * - shadow.scale: 0.25〜4
-   * - shadow.offsetX/Y: -2〜2
-   * - background.scale: 0.5〜3
-   * - background.x/y: -1〜1
+   * 重要
+   * - 商品位置 / 商品サイズは既存の広い可動域を維持する
+   * - 背景も既存のまま維持する
+   * - 影だけは「自由移動」ではなく「微調整」に寄せる
    */
   return {
     scale: clamp(Number(raw.scale ?? 1), 0.2, 4.4),
-/**
- * フロントと完全一致させる
- */
-x: clamp(Number(raw.x ?? 0.5), -0.75, 1.75),
-y: clamp(Number(raw.y ?? 0.5), -0.75, 1.75),
+
+    /**
+     * フロントと一致
+     */
+    x: clamp(Number(raw.x ?? 0.5), -0.75, 1.75),
+    y: clamp(Number(raw.y ?? 0.5), -0.75, 1.75),
+
     shadow: {
       opacity: clamp(Number(shadowRaw.opacity ?? 0.2), 0, 1),
       blur: clamp(Number(shadowRaw.blur ?? 14), 0, 200),
+
+      /**
+       * 影の scale 自体は既存レンジを維持する
+       * 実際の効き方は makeGroundShadow 内で少し弱める
+       */
       scale: clamp(Number(shadowRaw.scale ?? 1.05), 0.25, 4),
-      offsetX: clamp(Number(shadowRaw.offsetX ?? 0), -2, 2),
-      offsetY: clamp(Number(shadowRaw.offsetY ?? 0.03), -2, 2),
+
+      /**
+       * ここが今回の重要修正
+       * - 左右は -0.25〜0.25
+       * - 上下は -0.25〜0.25
+       *
+       * ProductPlacementEditor 側と一致させる
+       */
+      offsetX: clamp(
+        Number(shadowRaw.offsetX ?? 0),
+        SHADOW_OFFSET_X_EFFECTIVE_MIN,
+        SHADOW_OFFSET_X_EFFECTIVE_MAX
+      ),
+      offsetY: clamp(
+        Number(shadowRaw.offsetY ?? 0.03),
+        SHADOW_OFFSET_Y_EFFECTIVE_MIN,
+        SHADOW_OFFSET_Y_EFFECTIVE_MAX
+      ),
     },
+
     background: {
       scale: clamp(Number(backgroundRaw.scale ?? 1), 0.5, 3),
       x: clamp(Number(backgroundRaw.x ?? 0), -1, 1),
@@ -120,6 +204,7 @@ y: clamp(Number(raw.y ?? 0.5), -0.75, 1.75),
     },
   };
 }
+
 async function transformBackground(
   buf: Buffer,
   mode: ProductPhotoMode,
@@ -158,19 +243,15 @@ async function transformBackground(
   const bgY = clamp(Number(background?.y ?? 0), -1, 1);
 
   /**
-   * object-fit: cover と同じ基準サイズを先に作る
+   * object-fit: cover と同じ基準サイズ
    */
   const coverScale = Math.max(canvas / srcW, canvas / srcH);
   const drawW = Math.max(1, Math.round(srcW * coverScale * bgScale));
   const drawH = Math.max(1, Math.round(srcH * coverScale * bgScale));
 
   /**
-   * まず背景を十分大きく拡大する
-   * その後 1024x1024 を extract で切り出す
-   *
-   * 重要:
-   * - composite に大画像を渡さない
-   * - 編集プレビューと同じく「中央基準 + overflow 範囲移動」に合わせる
+   * 背景を一度拡大し、その後 1024x1024 を切り出す
+   * preview 側の意味に揃える
    */
   const resized = await sharp(base, { failOn: "none" })
     .resize(drawW, drawH, {
@@ -182,11 +263,6 @@ async function transformBackground(
   const overflowX = Math.max(0, drawW - canvas);
   const overflowY = Math.max(0, drawH - canvas);
 
-  /**
-   * preview 側 resolveBackgroundCoverRect() と意味を合わせる
-   * left/top は「描画位置」ではなく、
-   * extract に使う「切り出し開始位置」に変換する
-   */
   const extractLeft = clamp(
     Math.round(overflowX / 2 + bgX * (overflowX / 2)),
     0,
@@ -209,6 +285,7 @@ async function transformBackground(
     .png()
     .toBuffer();
 }
+
 function normalizeLight(input: unknown): LightDirection {
   const s = String(input ?? "").trim();
   if (s === "left") return "left";
@@ -264,6 +341,11 @@ function normalizePhotoMode(input: unknown): ProductPhotoMode {
   return "ai_bg";
 }
 
+/**
+ * 既存機能維持のため残す
+ * 現在は transformBackground() を使っているが、
+ * 将来比較や切り戻しで使えるため削除しない
+ */
 async function tuneBackground(
   buf: Buffer,
   mode: ProductPhotoMode,
@@ -419,7 +501,25 @@ async function makeGroundShadow(
             ? 0.4
             : 0.6;
 
-  const scale = shadow?.scale ?? 1;
+  /**
+   * ここが今回の重要修正
+   * - 保存値のレンジは維持しつつ、
+   *   実際の影広がりへの効き方を少し丸める
+   * - 影が商品の存在感を食わないようにする
+   */
+  const scale = softenShadowScale(shadow?.scale ?? 1);
+
+  const safeOffsetX = clamp(
+    Number(shadow?.offsetX ?? 0),
+    SHADOW_OFFSET_X_EFFECTIVE_MIN,
+    SHADOW_OFFSET_X_EFFECTIVE_MAX
+  );
+
+  const safeOffsetY = clamp(
+    Number(shadow?.offsetY ?? 0.03),
+    SHADOW_OFFSET_Y_EFFECTIVE_MIN,
+    SHADOW_OFFSET_Y_EFFECTIVE_MAX
+  );
 
   const w = Math.max(60, Math.round(shadowWidth * baseScale * scale));
   const h =
@@ -430,14 +530,27 @@ async function makeGroundShadow(
   const lightShiftX = light === "left" ? 8 : light === "right" ? -8 : 0;
 
   /**
-   * 今回の拡張
-   * - offset 係数を大きくして可動域を広げる
+   * ここが今回の最重要修正
+   *
+   * 以前:
+   * - offsetX * 80
+   * - offsetY * 80 / * 60
+   *
+   * 今回:
+   * - offsetX * 24
+   * - offsetY * 24
+   *
+   * これで影が「別物のように飛ぶ」現象を大きく減らす
+   * ProductPlacementEditor の preview 側とも思想を揃える
    */
-  const cx = Math.round(centerX + lightShiftX + (shadow?.offsetX ?? 0) * 80);
+  const cx = Math.round(
+    centerX + lightShiftX + safeOffsetX * SHADOW_OFFSET_X_PIXELS
+  );
+
   const cy =
     groundingType === "shelf" || groundingType === "display"
-      ? Math.round(contactY + 1 + (shadow?.offsetY ?? 0.03) * 60)
-      : Math.round(contactY + 2 + (shadow?.offsetY ?? 0.02) * 80);
+      ? Math.round(contactY + 1 + safeOffsetY * SHADOW_OFFSET_Y_PIXELS)
+      : Math.round(contactY + 2 + safeOffsetY * SHADOW_OFFSET_Y_PIXELS);
 
   const baseOpacity =
     groundingType === "shelf" || groundingType === "display"
@@ -584,9 +697,7 @@ function resolvePlacementRect(args: {
   }
 
   /**
-   * 今回の拡張
-   * - 旧: 完全に画面内へ収める
-   * - 新: 画像サイズの75%までは外へ出せる
+   * 商品側の既存可動域は維持する
    */
   const overflowX = Math.round(fgWidth * 0.75);
   const overflowY = Math.round(fgHeight * 0.75);
@@ -650,10 +761,6 @@ function evaluateCompositeQuality(args: {
   const centered = Math.abs(left - Math.round((canvas - fgWidth) / 2)) <= 6;
   const ratioOk = productWidthRatio >= 0.18 && productWidthRatio <= 0.82;
 
-  /**
-   * 今回の拡張
-   * - 少し画面外へ出るのは許容したいので inside 判定も緩める
-   */
   const insideCanvas =
     left >= -Math.round(fgWidth * 0.75) &&
     top >= -Math.round(fgHeight * 0.75) &&
@@ -727,21 +834,56 @@ export async function POST(req: Request) {
       placement.background
     );
 
-    const effectiveProductWidthRatio = clamp(
-      baseProductWidthRatio *
-        placement.scale *
-        (groundingType === "shelf" ? 1.18 : groundingType === "display" ? 1.22 : 1),
-      0.18,
-      0.82
-    );
-    const productTargetWidth = Math.round(CANVAS * effectiveProductWidthRatio);
+    /**
+     * 🔥 フロントと完全一致させる
+     *
+     * 重要
+     * - 以前の effectiveProductWidthRatio ベース計算を消した結果、
+     *   下の quality/meta 参照だけ残って TS エラーになっていた
+     * - ここでは preview と同じく「元画像サイズ × scale」の思想を優先しつつ、
+     *   既存の meta / quality 互換のために ratio も再計算して残す
+     */
+/**
+ * 重要
+ * - preview 側は trimmed 後の見た目サイズを基準にしている
+ * - server 側も同じ基準にそろえる
+ * - 先に trim 後メタデータを取り、その trimmed 幅高を基準に targetWidth を計算する
+ */
+const trimmedMeta = await sharp(foregroundRaw, { failOn: "none" })
+  .ensureAlpha()
+  .trim()
+  .metadata();
 
-    let foregroundTuned = await tuneForeground(
-      foregroundRaw,
-      productTargetWidth,
-      productSize,
-      activePhotoMode
-    );
+const trimmedIw = Math.max(1, trimmedMeta.width || 1024);
+const trimmedIh = Math.max(1, trimmedMeta.height || 1024);
+
+const baseScale = Math.min(CANVAS / trimmedIw, CANVAS / trimmedIh);
+const finalScale = baseScale * placement.scale;
+
+/**
+ * 実際に resize に渡す幅
+ * - trim 後の見た目幅を基準にする
+ * - preview と server の基準を一致させる
+ */
+const productTargetWidth = Math.max(1, Math.round(trimmedIw * finalScale));
+
+/**
+ * 互換維持用
+ * - quality / meta でまだ使っているため残す
+ */
+const effectiveProductWidthRatio = clamp(
+  productTargetWidth / CANVAS,
+  0.18,
+  0.82
+);
+
+let foregroundTuned = await tuneForeground(
+  foregroundRaw,
+  productTargetWidth,
+  productSize,
+  activePhotoMode
+);
+
 
     const colorMatched = await applyWeakColorTemperatureMatch(foregroundTuned, backgroundTuned);
     foregroundTuned = colorMatched.buffer;
@@ -868,10 +1010,14 @@ export async function POST(req: Request) {
         quality,
       },
     });
-  } catch (e: any) {
+  } catch (e: unknown) {
     console.error("[compose-product-stage] error:", e);
+
+    const message =
+      e instanceof Error ? e.message : "compose product stage failed";
+
     return NextResponse.json(
-      { ok: false, error: e?.message || "compose product stage failed" },
+      { ok: false, error: message },
       { status: 500 }
     );
   }

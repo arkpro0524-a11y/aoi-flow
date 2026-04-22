@@ -1,4 +1,4 @@
-// /app/flow/drafts/new/hooks/useDraftEditorState.ts
+//app/flow/drafts/new/hooks/useDraftEditorState.ts
 "use client";
 
 import { useMemo, useRef, useState } from "react";
@@ -11,6 +11,8 @@ import type {
   NonAiVideoPreset,
   ProductPhotoMode,
   SizeTemplateType,
+  ProductPlacementStep,
+  ProductPlacementSnapshot,
 } from "@/lib/types/draft";
 
 /**
@@ -33,12 +35,13 @@ import type {
  * - 背景ズーム / 背景X / 背景Y を state として正式に持つ
  * - DEFAULT_DRAFT / createDefaultDraft に placement.background を追加
  * - root の backgroundScale / backgroundX / backgroundY も初期値として持つ
- * - return に background 系 state / setter を追加
+ * - step 状態を state として正式追加
+ * - undo / redo 用の履歴 state を追加
  *
  * 重要
- * - まだ型定義ファイル側（DraftDoc）が未更新でも、このファイル単体が壊れにくいように
- *   一部はローカル拡張型を使って安全に扱っています
- * - ただし最終的には "@/lib/types/draft" 側も同じ項目を正式追加するのが前提です
+ * - 既存コード互換のため root の backgroundScale / backgroundX / backgroundY は残す
+ * - ただし今後の主軸は placement.background
+ * - 履歴は UI / controller / actions が共通で使えるよう、この state hook で持つ
  */
 
 /* =========================
@@ -85,8 +88,8 @@ export type PricingTable = {
  * 背景編集値のローカル拡張型
  *
  * 重要
- * - DraftDoc 本体がまだ未更新でも、このファイルでは安全に background を扱いたい
- * - placement.background と root の backgroundScale / backgroundX / backgroundY を吸収する
+ * - DraftDoc 本体が placement.background を持っていても、
+ *   root 背景値との後方互換をこのファイルで安全に吸収する
  */
 type DraftDocWithBackground = DraftDoc & {
   placement?: {
@@ -119,6 +122,15 @@ export const FALLBACK_PRICING: PricingTable = {
   standard: { 5: 180, 10: 360 },
   high: { 5: 360, 10: 720 },
 };
+
+/**
+ * 履歴の最大保持件数
+ *
+ * 重要
+ * - 大きすぎると state が重くなるため上限を持つ
+ * - 小さすぎると undo の体験が悪いので 30 件に設定
+ */
+export const PLACEMENT_HISTORY_LIMIT = 30;
 
 /**
  * 文字オーバーレイ初期値
@@ -196,6 +208,7 @@ export function createDefaultTextOverlayBySlot(
  * 今回の追加
  * - placement.background
  * - backgroundScale / backgroundX / backgroundY
+ * - placementStep
  */
 export const DEFAULT_DRAFT: DraftDocWithBackground = {
   userId: "",
@@ -207,7 +220,9 @@ export const DEFAULT_DRAFT: DraftDocWithBackground = {
   xCaption: "",
   shortCopies: [],
 
-  // 互換
+  /**
+   * 互換
+   */
   brand: "vento",
   keywords: "",
   keywordsText: "",
@@ -238,6 +253,8 @@ export const DEFAULT_DRAFT: DraftDocWithBackground = {
    * ① 商品写真
    */
   activePhotoMode: "ai_bg",
+  placementStep: "background",
+
   placement: {
     scale: 1,
     x: 0.5,
@@ -258,6 +275,10 @@ export const DEFAULT_DRAFT: DraftDocWithBackground = {
 
   /**
    * 旧 root 値との互換保存
+   *
+   * 注意
+   * - 今後の主保存先は placement.shadow / placement.background
+   * - ここは既存読込互換のため残す
    */
   shadowOpacity: 0.12,
   shadowBlur: 12,
@@ -265,10 +286,6 @@ export const DEFAULT_DRAFT: DraftDocWithBackground = {
   shadowOffsetX: 0,
   shadowOffsetY: 0.02,
 
-  /**
-   * 今回追加
-   * - 背景編集値の root 保存互換
-   */
   backgroundScale: 1,
   backgroundX: 0,
   backgroundY: 0,
@@ -281,6 +298,7 @@ export const DEFAULT_DRAFT: DraftDocWithBackground = {
   templateBgSelectedId: undefined,
   templateBgRecommendedIds: [],
   templateBgRecommendations: [],
+  templateBgRecommendReason: "",
 
   /**
    * ② 使用シーン
@@ -356,6 +374,7 @@ export const DEFAULT_DRAFT: DraftDocWithBackground = {
  * 今回の追加
  * - placement.background の clone
  * - root の backgroundScale / backgroundX / backgroundY
+ * - placementStep
  */
 export function createDefaultDraft(): DraftDoc {
   const base = DEFAULT_DRAFT as DraftDocWithBackground;
@@ -402,6 +421,8 @@ export function createDefaultDraft(): DraftDoc {
       },
     },
 
+    placementStep: base.placementStep ?? "background",
+
     backgroundScale: base.backgroundScale ?? 1,
     backgroundX: base.backgroundX ?? 0,
     backgroundY: base.backgroundY ?? 0,
@@ -417,6 +438,51 @@ export function createDefaultDraft(): DraftDoc {
   };
 
   return next as DraftDoc;
+}
+
+/**
+ * 現在の配置 state から履歴スナップショットを作る補助関数
+ *
+ * 重要
+ * - controller / actions からも同じ意味で使えるように export する
+ * - 保存値の意味をそのまま保持する
+ */
+export function buildPlacementSnapshot(input: {
+  placementScale: number;
+  placementX: number;
+  placementY: number;
+  shadowOpacity: number;
+  shadowBlur: number;
+  shadowScale: number;
+  shadowOffsetX: number;
+  shadowOffsetY: number;
+  backgroundScale: number;
+  backgroundX: number;
+  backgroundY: number;
+  activePhotoMode: ProductPhotoMode;
+  editingStep: ProductPlacementStep;
+}): ProductPlacementSnapshot {
+  return {
+    activePhotoMode: input.activePhotoMode,
+    step: input.editingStep,
+    placement: {
+      scale: input.placementScale,
+      x: input.placementX,
+      y: input.placementY,
+      shadow: {
+        opacity: input.shadowOpacity,
+        blur: input.shadowBlur,
+        scale: input.shadowScale,
+        offsetX: input.shadowOffsetX,
+        offsetY: input.shadowOffsetY,
+      },
+      background: {
+        scale: input.backgroundScale,
+        x: input.backgroundX,
+        y: input.backgroundY,
+      },
+    },
+  };
 }
 
 /* =========================
@@ -607,16 +673,34 @@ export default function useDraftEditorState(id: string | null) {
   const [shadowOffsetY, setShadowOffsetY] = useState(0.02);
 
   /**
-   * 今回追加
    * 背景の編集値
    *
    * 重要
    * - 商品とは別管理
-   * - 値の意味は保存時に useDraftImageActions 側で placement.background へ流す
+   * - 値の意味は placement.background と一致させる
    */
   const [backgroundScale, setBackgroundScale] = useState(1);
   const [backgroundX, setBackgroundX] = useState(0);
   const [backgroundY, setBackgroundY] = useState(0);
+
+  /**
+   * 順番固定UI
+   *
+   * 重要
+   * - 背景 → 商品 → 影
+   * - ここでは見た目だけでなく正式 state として持つ
+   */
+  const [editingStep, setEditingStep] = useState<ProductPlacementStep>("background");
+
+  /**
+   * undo / redo 用履歴
+   *
+   * 重要
+   * - state hook で正式に持つ
+   * - ProductPlacementEditor ローカル管理は今後撤去してここへ寄せる
+   */
+  const [placementHistory, setPlacementHistory] = useState<ProductPlacementSnapshot[]>([]);
+  const [placementRedoHistory, setPlacementRedoHistory] = useState<ProductPlacementSnapshot[]>([]);
 
   /**
    * テンプレ背景専用 state
@@ -870,6 +954,15 @@ export default function useDraftEditorState(id: string | null) {
   const OWNER_UID = (process.env.NEXT_PUBLIC_OWNER_UID || "").trim();
   const isOwner = !!uid && !!OWNER_UID && uid === OWNER_UID;
 
+  /**
+   * undo / redo 可否
+   *
+   * 重要
+   * - page / editor でそのまま使えるよう派生値として返す
+   */
+  const canUndo = placementHistory.length > 0;
+  const canRedo = placementRedoHistory.length > 0;
+
   return {
     DEFAULT_TEXT_OVERLAY,
 
@@ -952,7 +1045,6 @@ export default function useDraftEditorState(id: string | null) {
     setShadowOffsetY,
 
     /**
-     * 今回追加
      * 背景編集値
      */
     backgroundScale,
@@ -963,6 +1055,21 @@ export default function useDraftEditorState(id: string | null) {
 
     backgroundY,
     setBackgroundY,
+
+    /**
+     * 順番固定UI
+     */
+    editingStep,
+    setEditingStep,
+
+    placementHistory,
+    setPlacementHistory,
+
+    placementRedoHistory,
+    setPlacementRedoHistory,
+
+    canUndo,
+    canRedo,
 
     /**
      * テンプレ背景専用

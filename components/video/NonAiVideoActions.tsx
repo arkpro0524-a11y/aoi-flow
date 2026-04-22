@@ -30,7 +30,13 @@ type Props = {
     rhythm: MotionCharacter["rhythm"];
   } | null;
 
+  /**
+   * 今回追加
+   * - 現在どの画像を使うのか UI に明示する
+   */
   sourceImageUrl?: string;
+  sourceLabel?: string;
+
   baseImageUrl?: string;
 
   seconds: 5 | 10;
@@ -59,6 +65,10 @@ export default function NonAiVideoActions(props: Props) {
   const [localBusy, setLocalBusy] = useState(false);
   const [msg, setMsg] = useState("");
 
+  /**
+   * sourceImageUrl が優先
+   * 無ければ baseImageUrl へフォールバック
+   */
   const inputImageUrl = String(props.sourceImageUrl || props.baseImageUrl || "").trim();
 
   const canRun = useMemo(() => {
@@ -68,18 +78,28 @@ export default function NonAiVideoActions(props: Props) {
     if (!props.draftId) return false;
     if (!props.preset?.id) return false;
     if (!inputImageUrl) return false;
-    if (!props.vision?.trim()) return false;
+
+    /**
+     * 以前は vision 必須だったが、
+     * 商品確認動画では vision 未入力でも動けた方が自然
+     * そのため今回この制約は外す
+     */
     return true;
-  }, [props.busy, localBusy, props.uid, props.draftId, props.preset?.id, inputImageUrl, props.vision]);
+  }, [props.busy, localBusy, props.uid, props.draftId, props.preset?.id, inputImageUrl]);
 
   async function run() {
     if (!canRun) {
-      if (!props.uid) props.setReason("ログイン確認中です");
-      else if (!props.draftId) props.setReason("draftId がありません（先に保存して）");
-      else if (!props.preset?.id) props.setReason("動画ボタン（人格）を選択してください");
-      else if (!inputImageUrl) props.setReason("動画化する画像がありません（合成/動画用 を保存して）");
-      else if (!props.vision?.trim()) props.setReason("Vision（必須）を入力してください");
-      else props.setReason("実行できません（状態を確認してください）");
+      if (!props.uid) {
+        props.setReason("ログイン確認中です");
+      } else if (!props.draftId) {
+        props.setReason("draftId がありません。先に保存してください");
+      } else if (!props.preset?.id) {
+        props.setReason("動画テンプレを選択してください");
+      } else if (!inputImageUrl) {
+        props.setReason("動画化する画像がありません。合成画像またはAI静止画を先に用意してください");
+      } else {
+        props.setReason("実行できません。状態を確認してください");
+      }
       return;
     }
 
@@ -90,7 +110,7 @@ export default function NonAiVideoActions(props: Props) {
     try {
       const token = await auth.currentUser?.getIdToken(true);
       if (!token) {
-        props.setReason("認証トークン取得に失敗しました（再ログインしてください）");
+        props.setReason("認証トークン取得に失敗しました。再ログインしてください");
         return;
       }
 
@@ -104,7 +124,11 @@ export default function NonAiVideoActions(props: Props) {
 
       const { w, h } = parseSize(props.size);
 
-      // 1) webm生成（クライアント）
+      /**
+       * 1) クライアントで non-ai WEBM を生成
+       * - ここでは「壊れない制御動画」を作る
+       * - 派手な変形や生成はしない
+       */
       const blob = await generateNonAiVideoWebm({
         primary: inputImageUrl,
         materials: [],
@@ -114,11 +138,13 @@ export default function NonAiVideoActions(props: Props) {
       });
 
       if (!blob || blob.size === 0) {
-        props.setReason("webm 生成に失敗（Blobが空）");
+        props.setReason("WEBM生成に失敗しました（Blobが空です）");
         return;
       }
 
-      // 2) upload（Storageへ）
+      /**
+       * 2) 一旦アップロード
+       */
       const fd = new FormData();
       fd.append("draftId", props.draftId!);
       fd.append("seconds", String(props.seconds));
@@ -140,13 +166,15 @@ export default function NonAiVideoActions(props: Props) {
         return;
       }
 
-      const webmPath: string = String(upj?.path || "").trim();
+      const webmPath = String(upj?.path || "").trim();
       if (!webmPath) {
-        props.setReason("アップロード成功したが path が空（upload-video-webm の返却を確認して）");
+        props.setReason("アップロードは成功しましたが path が空です");
         return;
       }
 
-      // 3) finalize（サーバでmp4化）
+      /**
+       * 3) サーバで mp4 化
+       */
       const fin = await fetch("/api/finalize-nonai-mp4", {
         method: "POST",
         headers: {
@@ -166,23 +194,25 @@ export default function NonAiVideoActions(props: Props) {
         return;
       }
 
-      const mp4Url: string =
+      const mp4Url =
         (typeof finj?.mp4Url === "string" && finj.mp4Url) ||
         (typeof finj?.url === "string" && finj.url) ||
         (typeof finj?.videoUrl === "string" && finj.videoUrl) ||
         "";
 
       if (!mp4Url) {
-        props.setReason("mp4化は成功したが mp4Url が空（API返却を確認して）");
+        props.setReason("mp4化は成功しましたが mp4Url が空です");
         return;
       }
 
-      // 4) drafts更新は既存の唯一ルート（page.tsx内 saveNonAiVideoToDraft 経由）
+      /**
+       * 4) draft 保存
+       */
       await props.onSave(mp4Url);
 
       setMsg(`✅ 非AI動画(mp4)が完成しました（${props.seconds}秒）`);
     } catch (e: any) {
-      props.setReason(e?.message || "非AI動画（webm→mp4）の処理に失敗しました");
+      props.setReason(e?.message || "非AI動画の生成に失敗しました");
     } finally {
       setLocalBusy(false);
     }
@@ -190,11 +220,19 @@ export default function NonAiVideoActions(props: Props) {
 
   return (
     <div className="rounded-2xl border border-white/10 bg-black/20 p-3 mt-2">
-      <div className="text-white/80 font-black text-xs">非AI動画（webm生成 → upload → mp4化 → 保存）</div>
+      <div className="text-white/85 font-black text-xs">非AI動画（商品確認向け）</div>
 
-      <div className="mt-2 text-white/60 text-xs" style={{ lineHeight: 1.5 }}>
+      <div className="mt-2 text-white/60 text-xs" style={{ lineHeight: 1.6 }}>
         尺：{props.seconds === 10 ? "10秒" : "5秒"} / 品質：
         {props.quality === "high" ? "高品質" : "標準"} / サイズ：{props.size}
+      </div>
+
+      <div className="mt-2 text-white/60 text-xs" style={{ lineHeight: 1.6 }}>
+        使用画像：{props.sourceLabel || "自動選択"}
+      </div>
+
+      <div className="mt-1 text-white/45 text-[11px] break-all">
+        {inputImageUrl || "まだ画像がありません"}
       </div>
 
       <div className="mt-3 flex gap-2">
@@ -203,7 +241,7 @@ export default function NonAiVideoActions(props: Props) {
           disabled={!canRun}
           onClick={run}
           className="rounded-full px-5 py-2 text-xs font-black bg-white text-black disabled:opacity-40"
-          title="現在の尺/品質/サイズ設定で非AI動画を生成します（mp4で保存）"
+          title="現在の尺・品質・サイズ設定で非AI商品動画を生成します"
         >
           ▶ 非AIで生成（{props.seconds === 10 ? "10秒" : "5秒"} / mp4）
         </button>

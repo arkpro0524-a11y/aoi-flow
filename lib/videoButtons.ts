@@ -1,4 +1,5 @@
 // /lib/videoButtons.ts
+
 import type { MotionCharacter } from "@/lib/types/draft";
 
 /* =========================
@@ -16,6 +17,11 @@ export type VideoButton = {
   // 常に nonai
   engine: "nonai";
 
+  /**
+   * 説明文
+   * - ユーザーに「このテンプレの役割」を明確に伝える
+   * - 商品動画は演出ではなく、理解補助の道具として扱う
+   */
   description: string;
 
   motionRange: {
@@ -33,81 +39,59 @@ export type VideoButton = {
 export const DEFAULT_VIDEO_BUTTON_ID = "sell_hook_1s_pushin_nonai";
 
 /* =====================================================
-   🎯 非AI専用：売上量産エンジン
+   AOI FLOW｜商品動画（非AI専用）
    - 崩壊ゼロ
    - 再生成なし
-   - カメラ/構成のみ
+   - 検品・理解・信頼を優先
 ===================================================== */
 
 export const videoButtons: VideoButton[] = [
-  // =========================
-  // 即売型（3秒フック）
-  // =========================
+  /**
+   * ① 全体確認型
+   * - 最初に何の商品かを分かりやすく伝える
+   * - 旧IDは維持する
+   */
   {
     id: "sell_hook_1s_pushin_nonai",
-    big: "① 即売型",
-    mid: "3秒フック",
-    small: "強ズームイン",
+    big: "① 検品導線",
+    mid: "全体確認",
+    small: "冒頭で把握",
     engine: "nonai",
-    description: "冒頭1秒で注目を取る（崩壊ゼロ）",
+    description: "冒頭で全体像を短く見せ、何の商品かをすぐ理解させる",
     motionRange: {
-      tempo: ["sharp", "normal"],
+      tempo: ["normal", "sharp"],
       reveal: ["early"],
-      intensity: ["balanced", "strong"],
-      attitude: ["assertive", "neutral"],
+      intensity: ["calm", "balanced"],
+      attitude: ["neutral", "assertive"],
       rhythm: ["continuous"],
     },
     defaultMotion: {
       tempo: "normal",
       reveal: "early",
       intensity: "balanced",
-      attitude: "assertive",
+      attitude: "neutral",
       rhythm: "continuous",
     },
   },
 
-  // =========================
-  // 高級ブランド型
-  // =========================
+  /**
+   * ② 質感確認型
+   * - 中古・高級感・素材感で最重要
+   * - Vento にかなり相性が良い
+   */
   {
     id: "sell_luxury_slow_zoom_nonai",
-    big: "② 高級ブランド型",
-    mid: "余白重視",
-    small: "スローズーム",
+    big: "② 質感確認",
+    mid: "素材を見せる",
+    small: "静かな寄り",
     engine: "nonai",
-    description: "スロー＋余白で高級感を演出",
+    description: "木目・金属・布地などの質感確認に向いた静かなズーム",
     motionRange: {
       tempo: ["slow"],
-      reveal: ["delayed"],
-      intensity: ["calm"],
+      reveal: ["early", "delayed"],
+      intensity: ["calm", "balanced"],
       attitude: ["humble", "neutral"],
-      rhythm: ["with_pause"],
-    },
-    defaultMotion: {
-      tempo: "slow",
-      reveal: "delayed",
-      intensity: "calm",
-      attitude: "neutral",
-      rhythm: "with_pause",
-    },
-  },
-
-  // =========================
-  // 比較訴求型
-  // =========================
-  {
-    id: "sell_compare_split_nonai",
-    big: "③ 比較訴求型",
-    mid: "安全比較",
-    small: "静止分割",
-    engine: "nonai",
-    description: "再生成なし。並列表示で差を見せる",
-    motionRange: {
-      tempo: ["slow"],
-      reveal: ["early"],
-      intensity: ["calm"],
-      attitude: ["neutral"],
-      rhythm: ["with_pause"],
+      rhythm: ["with_pause", "continuous"],
     },
     defaultMotion: {
       tempo: "slow",
@@ -118,20 +102,50 @@ export const videoButtons: VideoButton[] = [
     },
   },
 
-  // =========================
-  // 使用イメージ型
-  // =========================
+  /**
+   * ③ 多視点確認型
+   * - 回転ではなく「視点切替」を主役にする
+   * - 1枚から無理に回さない
+   */
+  {
+    id: "sell_compare_split_nonai",
+    big: "③ 多視点確認",
+    mid: "正面以外も確認",
+    small: "視点切替",
+    engine: "nonai",
+    description: "正面だけでなく側面や背面を比較的安全に見せる",
+    motionRange: {
+      tempo: ["slow", "normal"],
+      reveal: ["early"],
+      intensity: ["calm", "balanced"],
+      attitude: ["neutral"],
+      rhythm: ["with_pause", "continuous"],
+    },
+    defaultMotion: {
+      tempo: "slow",
+      reveal: "early",
+      intensity: "balanced",
+      attitude: "neutral",
+      rhythm: "with_pause",
+    },
+  },
+
+  /**
+   * ④ 使用シーン補助型
+   * - 検品主役ではない
+   * - あくまで補助
+   */
   {
     id: "sell_usecase_bgvideo_comp_nonai",
-    big: "④ 使用イメージ型",
-    mid: "実写風",
-    small: "背景動画合成",
+    big: "④ 使用イメージ",
+    mid: "空間補助",
+    small: "背景で補足",
     engine: "nonai",
-    description: "商品固定＋背景動画で生活感を出す",
+    description: "設置後の雰囲気や使用シーンを補足する補助テンプレ",
     motionRange: {
       tempo: ["normal"],
       reveal: ["delayed"],
-      intensity: ["balanced"],
+      intensity: ["calm", "balanced"],
       attitude: ["neutral"],
       rhythm: ["continuous"],
     },
@@ -144,28 +158,30 @@ export const videoButtons: VideoButton[] = [
     },
   },
 
-  // =========================
-  // CTA型
-  // =========================
+  /**
+   * ⑤ まとめ締め型
+   * - 最後に再確認させる
+   * - CTA というより「確認の締め」
+   */
   {
     id: "sell_cta_last_pushin_nonai",
-    big: "⑤ CTA型",
-    mid: "行動促進",
-    small: "ラスト強調ズーム",
+    big: "⑤ まとめ",
+    mid: "最終確認",
+    small: "締めの寄り",
     engine: "nonai",
-    description: "最後に寄って行動を促す",
+    description: "最後にもう一度見せ場を寄せて、記憶に残しやすくする",
     motionRange: {
       tempo: ["normal"],
       reveal: ["last"],
-      intensity: ["balanced"],
-      attitude: ["assertive"],
+      intensity: ["calm", "balanced"],
+      attitude: ["neutral", "assertive"],
       rhythm: ["continuous"],
     },
     defaultMotion: {
       tempo: "normal",
       reveal: "last",
       intensity: "balanced",
-      attitude: "assertive",
+      attitude: "neutral",
       rhythm: "continuous",
     },
   },
