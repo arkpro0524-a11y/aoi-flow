@@ -83,15 +83,15 @@ type Matrix3x3 = [
  * 影の左右ズレ
  * - ProductPlacementEditor 側に合わせる
  */
-const SHADOW_OFFSET_X_EFFECTIVE_MIN = -0.25;
-const SHADOW_OFFSET_X_EFFECTIVE_MAX = 0.25;
+const SHADOW_OFFSET_X_EFFECTIVE_MIN = -8;
+const SHADOW_OFFSET_X_EFFECTIVE_MAX = 8;
 
 /**
  * 影の上下ズレ
  * - ProductPlacementEditor 側に合わせる
  */
-const SHADOW_OFFSET_Y_EFFECTIVE_MIN = -0.25;
-const SHADOW_OFFSET_Y_EFFECTIVE_MAX = 0.25;
+const SHADOW_OFFSET_Y_EFFECTIVE_MIN = -8;
+const SHADOW_OFFSET_Y_EFFECTIVE_MAX = 8;
 
 /**
  * UIで微調整にしたので、実ピクセル移動量も弱める
@@ -624,6 +624,80 @@ async function makeEmptyLayer(canvasSize: number): Promise<Buffer> {
     .toBuffer();
 }
 
+/**
+ * 商品画像を1024pxキャンバス内に安全に配置する
+ *
+ * 重要
+ * - 商品画像がキャンバスより大きい場合でも落ちないようにする
+ * - はみ出した部分は自然に切り取る
+ * - 既存の位置調整 left / top の意味は変えない
+ */
+async function makePlacedProductLayer(args: {
+  canvasSize: number;
+  foregroundBuffer: Buffer;
+  left: number;
+  top: number;
+}): Promise<Buffer> {
+  const { canvasSize, foregroundBuffer, left, top } = args;
+
+  const meta = await sharp(foregroundBuffer, { failOn: "none" }).metadata();
+
+  const fgWidth = Math.max(1, meta.width || canvasSize);
+  const fgHeight = Math.max(1, meta.height || canvasSize);
+
+  /**
+   * キャンバス上に実際に見える範囲
+   */
+  const visibleLeftOnCanvas = clamp(left, 0, canvasSize);
+  const visibleTopOnCanvas = clamp(top, 0, canvasSize);
+  const visibleRightOnCanvas = clamp(left + fgWidth, 0, canvasSize);
+  const visibleBottomOnCanvas = clamp(top + fgHeight, 0, canvasSize);
+
+  const visibleWidth = Math.max(0, visibleRightOnCanvas - visibleLeftOnCanvas);
+  const visibleHeight = Math.max(0, visibleBottomOnCanvas - visibleTopOnCanvas);
+
+  if (visibleWidth <= 0 || visibleHeight <= 0) {
+    return await makeEmptyLayer(canvasSize);
+  }
+
+  /**
+   * 商品画像側から切り出す開始位置
+   */
+  const extractLeft = clamp(visibleLeftOnCanvas - left, 0, fgWidth - 1);
+  const extractTop = clamp(visibleTopOnCanvas - top, 0, fgHeight - 1);
+
+  const safeExtractWidth = clamp(visibleWidth, 1, fgWidth - extractLeft);
+  const safeExtractHeight = clamp(visibleHeight, 1, fgHeight - extractTop);
+
+  const croppedForeground = await sharp(foregroundBuffer, { failOn: "none" })
+    .extract({
+      left: extractLeft,
+      top: extractTop,
+      width: safeExtractWidth,
+      height: safeExtractHeight,
+    })
+    .png()
+    .toBuffer();
+
+  return await sharp({
+    create: {
+      width: canvasSize,
+      height: canvasSize,
+      channels: 4,
+      background: { r: 0, g: 0, b: 0, alpha: 0 },
+    },
+  })
+    .composite([
+      {
+        input: croppedForeground,
+        left: visibleLeftOnCanvas,
+        top: visibleTopOnCanvas,
+      },
+    ])
+    .png()
+    .toBuffer();
+}
+
 function toPngDataUrl(buf: Buffer) {
   return `data:image/png;base64,${buf.toString("base64")}`;
 }
@@ -926,12 +1000,24 @@ let foregroundTuned = await tuneForeground(
     const contactShadow = await makeEmptyLayer(CANVAS);
     const ambientGroundBand = await makeEmptyLayer(CANVAS);
 
+    /**
+     * 商品が1024pxキャンバスより大きい場合でも
+     * sharp の composite エラーを出さないため、
+     * 一度1024x1024の透明レイヤーに商品を配置する
+     */
+    const productLayer = await makePlacedProductLayer({
+      canvasSize: CANVAS,
+      foregroundBuffer: foregroundWithDepth,
+      left,
+      top,
+    });
+
     const composed = await sharp(backgroundTuned)
       .composite([
         { input: ambientGroundBand, top: 0, left: 0 },
         { input: groundShadow, top: 0, left: 0 },
         { input: contactShadow, top: 0, left: 0 },
-        { input: foregroundWithDepth, top, left },
+        { input: productLayer, top: 0, left: 0 },
       ])
       .png()
       .toBuffer();

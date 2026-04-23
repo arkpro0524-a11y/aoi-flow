@@ -707,7 +707,12 @@ const cx = clamp(
   canvas + Math.round(w)
 );
 
-const cy = Math.round(contactY + 2 + safeOffsetY * 80);
+/**
+ * API側 makeGroundShadow() と完全一致させる
+ * - 以前は * 80 だったため、編集プレビューだけ影が大きく上下に動いていた
+ * - API側は SHADOW_OFFSET_Y_PIXELS = 24
+ */
+const cy = Math.round(contactY + 2 + safeOffsetY * 24);
 
 const opacity = clamp(0.12 + shadowOpacity * 0.5, 0, 0.5);
 const blurPx = Math.max(1, shadowBlur * 0.8);

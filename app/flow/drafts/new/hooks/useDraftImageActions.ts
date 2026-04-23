@@ -2674,13 +2674,19 @@ if (!fg) {
         x: clamp(Number(placementX ?? 0.5), -0.75, 1.75),
         y: clamp(Number(placementY ?? 0.5), -0.75, 1.75),
 
-        shadow: {
-          opacity: clamp(Number(shadowOpacity ?? 0.12), 0, 1),
-          blur: clamp(Number(shadowBlur ?? 12), 0, 200),
-          scale: clamp(safeShadowScaleRaw, 0.25, 4),
-          offsetX: clamp(Number(shadowOffsetX ?? 0), -0.25, 0.25),
-          offsetY: clamp(Number(shadowOffsetY ?? 0), -8, 8),
-        },
+shadow: {
+  opacity: clamp(Number(shadowOpacity ?? 0.12), 0, 1),
+  blur: clamp(Number(shadowBlur ?? 12), 0, 200),
+  scale: clamp(safeShadowScaleRaw, 0.25, 4),
+
+  /**
+   * 🔥 修正ポイント
+   * UIと完全一致（-8〜8）
+   * ここで勝手に縮めない
+   */
+  offsetX: clamp(Number(shadowOffsetX ?? 0), -8, 8),
+  offsetY: clamp(Number(shadowOffsetY ?? 0), -8, 8),
+},
 
         background: {
           scale: clamp(Number(backgroundScale ?? 1), 0.5, 3),
