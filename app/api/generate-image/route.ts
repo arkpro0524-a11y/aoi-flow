@@ -17,7 +17,7 @@ export const dynamic = "force-dynamic";
  * - referenceImageUrl:
  *   元画像を参照して「商品も背景もまとめてAI再生成」するために使う
  * - generationMode:
- *   使用シーン用か、ストーリー用かを区別するために使う
+ *   用か、ストーリー用かを区別するために使う
  * - draftId:
  *   将来の保存先整理やログ参照で使えるように受け取る
  */
@@ -139,7 +139,7 @@ function normalizeGenerationMode(input: unknown): string {
 }
 
 /**
- * 使用シーン / ストーリー向けの prompt を作る
+ *  / ストーリー向けの prompt を作る
  *
  * 重要
  * - referenceImageUrl がある時はこちらを優先する
@@ -315,8 +315,17 @@ export async function POST(req: Request) {
    * 既存画面との互換性を壊さないため
    */
   const bucket = getStorage().bucket();
-  const objectPath = `users/${uid}/generations/images/${idemKey}.png`;
-  const fileRef = bucket.file(objectPath);
+let objectPath = `users/${uid}/generations/images/${idemKey}.png`;
+
+if (draftId && generationMode === "usage_scene_regeneration") {
+  objectPath = `users/${uid}/drafts/${draftId}/idea/${idemKey}.png`;
+}
+
+if (draftId && generationMode === "story_regeneration") {
+  objectPath = `users/${uid}/drafts/${draftId}/story/${idemKey}.png`;
+}
+
+const fileRef = bucket.file(objectPath);
 
   /**
    * まず Storage 実体を見て再利用
