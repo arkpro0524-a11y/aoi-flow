@@ -1640,16 +1640,25 @@ async function renderOverlayToCanvasAndGetDataUrlBySlot(
     const oy = Number(shadow.offsetY ?? 0);
 
     if (opacity > 0) {
-      ctx.globalAlpha = opacity;
-      ctx.filter = `blur(${blur}px)`;
+const shadowWidth = w * 0.82;
+const baseScale = 0.6;
 
-      const sw = w * sScale;
-      const sh = h * sScale;
+const sw = shadowWidth * baseScale * sScale;
+const sh = sw * 0.08;
 
-      const sx = x + ox * SIZE;
-      const sy = y + oy * SIZE;
+const cx = SIZE * px + ox * 24;
+const cy = y + h + 2 + oy * 24;
 
-      ctx.drawImage(img, sx, sy, sw, sh);
+ctx.globalAlpha = 0.12 + opacity * 0.5;
+ctx.filter = `blur(${blur * 0.8}px)`;
+
+ctx.beginPath();
+ctx.ellipse(cx, cy, sw / 2, sh / 2, 0, 0, Math.PI * 2);
+ctx.fillStyle = "black";
+ctx.fill();
+
+ctx.globalAlpha = 1;
+ctx.filter = "none";
 
       ctx.globalAlpha = 1;
       ctx.filter = "none";

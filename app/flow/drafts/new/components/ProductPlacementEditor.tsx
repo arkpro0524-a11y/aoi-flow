@@ -1812,21 +1812,16 @@ useEffect(() => {
     zIndex: 2,
   };
 
-  const shadowStyle: React.CSSProperties = {
-    position: "absolute",
-    width: `${(previewGeometry.shadowRect.widthPx / previewGeometry.canvas) * 100}%`,
-    height: `${(previewGeometry.shadowRect.heightPx / previewGeometry.canvas) * 100}%`,
-    left: `${(previewGeometry.shadowRect.leftPx / previewGeometry.canvas) * 100}%`,
-    top: `${(previewGeometry.shadowRect.topPx / previewGeometry.canvas) * 100}%`,
-    borderRadius: "9999px",
-    background: `rgba(0,0,0,${previewGeometry.shadowRect.opacity})`,
-    filter: `blur(${previewGeometry.shadowRect.blurPx}px)`,
-    opacity: 1,
-    mixBlendMode: "multiply",
-    pointerEvents: "none",
-    userSelect: "none",
-    zIndex: 1,
-  };
+const shadowSvgStyle: React.CSSProperties = {
+  position: "absolute",
+  inset: 0,
+  width: "100%",
+  height: "100%",
+  pointerEvents: "none",
+  userSelect: "none",
+  zIndex: 1,
+  mixBlendMode: "multiply",
+};
 
   /**
    * 背景のズーム / 位置（編集プレビュー専用）
@@ -2426,16 +2421,44 @@ onClick={async () => {
               }}
             />
 
-            {shouldShowProductOverlay ? (
-              <>
-                <div style={shadowStyle} />
-<img
-  src={displayForegroundUrl}
-  alt="product preview"
-  style={productStyle}
-/>
-              </>
-            ) : null}
+{shouldShowProductOverlay ? (
+  <>
+    {previewGeometry.shadowRect.opacity > 0 ? (
+      <svg
+        viewBox={`0 0 ${previewGeometry.canvas} ${previewGeometry.canvas}`}
+        preserveAspectRatio="none"
+        style={shadowSvgStyle}
+      >
+        <defs>
+          <filter id="preview-ground-shadow-blur">
+            <feGaussianBlur stdDeviation={previewGeometry.shadowRect.blurPx} />
+          </filter>
+        </defs>
+
+        <ellipse
+          cx={
+            previewGeometry.shadowRect.leftPx +
+            previewGeometry.shadowRect.widthPx / 2
+          }
+          cy={
+            previewGeometry.shadowRect.topPx +
+            previewGeometry.shadowRect.heightPx / 2
+          }
+          rx={previewGeometry.shadowRect.widthPx / 2}
+          ry={previewGeometry.shadowRect.heightPx / 2}
+          fill={`rgba(0,0,0,${previewGeometry.shadowRect.opacity})`}
+          filter="url(#preview-ground-shadow-blur)"
+        />
+      </svg>
+    ) : null}
+
+    <img
+      src={displayForegroundUrl}
+      alt="product preview"
+      style={productStyle}
+    />
+  </>
+) : null}
 
             {hasOverlayText ? (
               <div style={overlayPreviewStyle}>
