@@ -1,4 +1,3 @@
-// /components/FlowShell.tsx
 "use client";
 
 import Link from "next/link";
@@ -6,10 +5,26 @@ import { usePathname, useRouter } from "next/navigation";
 import type { User } from "firebase/auth";
 import React from "react";
 
-type Props = { user: User | null; onLogout: () => Promise<void>; children: React.ReactNode };
+type Props = {
+  user: User | null;
+  onLogout: () => Promise<void>;
+  children: React.ReactNode;
+};
 
 function cx(...xs: (string | false | undefined)[]) {
   return xs.filter(Boolean).join(" ");
+}
+
+function isAdminUser(user: User | null): boolean {
+  const raw = process.env.NEXT_PUBLIC_ADMIN_UIDS || "";
+  const adminUids = raw
+    .split(",")
+    .map((x) => x.trim())
+    .filter(Boolean);
+
+  if (!user?.uid) return false;
+
+  return adminUids.includes(user.uid);
 }
 
 const UI = {
@@ -30,10 +45,14 @@ export default function FlowShell({ user, onLogout, children }: Props) {
   const pathname = usePathname();
   const router = useRouter();
 
-  const isActive = (href: string) => pathname === href || pathname.startsWith(href + "/");
+  const isAdmin = isAdminUser(user);
+
+  const isActive = (href: string) =>
+    pathname === href || pathname.startsWith(href + "/");
 
   const Tab = ({ href, label }: { href: string; label: string }) => {
     const active = isActive(href);
+
     return (
       <Link
         href={href}
@@ -48,12 +67,16 @@ export default function FlowShell({ user, onLogout, children }: Props) {
           alignItems: "center",
           gap: 10,
           whiteSpace: "nowrap",
-          color: active ? "rgba(255,255,255,0.98)" : "rgba(255,255,255,0.78)",
-          background: active ? "rgba(255,255,255,0.22)" : "rgba(255,255,255,0.08)",
+          color: active
+            ? "rgba(255,255,255,0.98)"
+            : "rgba(255,255,255,0.78)",
+          background: active
+            ? "rgba(255,255,255,0.22)"
+            : "rgba(255,255,255,0.08)",
           border: active
             ? "1px solid rgba(255,255,255,0.18)"
             : "1px solid rgba(255,255,255,0.10)",
-          flex: "0 0 auto", // ✅ タブは縮めない（横スクロール前提）
+          flex: "0 0 auto",
         }}
       >
         <span
@@ -61,7 +84,9 @@ export default function FlowShell({ user, onLogout, children }: Props) {
             width: 10,
             height: 10,
             borderRadius: 9999,
-            background: active ? "rgba(255,255,255,0.98)" : "rgba(255,255,255,0.45)",
+            background: active
+              ? "rgba(255,255,255,0.98)"
+              : "rgba(255,255,255,0.45)",
           }}
         />
         {label}
@@ -82,32 +107,39 @@ export default function FlowShell({ user, onLogout, children }: Props) {
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_10%,rgba(255,255,255,0.07),transparent_35%),radial-gradient(circle_at_80%_30%,rgba(255,255,255,0.05),transparent_40%)]" />
       </div>
 
-      {/* ✅ header 自体を “絶対にはみ出さない箱” にする */}
       <header className="sticky top-0 z-30 border-b border-white/12 bg-black/45 backdrop-blur overflow-x-hidden">
-        {/* ✅ スマホ：2段構成（ロゴ+ログアウト / タブ帯）にしてはみ出し根絶 */}
         <div className="px-4 md:px-6 py-3">
-          {/* 1段目 */}
           <div className="flex items-center gap-3">
-            {/* 左：ロゴ */}
             <div className="flex items-center gap-3 md:gap-4 min-w-0">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src="/logo-aoi-flow2.png"
                 alt="AOI FLOW"
                 className="rounded-2xl bg-white/8 p-1 ring-1 ring-white/10 shrink-0"
                 style={{ width: UI.logo as any, height: UI.logo as any }}
               />
+
               <div className="leading-tight min-w-0">
-                <div style={{ fontSize: UI.title as any, fontWeight: 900, letterSpacing: "0.06em" }}>
+                <div
+                  style={{
+                    fontSize: UI.title as any,
+                    fontWeight: 900,
+                    letterSpacing: "0.06em",
+                  }}
+                >
                   AOI FLOW
                 </div>
-                <div style={{ fontSize: UI.sub as any, color: "rgba(255,255,255,0.70)" }}>
+
+                <div
+                  style={{
+                    fontSize: UI.sub as any,
+                    color: "rgba(255,255,255,0.70)",
+                  }}
+                >
                   Caption Studio
                 </div>
               </div>
             </div>
 
-            {/* 右：ログアウト */}
             <div className="ml-auto shrink-0">
               <button
                 onClick={logout}
@@ -126,7 +158,6 @@ export default function FlowShell({ user, onLogout, children }: Props) {
             </div>
           </div>
 
-          {/* 2段目：タブ（✅ 必ずスライドできる横スクロール帯） */}
           <div className="mt-3">
             <div
               className="[&::-webkit-scrollbar]:hidden"
@@ -135,16 +166,10 @@ export default function FlowShell({ user, onLogout, children }: Props) {
                 overflowX: "auto",
                 overflowY: "hidden",
                 WebkitOverflowScrolling: "touch",
-
-                // ✅ iOSで“指で横に送れる”を確実にする
                 touchAction: "pan-x",
                 overscrollBehaviorX: "contain",
-
-                // ✅ 最後のタブが右端で欠けない
                 paddingLeft: 6,
                 paddingRight: 18,
-
-                // ✅ スクロールバー非表示（Firefox/IE系）
                 scrollbarWidth: "none" as any,
                 msOverflowStyle: "none" as any,
               }}
@@ -162,6 +187,12 @@ export default function FlowShell({ user, onLogout, children }: Props) {
               >
                 <Tab href="/flow/drafts" label="下書き一覧" />
                 <Tab href="/flow/drafts/new" label="新規作成" />
+                <Tab href="/flow/sell-check" label="売れる診断" />
+
+                {isAdmin ? (
+                  <Tab href="/flow/sell-check/admin" label="学習データ管理" />
+                ) : null}
+
                 <Tab href="/flow/inbox" label="投稿待ち" />
                 <Tab href="/flow/posted" label="投稿済み" />
                 <Tab href="/flow/brands" label="設定" />
@@ -171,7 +202,6 @@ export default function FlowShell({ user, onLogout, children }: Props) {
         </div>
       </header>
 
-      {/* ✅ max-w-7xl を撤去：PC幅を殺さない */}
       <div className="w-full px-3 sm:px-4 md:px-6">
         <div className="mx-auto w-full max-w-[1600px]">
           <div className="py-6 min-h-0">

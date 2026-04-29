@@ -1,3 +1,4 @@
+//app/api/_bgLogs/saveBgLog.ts
 /**
  * AOI FLOW
  * 背景生成ログ保存ユーティリティ

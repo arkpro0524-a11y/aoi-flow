@@ -1143,6 +1143,15 @@ const [activePreviewTab, setActivePreviewTab] = useState<"edit" | "final">("edit
  */
 const [isBackgroundLocked, setIsBackgroundLocked] = useState(false);
 
+/**
+ * 追加
+ * - Storage上の画像URLが同じまま上書きされると、
+ *   ブラウザが古い画像を表示することがある
+ * - 表示専用に query を付けて、最新画像を再読み込みさせる
+ */
+const [compositeImageRefreshKey, setCompositeImageRefreshKey] = useState(0);
+const [compositeTextImageRefreshKey, setCompositeTextImageRefreshKey] = useState(0);
+
 
   /**
    * ★修正
@@ -1733,9 +1742,26 @@ useEffect(() => {
     return String(aiImageUrl || "").trim();
   }, [aiImageUrl]);
 
-  const savedCompositeTextUrl = useMemo(() => {
-    return String(compositeTextImageUrl || "").trim();
-  }, [compositeTextImageUrl]);
+const savedCompositeTextUrl = useMemo(() => {
+  return String(compositeTextImageUrl || "").trim();
+}, [compositeTextImageUrl]);
+
+/**
+ * 追加
+ * - 実データURLは壊さない
+ * - 画面表示だけ cache bust する
+ */
+const savedCompositeDisplayUrl = useMemo(() => {
+  if (!savedCompositeUrl) return "";
+  const separator = savedCompositeUrl.includes("?") ? "&" : "?";
+  return `${savedCompositeUrl}${separator}preview=${compositeImageRefreshKey}`;
+}, [savedCompositeUrl, compositeImageRefreshKey]);
+
+const savedCompositeTextDisplayUrl = useMemo(() => {
+  if (!savedCompositeTextUrl) return "";
+  const separator = savedCompositeTextUrl.includes("?") ? "&" : "?";
+  return `${savedCompositeTextUrl}${separator}preview=${compositeTextImageRefreshKey}`;
+}, [savedCompositeTextUrl, compositeTextImageRefreshKey]);
 
   /**
    * 商品オーバーレイを乗せて良いか
@@ -1893,9 +1919,17 @@ async function handleRecompose() {
     return;
   }
 
-  await handleSavePlacement(editingStep);
-  await onRecompose?.();
-  setActivePreviewTab("final");
+await handleSavePlacement(editingStep);
+await onRecompose?.();
+
+/**
+ * 追加
+ * - 同じURLで画像が上書きされた場合でも、
+ *   保存済み完成画像タブで最新を表示する
+ */
+setCompositeImageRefreshKey(Date.now());
+
+setActivePreviewTab("final");
 }
 
 /**
@@ -2274,15 +2308,23 @@ onClick={async () => {
     リセット
   </Btn>
 
-  <Btn
-    variant="secondary"
-    disabled={!savedCompositeUrl || !hasOverlayText || busy}
-    onClick={() => {
-      void onSaveCompositeTextImageFromCompositeSlot?.();
-    }}
-  >
-    ④-2 文字焼き込み保存
-  </Btn>
+<Btn
+  variant="secondary"
+  disabled={!savedCompositeUrl || !hasOverlayText || busy}
+  onClick={async () => {
+    await onSaveCompositeTextImageFromCompositeSlot?.();
+
+    /**
+     * 追加
+     * - 文字焼き込み保存画像も同じURLで上書きされる可能性があるため、
+     *   表示だけ強制的に最新へ更新する
+     */
+    setCompositeTextImageRefreshKey(Date.now());
+    setActivePreviewTab("final");
+  }}
+>
+  ④-2 文字焼き込み保存
+</Btn>
 </div>
 
 <div className="mt-3 flex gap-2">
@@ -2548,7 +2590,7 @@ onClick={async () => {
               >
                 {savedCompositeUrl ? (
 <img
-  src={savedCompositeUrl}
+  src={savedCompositeDisplayUrl}
   alt="saved composite"
   className="absolute inset-0 h-full w-full object-contain"
 />
@@ -2582,7 +2624,7 @@ onClick={async () => {
               >
                 {savedCompositeTextUrl ? (
 <img
-  src={savedCompositeTextUrl}
+  src={savedCompositeTextDisplayUrl}
   alt="saved composite text"
   className="absolute inset-0 h-full w-full object-contain"
 />

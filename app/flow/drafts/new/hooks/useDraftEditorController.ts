@@ -534,6 +534,34 @@ backgroundY: Number(
     };
   }
 
+async function openSellCheckForCurrentDraft() {
+
+  let targetDraftId =
+
+    String(state.draftId || "").trim() ||
+
+    String(state.draftIdRef.current || "").trim();
+
+  if (!targetDraftId) {
+
+    const savedId = await persistence.saveDraft();
+
+    targetDraftId = String(savedId || state.draftIdRef.current || "").trim();
+
+  }
+
+  if (!targetDraftId) {
+
+    persistence.showMsg("売れる診断へ進む前に下書きIDを作成してください");
+
+    return;
+
+  }
+
+  router.push(`/flow/sell-check?draftId=${encodeURIComponent(targetDraftId)}`);
+
+}
+
   async function applyPlacementSnapshot(
     snapshot: ReturnType<typeof createPlacementSnapshot>
   ) {
@@ -1480,5 +1508,6 @@ backgroundY: Number(
     handleSelectVento,
     handleSelectRiva,
     handleEnsureDraftId,
+    openSellCheckForCurrentDraft,
   };
 }

@@ -1,9 +1,11 @@
 // /components/FlowTabs.tsx
-// ✅ Mobile専用仕様：タブ切替式 [入力][AI案][編集]
+// ✅ Mobile専用仕様：タブ切替式 [入力][AI案][編集][売れる診断]
 // ✅ タップ領域 44px以上（min-h）
+// ✅ 既存機能は削除せず、「売れる診断」タブだけ追加
+
 "use client";
 
-type TabKey = "input" | "ai" | "edit";
+type TabKey = "input" | "ai" | "edit" | "sell";
 
 export default function FlowTabs({
   tab,
@@ -14,12 +16,13 @@ export default function FlowTabs({
 }) {
   const item = (key: TabKey, label: string) => {
     const active = tab === key;
+
     return (
       <button
         type="button"
         onClick={() => setTab(key)}
         className={[
-          "min-h-[44px] flex-1 rounded-2xl px-4 text-sm transition",
+          "min-h-[44px] flex-1 rounded-2xl px-3 text-sm transition",
           "bg-white/5 hover:bg-white/10",
           active ? "bg-white/12" : "",
         ].join(" ")}
@@ -34,6 +37,7 @@ export default function FlowTabs({
       {item("input", "入力")}
       {item("ai", "AI案")}
       {item("edit", "編集")}
+      {item("sell", "売れる診断")}
     </div>
   );
 }

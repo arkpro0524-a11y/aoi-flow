@@ -10,7 +10,7 @@ import BrandVisionCard from "./components/BrandVisionCard";
 import CaptionEditorCard from "./components/CaptionEditorCard";
 import BrandCMPanel from "@/components/cm/BrandCMPanel";
 
-import { UI, SelectBtn, Chip } from "./ui";
+import { UI, SelectBtn, Chip, Btn } from "./ui";
 
 import type {
   ImagePurpose,
@@ -20,19 +20,12 @@ import type {
 } from "@/lib/types/draft";
 import useDraftEditorController from "./hooks/useDraftEditorController";
 
-/**
- * このページ内で扱う、背景・商品理解レイヤー用の型です。
- * 画面側で安全に型をそろえるために定義しています。
- */
 type BgScene = "studio" | "lifestyle" | "scale" | "detail";
 type ProductCategory = "furniture" | "goods" | "apparel" | "small" | "other";
 type ProductSize = "large" | "medium" | "small";
 type GroundingType = "floor" | "table" | "hanging" | "wall";
 type SellDirection = "sales" | "branding" | "trust" | "story";
 
-/**
- * 静止画の目的ラベル
- */
 const PURPOSE_LABEL: Record<ImagePurpose, string> = {
   sales: "売上",
   branding: "世界観",
@@ -40,9 +33,6 @@ const PURPOSE_LABEL: Record<ImagePurpose, string> = {
   story: "物語",
 };
 
-/**
- * 背景方向ラベル
- */
 const BG_SCENE_LABEL: Record<BgScene, string> = {
   studio: "スタジオ（無難）",
   lifestyle: "生活感（売れる文脈）",
@@ -50,9 +40,6 @@ const BG_SCENE_LABEL: Record<BgScene, string> = {
   detail: "質感（近接）",
 };
 
-/**
- * 共通 input 見た目
- */
 const formStyle: React.CSSProperties = {
   background: UI.FORM.bg,
   borderColor: UI.FORM.border,
@@ -62,9 +49,6 @@ const formStyle: React.CSSProperties = {
   lineHeight: UI.FONT.inputLineHeight as any,
 };
 
-/**
- * 改行・読点・カンマを区切りとしてキーワード配列にする補助関数
- */
 function splitKeywords(text: string) {
   return String(text || "")
     .split(/[\n,、]+/g)
@@ -73,9 +57,6 @@ function splitKeywords(text: string) {
     .slice(0, 12);
 }
 
-/**
- * 動画サイズの旧値・別表現を現在の UI 用サイズにそろえる関数
- */
 function normalizeVideoSize(s: any): UiVideoSize {
   const v = String(s ?? "");
 
@@ -92,39 +73,53 @@ function normalizeVideoSize(s: any): UiVideoSize {
 }
 
 export default function NewDraftPage() {
-  /**
-   * URL の ?id= を読んで、既存下書き編集か新規作成かを判定します。
-   */
   const router = useRouter();
   const sp = useSearchParams();
   const id = sp.get("id");
 
-  /**
-   * 画面全体の状態・処理は controller からまとめて受け取ります。
-   */
   const c = useDraftEditorController({
     id,
     router,
   });
 
   /**
-   * ブランドCM用に、安全な brandId を作ります。
-   * 不正値が入っても vento / riva のどちらかに必ず寄せます。
+   * 売れる診断へ進む導線
+   *
+   * 重要:
+   * - controller 側に openSellCheckForCurrentDraft がある場合はそれを使う
+   * - まだ未接続でも、この page.tsx 単体で型エラーにしない
+   * - 未接続時は保存してから draftId 付きで遷移する
    */
+  const openSellCheckForCurrentDraft = async () => {
+    const controllerFn = (c as any).openSellCheckForCurrentDraft;
+
+    if (typeof controllerFn === "function") {
+      await controllerFn();
+      return;
+    }
+
+    let targetDraftId = String(c.draftId || "").trim();
+
+    if (!targetDraftId) {
+      const savedId = await c.saveDraft();
+      targetDraftId = String(savedId || "").trim();
+    }
+
+    if (!targetDraftId) {
+      c.showMsg("売れる診断へ進む前に下書きIDを作成してください");
+      return;
+    }
+
+    router.push(`/flow/sell-check?draftId=${encodeURIComponent(targetDraftId)}`);
+  };
+
   const safeBrandId: "vento" | "riva" =
     String((c.d as any).brand ?? c.d.brandId ?? "vento").trim() === "riva"
       ? "riva"
       : "vento";
 
-  /**
-   * ブランドCM用に、keywordsText の旧名 / 新名を吸収して安全に文字列化します。
-   */
   const safeKeywordsText = String((c.d as any).keywordsText ?? c.d.keywords ?? "");
 
-  /**
-   * 商品理解レイヤー関連
-   * controller から受けた setter を、画面側で型をそろえて扱います。
-   */
   const productCategory = c.productCategory as ProductCategory;
   const setProductCategory =
     c.setProductCategory as React.Dispatch<React.SetStateAction<ProductCategory>>;
@@ -144,9 +139,6 @@ export default function NewDraftPage() {
   const bgScene = c.bgScene as BgScene;
   const setBgScene = c.setBgScene as React.Dispatch<React.SetStateAction<BgScene>>;
 
-  /**
-   * ① 商品写真の配置調整関連
-   */
   const activePhotoMode = c.activePhotoMode as ProductPhotoMode;
   const setActivePhotoMode =
     c.setActivePhotoMode as React.Dispatch<React.SetStateAction<ProductPhotoMode>>;
@@ -183,13 +175,6 @@ export default function NewDraftPage() {
   const setShadowOffsetY =
     c.setShadowOffsetY as React.Dispatch<React.SetStateAction<number>>;
 
-  /**
-   * 背景編集値
-   *
-   * 重要:
-   * - 背景X/Yの中心は 0
-   * - ここだけ 0.5 にすると、編集開始位置がズレる
-   */
   const backgroundScale = Number(c.backgroundScale ?? 1);
   const setBackgroundScale =
     c.setBackgroundScale as React.Dispatch<React.SetStateAction<number>>;
@@ -202,26 +187,12 @@ export default function NewDraftPage() {
   const setBackgroundY =
     c.setBackgroundY as React.Dispatch<React.SetStateAction<number>>;
 
-  /**
-   * ③ サイズテンプレ
-   */
   const sizeTemplateType = c.sizeTemplateType as SizeTemplateType;
   const setSizeTemplateType =
     c.setSizeTemplateType as React.Dispatch<React.SetStateAction<SizeTemplateType>>;
 
-  /**
-   * ⑤ ストーリー画像表示URL
-   */
   const storyDisplayUrl = String(c.storyDisplayUrl ?? "");
 
-  /**
-   * 背景表示URL
-   *
-   * 重要:
-   * - テンプレ背景選択中は templateBgUrl を優先
-   * - それ以外は従来どおり controller 側の bgDisplayUrl を使用
-   * - 既存の背景表示系を壊さないための最小調整
-   */
   const bgDisplayUrl =
     activePhotoMode === "template"
       ? String(c.templateBgUrl ?? "")
@@ -321,6 +292,29 @@ export default function NewDraftPage() {
             setD={c.setD}
           />
 
+          <div className="rounded-2xl border border-white/12 bg-black/25 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <div className="text-white/90 font-black" style={{ fontSize: 13 }}>
+                  売れる診断
+                </div>
+                <div className="mt-1 text-white/55" style={{ fontSize: 12, lineHeight: 1.6 }}>
+                  現在の下書き画像を使って、価格・状態・画像の売れやすさを確認します。
+                </div>
+              </div>
+
+              <Btn
+                variant="secondary"
+                disabled={!c.uid || c.busy}
+                onClick={() => {
+                  void openSellCheckForCurrentDraft();
+                }}
+              >
+                この下書きを診断する
+              </Btn>
+            </div>
+          </div>
+
           <CaptionEditorCard
             d={c.d}
             busy={c.busy}
@@ -372,120 +366,114 @@ export default function NewDraftPage() {
               </div>
 
               {c.rightTab === "image" ? (
-<ImageTabPanel
-  d={c.d}
-  uid={c.uid}
-  busy={c.busy}
-  cutoutBusy={c.cutoutBusy}
-  cutoutReason={c.cutoutReason}
-  overlayPreviewDataUrl={c.overlayPreviewDataUrl}
-  baseCandidates={c.baseCandidates}
-  currentSlot={c.currentSlot}
-  formStyle={formStyle}
-  defaultTextOverlay={c.DEFAULT_TEXT_OVERLAY}
-  textOverlay={c.d.textOverlayBySlot?.[c.currentSlot] ?? null}
-  compositeTextImageUrl={String((c.d as any).compositeTextImageUrl ?? "")}
-  staticPurpose={c.staticPurpose}
-  setStaticPurpose={c.setStaticPurpose}
-  productCategory={productCategory}
-  setProductCategory={setProductCategory}
-  productSize={productSize}
-  setProductSize={setProductSize}
-  groundingType={groundingType}
-  setGroundingType={setGroundingType}
-  sellDirection={sellDirection}
-  setSellDirection={setSellDirection}
-  bgScene={bgScene}
-  setBgScene={setBgScene}
-  staticRecommendation={c.staticRecommendation}
-  staticVariants={c.staticVariants}
-  staticBusy={c.staticBusy}
-  purposeLabel={PURPOSE_LABEL}
-  bgSceneLabel={BG_SCENE_LABEL}
-  bgDisplayUrl={bgDisplayUrl}
-  backgroundKeyword={c.backgroundKeyword}
-  setBackgroundKeyword={c.setBackgroundKeyword}
-  canGenerate={c.canGenerate}
-  isCompositeFresh={c.isCompositeFresh}
-  onGenerateStaticVariants={c.generateStaticVariants}
-  onSelectStaticVariant={c.selectStaticVariant}
-  onUploadImageFilesNew={c.onUploadImageFilesNew}
-  onCutoutCurrentBaseToReplace={c.cutoutCurrentBaseToReplace}
-  onPromoteMaterialToBase={c.promoteMaterialToBase}
-  onRemoveBaseOrMaterialImage={c.removeBaseOrMaterialImage}
-  onSyncBaseAndMaterialImagesFromStorage={c.syncBaseAndMaterialImagesFromStorage}
-  onSaveCompositeAsImageUrl={c.saveCompositeAsImageUrl}
-  onSaveCompositeTextImageFromCompositeSlot={c.saveCompositeTextImageFromCompositeSlot}
-  onSaveDraft={() => {
-    void c.saveDraft();
-  }}
-  onGenerateBackgroundImage={c.generateBackgroundImage}
-  onReplaceBackgroundAndSaveToAiImage={c.replaceBackgroundAndSaveToAiImage}
-  onSyncBgImagesFromStorage={c.syncBgImagesFromStorage}
-  onSyncTemplateBgImagesFromStorage={c.syncTemplateBgImagesFromStorage}
-  onSyncCompositeImagesFromStorage={c.syncCompositeImagesFromStorage}
-  onSyncCompositeTextImagesFromStorage={c.syncCompositeTextImagesFromStorage}
-  onClearBgHistory={c.clearBgHistory}
-  onRemoveTemplateBgImage={c.removeTemplateBgImage}
-  onRemoveAiBgImage={c.removeAiBgImage}
-  onRemoveCompositeImage={c.removeCompositeImage}
-  onRemoveCompositeTextImage={c.removeCompositeTextImage}
-  onGenerateAiImage={c.generateAiImage}
-  onSyncIdeaImagesFromStorage={c.syncIdeaImagesFromStorage}
-  onClearIdeaHistory={c.clearIdeaHistory}
-  onSyncStoryImagesFromStorage={c.syncStoryImagesFromStorage}
-  setBgImageUrl={c.setBgImageUrl}
-  setD={c.setD}
-  saveDraft={c.saveDraft}
-  showMsg={c.showMsg}
-  activePhotoMode={activePhotoMode}
-  setActivePhotoMode={setActivePhotoMode}
-  placementScale={placementScale}
-  setPlacementScale={setPlacementScale}
-  placementX={placementX}
-  setPlacementX={setPlacementX}
-  placementY={placementY}
-  setPlacementY={setPlacementY}
-  shadowOpacity={shadowOpacity}
-  setShadowOpacity={setShadowOpacity}
-  shadowBlur={shadowBlur}
-  setShadowBlur={setShadowBlur}
-  shadowScale={shadowScale}
-  setShadowScale={setShadowScale}
-  shadowOffsetX={shadowOffsetX}
-  setShadowOffsetX={setShadowOffsetX}
-  shadowOffsetY={shadowOffsetY}
-  setShadowOffsetY={setShadowOffsetY}
-  backgroundScale={backgroundScale}
-  setBackgroundScale={setBackgroundScale}
-  backgroundX={backgroundX}
-  setBackgroundX={setBackgroundX}
-  backgroundY={backgroundY}
-  setBackgroundY={setBackgroundY}
-  onSavePlacement={c.savePlacement}
-  editingStep={c.editingStep}
-  setEditingStep={c.setEditingStep}
-  canUndo={c.canUndo}
-  canRedo={c.canRedo}
-  onUndo={c.undoPlacement}
-  onRedo={c.redoPlacement}
-  sizeTemplateType={sizeTemplateType}
-  setSizeTemplateType={setSizeTemplateType}
-  storyDisplayUrl={storyDisplayUrl}
-  onGenerateStoryImage={c.generateStoryImage}
-  generateTemplateBackground={c.generateTemplateBackground}
-  fetchTemplateRecommendations={c.fetchTemplateRecommendations}
-  selectTemplateBackground={c.selectTemplateBackground}
-  templateBgUrl={String(c.templateBgUrl ?? "")}
-  templateBgUrls={Array.isArray(c.templateBgUrls) ? c.templateBgUrls : []}
-
-  /**
-   * 重要
-   * - 再合成後にAPIが返した本番配置結果
-   * - ProductPlacementEditor 側で次回編集基準として使う
-   */
-  serverPlacementMeta={(c.d as any).compositeServerPlacementMeta ?? null}
-/>
+                <ImageTabPanel
+                  d={c.d}
+                  uid={c.uid}
+                  busy={c.busy}
+                  cutoutBusy={c.cutoutBusy}
+                  cutoutReason={c.cutoutReason}
+                  overlayPreviewDataUrl={c.overlayPreviewDataUrl}
+                  baseCandidates={c.baseCandidates}
+                  currentSlot={c.currentSlot}
+                  formStyle={formStyle}
+                  defaultTextOverlay={c.DEFAULT_TEXT_OVERLAY}
+                  textOverlay={c.d.textOverlayBySlot?.[c.currentSlot] ?? null}
+                  compositeTextImageUrl={String((c.d as any).compositeTextImageUrl ?? "")}
+                  staticPurpose={c.staticPurpose}
+                  setStaticPurpose={c.setStaticPurpose}
+                  productCategory={productCategory}
+                  setProductCategory={setProductCategory}
+                  productSize={productSize}
+                  setProductSize={setProductSize}
+                  groundingType={groundingType}
+                  setGroundingType={setGroundingType}
+                  sellDirection={sellDirection}
+                  setSellDirection={setSellDirection}
+                  bgScene={bgScene}
+                  setBgScene={setBgScene}
+                  staticRecommendation={c.staticRecommendation}
+                  staticVariants={c.staticVariants}
+                  staticBusy={c.staticBusy}
+                  purposeLabel={PURPOSE_LABEL}
+                  bgSceneLabel={BG_SCENE_LABEL}
+                  bgDisplayUrl={bgDisplayUrl}
+                  backgroundKeyword={c.backgroundKeyword}
+                  setBackgroundKeyword={c.setBackgroundKeyword}
+                  canGenerate={c.canGenerate}
+                  isCompositeFresh={c.isCompositeFresh}
+                  onGenerateStaticVariants={c.generateStaticVariants}
+                  onSelectStaticVariant={c.selectStaticVariant}
+                  onUploadImageFilesNew={c.onUploadImageFilesNew}
+                  onCutoutCurrentBaseToReplace={c.cutoutCurrentBaseToReplace}
+                  onPromoteMaterialToBase={c.promoteMaterialToBase}
+                  onRemoveBaseOrMaterialImage={c.removeBaseOrMaterialImage}
+                  onSyncBaseAndMaterialImagesFromStorage={c.syncBaseAndMaterialImagesFromStorage}
+                  onSaveCompositeAsImageUrl={c.saveCompositeAsImageUrl}
+                  onSaveCompositeTextImageFromCompositeSlot={c.saveCompositeTextImageFromCompositeSlot}
+                  onSaveDraft={() => {
+                    void c.saveDraft();
+                  }}
+                  onGenerateBackgroundImage={c.generateBackgroundImage}
+                  onReplaceBackgroundAndSaveToAiImage={c.replaceBackgroundAndSaveToAiImage}
+                  onSyncBgImagesFromStorage={c.syncBgImagesFromStorage}
+                  onSyncTemplateBgImagesFromStorage={c.syncTemplateBgImagesFromStorage}
+                  onSyncCompositeImagesFromStorage={c.syncCompositeImagesFromStorage}
+                  onSyncCompositeTextImagesFromStorage={c.syncCompositeTextImagesFromStorage}
+                  onClearBgHistory={c.clearBgHistory}
+                  onRemoveTemplateBgImage={c.removeTemplateBgImage}
+                  onRemoveAiBgImage={c.removeAiBgImage}
+                  onRemoveCompositeImage={c.removeCompositeImage}
+                  onRemoveCompositeTextImage={c.removeCompositeTextImage}
+                  onGenerateAiImage={c.generateAiImage}
+                  onSyncIdeaImagesFromStorage={c.syncIdeaImagesFromStorage}
+                  onClearIdeaHistory={c.clearIdeaHistory}
+                  onSyncStoryImagesFromStorage={c.syncStoryImagesFromStorage}
+                  setBgImageUrl={c.setBgImageUrl}
+                  setD={c.setD}
+                  saveDraft={c.saveDraft}
+                  showMsg={c.showMsg}
+                  activePhotoMode={activePhotoMode}
+                  setActivePhotoMode={setActivePhotoMode}
+                  placementScale={placementScale}
+                  setPlacementScale={setPlacementScale}
+                  placementX={placementX}
+                  setPlacementX={setPlacementX}
+                  placementY={placementY}
+                  setPlacementY={setPlacementY}
+                  shadowOpacity={shadowOpacity}
+                  setShadowOpacity={setShadowOpacity}
+                  shadowBlur={shadowBlur}
+                  setShadowBlur={setShadowBlur}
+                  shadowScale={shadowScale}
+                  setShadowScale={setShadowScale}
+                  shadowOffsetX={shadowOffsetX}
+                  setShadowOffsetX={setShadowOffsetX}
+                  shadowOffsetY={shadowOffsetY}
+                  setShadowOffsetY={setShadowOffsetY}
+                  backgroundScale={backgroundScale}
+                  setBackgroundScale={setBackgroundScale}
+                  backgroundX={backgroundX}
+                  setBackgroundX={setBackgroundX}
+                  backgroundY={backgroundY}
+                  setBackgroundY={setBackgroundY}
+                  onSavePlacement={c.savePlacement}
+                  editingStep={c.editingStep}
+                  setEditingStep={c.setEditingStep}
+                  canUndo={c.canUndo}
+                  canRedo={c.canRedo}
+                  onUndo={c.undoPlacement}
+                  onRedo={c.redoPlacement}
+                  sizeTemplateType={sizeTemplateType}
+                  setSizeTemplateType={setSizeTemplateType}
+                  storyDisplayUrl={storyDisplayUrl}
+                  onGenerateStoryImage={c.generateStoryImage}
+                  generateTemplateBackground={c.generateTemplateBackground}
+                  fetchTemplateRecommendations={c.fetchTemplateRecommendations}
+                  selectTemplateBackground={c.selectTemplateBackground}
+                  templateBgUrl={String(c.templateBgUrl ?? "")}
+                  templateBgUrls={Array.isArray(c.templateBgUrls) ? c.templateBgUrls : []}
+                  serverPlacementMeta={(c.d as any).compositeServerPlacementMeta ?? null}
+                />
               ) : null}
 
               {c.rightTab === "video" ? (

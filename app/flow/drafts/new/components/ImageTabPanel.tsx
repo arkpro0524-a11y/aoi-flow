@@ -2,6 +2,8 @@
 "use client";
 
 import React from "react";
+import { useRouter } from "next/navigation";
+
 import BaseImagePanel from "./BaseImagePanel";
 import BackgroundPanel from "./BackgroundPanel";
 import IdeaImagePanel from "./IdeaImagePanel";
@@ -21,23 +23,12 @@ import type {
  * このファイルの役割
  * - 画像タブ全体の各パネルをまとめる
  * - page.tsx から受けた props を各子パネルへ正しく橋渡しする
+ * - 売れる判断OSへの導線を画像エリアに追加する
  *
- * 今回の修正ポイント
- * - StaticOptimizationCard の import / 描画を安全に削除
- * - ただし、他の既存機能は削除しない
- * - BackgroundPanel 側の 3ボタンUI と既存背景機能はそのまま活かす
- * - 画像生成まわりの props 構造は崩さない
- *
- * 重要
- * - staticPurpose / staticVariants / staticRecommendation などの props は
- *   いまはこのファイル内では直接使わないが、
- *   親側との整合性を崩さないため Props からは消していない
- * - 将来、親側も整理するときにまとめて削除すればよい
- *
- * 今回の判断
- * - 文字表示の ④ 反映ロジックは BackgroundPanel → ProductPlacementEditor 側で扱う
- * - そのため、このファイルでは不要な追加改造はしない
- * - 既存の橋渡しを壊さないことを最優先にする
+ * 今回の追加
+ * - 「この画像で売れる診断」ボタンを追加
+ * - d.outcome.sellCheck がある場合、診断結果を表示
+ * - 既存の画像生成・背景・合成・サイズ・ストーリー機能は削除しない
  */
 
 type BgScene = "studio" | "lifestyle" | "scale" | "detail";
@@ -60,11 +51,6 @@ type TemplateRecommendResultForPanel = {
 };
 
 type Props = {
-    /**
-   * 重要
-   * - 再合成後にAPIが返した本番配置結果
-   * - ProductPlacementEditor へそのまま渡す
-   */
   serverPlacementMeta?: {
     canvas?: number;
     placementInput?: {
@@ -98,6 +84,7 @@ type Props = {
     } | null;
     updatedAt?: number;
   } | null;
+
   d: DraftDoc;
   uid: string | null;
   busy: boolean;
@@ -113,10 +100,6 @@ type Props = {
   textOverlay?: TextOverlay | null;
   compositeTextImageUrl?: string;
 
-  /**
-   * 以前は StaticOptimizationCard に流していた値
-   * 今回は UI から外すが、親との型互換を崩さないため残している
-   */
   staticPurpose: ImagePurpose;
   setStaticPurpose: React.Dispatch<React.SetStateAction<ImagePurpose>>;
 
@@ -135,18 +118,10 @@ type Props = {
   bgScene: BgScene;
   setBgScene: React.Dispatch<React.SetStateAction<BgScene>>;
 
-  /**
-   * 以前は StaticOptimizationCard に流していた値
-   * 今回は UI から外すが、親との型互換を崩さないため残している
-   */
   staticRecommendation: string;
   staticVariants: StaticImageVariant[];
   staticBusy: boolean;
 
-  /**
-   * 以前は StaticOptimizationCard に流していた値
-   * 今回は UI から外すが、親との型互換を崩さないため残している
-   */
   purposeLabel: Record<ImagePurpose, string>;
   bgSceneLabel: Record<BgScene, string>;
 
@@ -157,10 +132,6 @@ type Props = {
   canGenerate: boolean;
   isCompositeFresh: boolean;
 
-  /**
-   * 以前は StaticOptimizationCard に流していた値
-   * 今回は UI から外すが、親との型互換を崩さないため残している
-   */
   onGenerateStaticVariants: () => Promise<void>;
   onSelectStaticVariant: (v: StaticImageVariant) => Promise<void>;
 
@@ -190,10 +161,6 @@ type Props = {
   onClearIdeaHistory: () => void;
   onSyncStoryImagesFromStorage?: () => Promise<void> | void;
 
-  /**
-   * テンプレ背景の正式な親state
-   * - page.tsx → ImageTabPanel → BackgroundPanel で橋渡しする
-   */
   templateBgUrl?: string;
   templateBgUrls?: string[];
 
@@ -277,6 +244,150 @@ type Props = {
   storyDisplayUrl: string;
   onGenerateStoryImage: () => Promise<void>;
 };
+
+function formatYen(n: number | undefined): string {
+  if (typeof n !== "number" || !Number.isFinite(n)) return "—";
+  return `${Math.round(n).toLocaleString()}円`;
+}
+
+function getDiagnosisImageUrl(d: DraftDoc): string {
+  return String(
+    d.compositeImageUrl ||
+      d.aiImageUrl ||
+      d.imageUrl ||
+      d.baseImageUrl ||
+      d.imageIdeaUrl ||
+      ""
+  ).trim();
+}
+
+function SellCheckBridgeCard(props: {
+  d: DraftDoc;
+  busy: boolean;
+  saveDraft: (partial?: Partial<DraftDoc>) => Promise<string | null>;
+  showMsg: (s: string) => void;
+}) {
+  const { d, busy, saveDraft, showMsg } = props;
+  const router = useRouter();
+
+  const sellCheck = d.outcome?.sellCheck;
+  const diagnosisImageUrl = getDiagnosisImageUrl(d);
+
+  async function goSellCheck() {
+    if (busy) return;
+
+    const existingId = String(d.id ?? "").trim();
+
+    try {
+      let draftId = existingId;
+
+      if (!draftId) {
+        const savedId = await saveDraft();
+        draftId = String(savedId ?? "").trim();
+      }
+
+      if (!draftId) {
+        showMsg("先に下書きを保存してください");
+        return;
+      }
+
+      if (!diagnosisImageUrl) {
+        showMsg("診断できる画像がありません。合成画像または元画像を用意してください");
+        return;
+      }
+
+      router.push(`/flow/sell-check?draftId=${encodeURIComponent(draftId)}`);
+    } catch (e) {
+      console.error(e);
+      showMsg("売れる診断への移動に失敗しました");
+    }
+  }
+
+  return (
+    <div className="rounded-2xl border border-white/10 bg-black/25 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <div className="text-sm font-black text-white/90">売れる診断</div>
+          <div className="mt-1 text-xs text-white/55" style={{ lineHeight: 1.6 }}>
+            現在の制作画像を使って、価格・状態・画像の売れやすさを診断します。
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={goSellCheck}
+          disabled={busy || !diagnosisImageUrl}
+          className="rounded-full bg-white px-5 py-2 text-xs font-black text-black disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          この画像で売れる診断
+        </button>
+      </div>
+
+      {!diagnosisImageUrl ? (
+        <div className="mt-3 rounded-xl border border-white/10 bg-white/5 p-3 text-xs text-white/55">
+          診断対象画像がまだありません。元画像・AI画像・合成画像のいずれかを作成してください。
+        </div>
+      ) : null}
+
+      {sellCheck ? (
+        <div className="mt-3 grid gap-3 rounded-2xl border border-white/10 bg-white/5 p-3">
+          <div className="flex flex-wrap items-end gap-3">
+            <div>
+              <div className="text-xs font-bold text-white/50">診断スコア</div>
+              <div className="mt-1 text-3xl font-black text-white">
+                {sellCheck.score}
+                <span className="ml-1 text-base text-white/55">/100</span>
+              </div>
+            </div>
+
+            <div className="rounded-full bg-white px-3 py-1 text-sm font-black text-black">
+              {sellCheck.rank}
+            </div>
+
+            <div className="text-sm font-black text-white/80">
+              {sellCheck.action}
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-white/10 bg-black/25 p-3">
+            <div className="text-xs font-bold text-white/50">推奨価格帯</div>
+            <div className="mt-1 text-lg font-black text-white">
+              {formatYen(sellCheck.suggestedPriceMin)}〜
+              {formatYen(sellCheck.suggestedPriceMax)}
+            </div>
+          </div>
+
+          {sellCheck.improvements.length > 0 ? (
+            <div>
+              <div className="text-xs font-bold text-white/50">改善ポイント</div>
+              <div className="mt-2 grid gap-2">
+                {sellCheck.improvements.slice(0, 3).map((x, i) => (
+                  <div
+                    key={`${x}-${i}`}
+                    className="rounded-xl bg-black/25 px-3 py-2 text-xs text-white/75"
+                  >
+                    {x}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          <div className="text-xs text-white/45">
+            最終診断：
+            {typeof sellCheck.checkedAt === "number"
+              ? new Date(sellCheck.checkedAt).toLocaleString("ja-JP")
+              : "記録あり"}
+          </div>
+        </div>
+      ) : (
+        <div className="mt-3 rounded-xl border border-white/10 bg-white/5 p-3 text-xs text-white/55">
+          まだ診断結果はありません。診断後、結果はこの下書きに戻って表示されます。
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function ImageTabPanel({
   d,
@@ -405,12 +516,6 @@ export default function ImageTabPanel({
   storyDisplayUrl,
   onGenerateStoryImage,
 }: Props) {
-  /**
-   * 注意
-   * - 下の変数たちは今回このファイルでは使っていない
-   * - しかし親側との props 契約を崩さないため、受け取り自体は残している
-   * - ESLint / TypeScript の未使用警告対策として void 参照しておく
-   */
   void staticPurpose;
   void setStaticPurpose;
   void staticRecommendation;
@@ -424,12 +529,13 @@ export default function ImageTabPanel({
 
   return (
     <div className="flex flex-col gap-3">
-      {/* =========================
-          元画像パネル
-          - アップロード
-          - 切り抜き
-          - ベース画像管理
-      ========================= */}
+      <SellCheckBridgeCard
+        d={d}
+        busy={busy}
+        saveDraft={saveDraft}
+        showMsg={showMsg}
+      />
+
       <BaseImagePanel
         d={d}
         uid={uid}
@@ -452,14 +558,6 @@ export default function ImageTabPanel({
         setD={setD}
       />
 
-      {/* =========================
-          背景パネル
-          - ここが現在のメインUI
-          - 3ボタン用途プリセット
-          - テンプレ背景 / AI背景
-          - 背景履歴
-          - 合成タブ
-      ========================= */}
       <BackgroundPanel
         bgDisplayUrl={bgDisplayUrl}
         backgroundKeyword={backgroundKeyword}
@@ -521,14 +619,12 @@ export default function ImageTabPanel({
         setShadowOffsetX={setShadowOffsetX}
         shadowOffsetY={shadowOffsetY}
         setShadowOffsetY={setShadowOffsetY}
-
         backgroundScale={backgroundScale}
         setBackgroundScale={setBackgroundScale}
         backgroundX={backgroundX}
         setBackgroundX={setBackgroundX}
         backgroundY={backgroundY}
         setBackgroundY={setBackgroundY}
-
         editingStep={editingStep}
         setEditingStep={setEditingStep}
         canUndo={canUndo}
@@ -539,9 +635,6 @@ export default function ImageTabPanel({
         serverPlacementMeta={serverPlacementMeta}
       />
 
-      {/* =========================
-          使用シーン / イメージ画像
-      ========================= */}
       <IdeaImagePanel
         d={d}
         uid={uid}
@@ -555,18 +648,12 @@ export default function ImageTabPanel({
         showMsg={showMsg}
       />
 
-      {/* =========================
-          サイズテンプレ
-      ========================= */}
       <SizeTemplatePanel
         sizeTemplateType={sizeTemplateType}
         setSizeTemplateType={setSizeTemplateType}
         busy={busy}
       />
 
-      {/* =========================
-          ストーリー画像
-      ========================= */}
       <StoryImagePanel
         storyImageUrl={storyDisplayUrl}
         onGenerateStoryImage={onGenerateStoryImage}

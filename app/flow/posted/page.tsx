@@ -1,19 +1,23 @@
-// /app/flow/posted/page.tsx
+//app/flow/posted/page.tsx
 "use client";
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import {
   collection,
+  doc,
   onSnapshot,
   orderBy,
   query,
+  serverTimestamp,
+  updateDoc,
   where,
   type DocumentData,
 } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import { db, auth } from "@/firebase";
 import { useToast } from "@/components/ToastProvider";
+import type { DraftOutcome, SellOutcomeStatus } from "@/lib/types/draft";
 
 type Draft = {
   id: string;
@@ -22,63 +26,341 @@ type Draft = {
   phase: "draft" | "ready" | "posted";
   vision: string;
   caption_final: string;
-
-  /**
-   * 一覧で表示するサムネURL
-   * - 通常合成画像を最優先
-   */
+  igCaption: string;
+  xCaption: string;
   imageUrl?: string;
-
+  outcome?: DraftOutcome;
   updatedAt?: any;
 };
 
 const UI = {
   headerTitlePx: 20,
   pagePad: 16,
-
-  cardH: 160,
   cardPad: 14,
   colGap: 14,
-
   brandW: 140,
   plateH: 110,
   brandPx: 20,
-
   thumbBox: 130,
   titlePx: 20,
 };
 
-/**
- * 一覧表示用サムネURLを安全に決める関数
- *
- * 優先順
- * 1. compositeImageUrl ・・・通常合成画像
- * 2. aiImageUrl
- * 3. imageUrl
- */
 function resolveListImageUrl(data: DocumentData): string | undefined {
   const compositeImageUrl =
     typeof data.compositeImageUrl === "string" ? data.compositeImageUrl.trim() : "";
 
-  if (compositeImageUrl) {
-    return compositeImageUrl;
-  }
+  if (compositeImageUrl) return compositeImageUrl;
 
   const aiImageUrl =
     typeof data.aiImageUrl === "string" ? data.aiImageUrl.trim() : "";
 
-  if (aiImageUrl) {
-    return aiImageUrl;
-  }
+  if (aiImageUrl) return aiImageUrl;
 
   const imageUrl =
     typeof data.imageUrl === "string" ? data.imageUrl.trim() : "";
 
-  if (imageUrl) {
-    return imageUrl;
-  }
+  if (imageUrl) return imageUrl;
 
   return undefined;
+}
+
+function normalizeOutcomeStatus(v: unknown): SellOutcomeStatus {
+  if (v === "listed") return "listed";
+  if (v === "sold") return "sold";
+  if (v === "unsold") return "unsold";
+  if (v === "stopped") return "stopped";
+  return "unknown";
+}
+
+function toNumberOrUndefined(v: unknown): number | undefined {
+  const s = String(v ?? "").trim();
+  if (!s) return undefined;
+
+  const n = Number(s);
+  if (!Number.isFinite(n) || n < 0) return undefined;
+
+  return Math.round(n);
+}
+
+function normalizeOutcome(data: any): DraftOutcome | undefined {
+  if (!data || typeof data !== "object") return undefined;
+
+  const out: DraftOutcome = {
+    status: normalizeOutcomeStatus(data.status),
+  };
+
+  const listedPrice = toNumberOrUndefined(data.listedPrice);
+  const soldPrice = toNumberOrUndefined(data.soldPrice);
+  const views = toNumberOrUndefined(data.views);
+  const likes = toNumberOrUndefined(data.likes);
+  const listedAt = toNumberOrUndefined(data.listedAt);
+  const soldAt = toNumberOrUndefined(data.soldAt);
+  const updatedAt = toNumberOrUndefined(data.updatedAt);
+
+  if (listedPrice !== undefined) out.listedPrice = listedPrice;
+  if (soldPrice !== undefined) out.soldPrice = soldPrice;
+  if (views !== undefined) out.views = views;
+  if (likes !== undefined) out.likes = likes;
+  if (listedAt !== undefined) out.listedAt = listedAt;
+  if (soldAt !== undefined) out.soldAt = soldAt;
+  if (updatedAt !== undefined) out.updatedAt = updatedAt;
+
+  const platform = typeof data.platform === "string" ? data.platform.trim() : "";
+  const memo = typeof data.memo === "string" ? data.memo.trim() : "";
+
+  if (platform) out.platform = platform;
+  if (memo) out.memo = memo;
+
+  if (data.sellCheck && typeof data.sellCheck === "object") {
+    out.sellCheck = data.sellCheck;
+  }
+
+  return out;
+}
+
+function yen(v?: number) {
+  if (typeof v !== "number" || !Number.isFinite(v)) return "—";
+  return `${v.toLocaleString()}円`;
+}
+
+function num(v?: number) {
+  if (typeof v !== "number" || !Number.isFinite(v)) return "—";
+  return v.toLocaleString();
+}
+
+function statusLabel(status: SellOutcomeStatus) {
+  if (status === "listed") return "出品中";
+  if (status === "sold") return "売却済み";
+  if (status === "unsold") return "未売却";
+  if (status === "stopped") return "停止";
+  return "未入力";
+}
+
+function safeTitle(d: Draft) {
+  return d.caption_final || d.igCaption || d.xCaption || d.vision || "（本文なし）";
+}
+
+function OutcomeEditor(props: {
+  draft: Draft;
+  uid: string;
+  onSaved: () => void;
+  onError: (message: string) => void;
+}) {
+  const { draft, uid, onSaved, onError } = props;
+
+  const current = draft.outcome;
+
+  const [open, setOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const [status, setStatus] = useState<SellOutcomeStatus>(
+    current?.status ?? "unknown"
+  );
+  const [listedPrice, setListedPrice] = useState(
+    current?.listedPrice ? String(current.listedPrice) : ""
+  );
+  const [soldPrice, setSoldPrice] = useState(
+    current?.soldPrice ? String(current.soldPrice) : ""
+  );
+  const [views, setViews] = useState(current?.views ? String(current.views) : "");
+  const [likes, setLikes] = useState(current?.likes ? String(current.likes) : "");
+  const [platform, setPlatform] = useState(current?.platform ?? "");
+  const [memo, setMemo] = useState(current?.memo ?? "");
+
+  useEffect(() => {
+    setStatus(current?.status ?? "unknown");
+    setListedPrice(current?.listedPrice ? String(current.listedPrice) : "");
+    setSoldPrice(current?.soldPrice ? String(current.soldPrice) : "");
+    setViews(current?.views ? String(current.views) : "");
+    setLikes(current?.likes ? String(current.likes) : "");
+    setPlatform(current?.platform ?? "");
+    setMemo(current?.memo ?? "");
+  }, [current, draft.id]);
+
+  async function saveOutcome() {
+    if (!uid) return;
+
+    setSaving(true);
+
+    try {
+      const nextOutcome: DraftOutcome = {
+        status,
+        updatedAt: Date.now(),
+      };
+
+      const nextListedPrice = toNumberOrUndefined(listedPrice);
+      const nextSoldPrice = toNumberOrUndefined(soldPrice);
+      const nextViews = toNumberOrUndefined(views);
+      const nextLikes = toNumberOrUndefined(likes);
+
+      if (nextListedPrice !== undefined) nextOutcome.listedPrice = nextListedPrice;
+      if (nextSoldPrice !== undefined) nextOutcome.soldPrice = nextSoldPrice;
+      if (nextViews !== undefined) nextOutcome.views = nextViews;
+      if (nextLikes !== undefined) nextOutcome.likes = nextLikes;
+
+      const p = platform.trim();
+      const m = memo.trim();
+
+      if (p) nextOutcome.platform = p;
+      if (m) nextOutcome.memo = m;
+
+      if (status === "listed" && !current?.listedAt) {
+        nextOutcome.listedAt = Date.now();
+      } else if (current?.listedAt) {
+        nextOutcome.listedAt = current.listedAt;
+      }
+
+      if (status === "sold" && !current?.soldAt) {
+        nextOutcome.soldAt = Date.now();
+      } else if (current?.soldAt) {
+        nextOutcome.soldAt = current.soldAt;
+      }
+
+      if (current?.sellCheck) {
+        nextOutcome.sellCheck = current.sellCheck;
+      }
+
+      await updateDoc(doc(db, "drafts", draft.id), {
+        outcome: nextOutcome,
+        updatedAt: serverTimestamp(),
+      });
+
+      onSaved();
+      setOpen(false);
+    } catch (e: any) {
+      console.error(e);
+      onError(e?.message || "成果データの保存に失敗しました");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="rounded-2xl border border-white/10 bg-black/25 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <div className="text-xs font-black text-white/70">成果記録</div>
+          <div className="mt-1 flex flex-wrap gap-2 text-xs text-white/55">
+            <span>状態：{statusLabel(current?.status ?? "unknown")}</span>
+            <span>出品：{yen(current?.listedPrice)}</span>
+            <span>売却：{yen(current?.soldPrice)}</span>
+            <span>閲覧：{num(current?.views)}</span>
+            <span>いいね：{num(current?.likes)}</span>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="rounded-full border border-white/15 bg-white/10 px-4 py-2 text-xs font-black text-white"
+        >
+          {open ? "閉じる" : "成果を入力"}
+        </button>
+      </div>
+
+      {open ? (
+        <div className="mt-3 grid gap-3">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
+            <label className="text-xs font-bold text-white/70">
+              状態
+              <select
+                value={status}
+                onChange={(e) => setStatus(e.target.value as SellOutcomeStatus)}
+                className="mt-1 w-full rounded-xl border border-white/10 bg-black/45 px-3 py-2 text-white outline-none"
+              >
+                <option value="unknown">未入力</option>
+                <option value="listed">出品中</option>
+                <option value="sold">売却済み</option>
+                <option value="unsold">未売却</option>
+                <option value="stopped">停止</option>
+              </select>
+            </label>
+
+            <label className="text-xs font-bold text-white/70">
+              出品価格
+              <input
+                value={listedPrice}
+                onChange={(e) => setListedPrice(e.target.value)}
+                inputMode="numeric"
+                className="mt-1 w-full rounded-xl border border-white/10 bg-black/45 px-3 py-2 text-white outline-none"
+                placeholder="例：2500"
+              />
+            </label>
+
+            <label className="text-xs font-bold text-white/70">
+              売却価格
+              <input
+                value={soldPrice}
+                onChange={(e) => setSoldPrice(e.target.value)}
+                inputMode="numeric"
+                className="mt-1 w-full rounded-xl border border-white/10 bg-black/45 px-3 py-2 text-white outline-none"
+                placeholder="例：2200"
+              />
+            </label>
+
+            <label className="text-xs font-bold text-white/70">
+              閲覧数
+              <input
+                value={views}
+                onChange={(e) => setViews(e.target.value)}
+                inputMode="numeric"
+                className="mt-1 w-full rounded-xl border border-white/10 bg-black/45 px-3 py-2 text-white outline-none"
+                placeholder="例：120"
+              />
+            </label>
+
+            <label className="text-xs font-bold text-white/70">
+              いいね
+              <input
+                value={likes}
+                onChange={(e) => setLikes(e.target.value)}
+                inputMode="numeric"
+                className="mt-1 w-full rounded-xl border border-white/10 bg-black/45 px-3 py-2 text-white outline-none"
+                placeholder="例：5"
+              />
+            </label>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-[220px_1fr]">
+            <label className="text-xs font-bold text-white/70">
+              販売先
+              <input
+                value={platform}
+                onChange={(e) => setPlatform(e.target.value)}
+                className="mt-1 w-full rounded-xl border border-white/10 bg-black/45 px-3 py-2 text-white outline-none"
+                placeholder="例：メルカリ"
+              />
+            </label>
+
+            <label className="text-xs font-bold text-white/70">
+              メモ
+              <input
+                value={memo}
+                onChange={(e) => setMemo(e.target.value)}
+                className="mt-1 w-full rounded-xl border border-white/10 bg-black/45 px-3 py-2 text-white outline-none"
+                placeholder="例：閲覧は多いが反応弱い"
+              />
+            </label>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="text-xs text-white/45">
+              ※ ここに入れた成果が、次の「売れる判断OS」の学習材料になります。
+            </div>
+
+            <button
+              type="button"
+              onClick={saveOutcome}
+              disabled={saving}
+              className="rounded-full bg-white px-5 py-2 text-xs font-black text-black disabled:opacity-50"
+            >
+              {saving ? "保存中..." : "成果を保存"}
+            </button>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 export default function PostedPage() {
@@ -109,7 +391,6 @@ export default function PostedPage() {
 
     setLoading(true);
 
-    // ✅ posted だけ表示
     const qy = query(
       collection(db, "drafts"),
       where("userId", "==", uid),
@@ -123,10 +404,29 @@ export default function PostedPage() {
         const list: Draft[] = snap.docs.map((docSnap) => {
           const data = docSnap.data() as DocumentData;
 
+          const igCaption =
+            typeof data.igCaption === "string"
+              ? data.igCaption
+              : typeof data.ig === "string"
+                ? data.ig
+                : "";
+
+          const xCaption =
+            typeof data.xCaption === "string"
+              ? data.xCaption
+              : typeof data.x === "string"
+                ? data.x
+                : "";
+
+          const captionFinal =
+            typeof data.caption_final === "string"
+              ? data.caption_final
+              : igCaption || xCaption;
+
           return {
             id: docSnap.id,
             userId: typeof data.userId === "string" ? data.userId : uid,
-            brand: data.brand === "riva" ? "riva" : "vento",
+            brand: data.brand === "riva" || data.brandId === "riva" ? "riva" : "vento",
             phase:
               data.phase === "ready"
                 ? "ready"
@@ -134,15 +434,11 @@ export default function PostedPage() {
                   ? "posted"
                   : "draft",
             vision: typeof data.vision === "string" ? data.vision : "",
-            caption_final:
-              typeof data.caption_final === "string" ? data.caption_final : "",
-
-            /**
-             * 今回の修正
-             * - 一覧表示は通常合成画像を優先する
-             */
+            caption_final: captionFinal,
+            igCaption,
+            xCaption,
             imageUrl: resolveListImageUrl(data),
-
+            outcome: normalizeOutcome(data.outcome),
             updatedAt: data.updatedAt,
           };
         });
@@ -163,122 +459,151 @@ export default function PostedPage() {
   const posted = useMemo(() => rows, [rows]);
 
   return (
-    <div className="h-full flex flex-col">
-      <div className="shrink-0 border-b border-white/10" style={{ padding: UI.pagePad }}>
-        <div style={{ fontSize: UI.headerTitlePx, fontWeight: 900 }}>投稿済み</div>
+    <>
+      <style jsx>{`
+        .postedCard {
+          border-radius: 18px;
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          background: rgba(0, 0, 0, 0.25);
+          padding: ${UI.cardPad}px;
+        }
 
-        {authLoading ? (
-          <div className="text-sm text-white/60 mt-1">認証確認中...</div>
-        ) : (
-          <div className="text-sm text-white/60 mt-1">
-            POSTEDのみ表示：{posted.length} 件{loading ? "（読み込み中...）" : ""}
-          </div>
-        )}
-      </div>
+        .postedGrid {
+          display: grid;
+          grid-template-columns: ${UI.brandW}px ${UI.thumbBox}px 1fr;
+          gap: ${UI.colGap}px;
+          align-items: center;
+        }
 
-      <div className="overflow-y-auto" style={{ padding: UI.pagePad }}>
-        {authLoading ? (
-          <div className="rounded-2xl border border-white/10 bg-black/25 p-6 text-sm text-white/70">
-            認証確認中...
-          </div>
-        ) : !uid ? (
-          <div className="rounded-2xl border border-white/10 bg-black/25 p-6 text-sm text-white/70">
-            ログインしてください。
-          </div>
-        ) : posted.length === 0 ? (
-          <div className="rounded-2xl border border-white/10 bg-black/25 p-6 text-sm text-white/70">
-            投稿済みがありません。「新規作成 → 投稿済みにする」で追加されます。
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {posted.map((d) => (
-              <Link
-                key={d.id}
-                href={`/flow/drafts/new?id=${encodeURIComponent(d.id)}`}
-                className="block no-underline text-white/90 visited:text-white/90 hover:text-white"
-              >
-                <div
-                  className="group rounded-2xl border border-white/10 bg-black/25 hover:bg-black/30 transition"
-                  style={{
-                    height: UI.cardH,
-                    display: "grid",
-                    gridTemplateColumns: `${UI.brandW}px ${UI.thumbBox}px 1fr 24px`,
-                    columnGap: UI.colGap,
-                    alignItems: "center",
-                    padding: UI.cardPad,
-                  }}
-                >
-                  <div
-                    className="rounded-xl bg-gradient-to-b from-[#f2f2f2] via-[#cfcfcf] to-[#9b9b9b]
-                               border border-black/25 shadow-[inset_0_1px_0_rgba(255,255,255,0.7),inset_0_-10px_22px_rgba(0,0,0,0.25),0_8px_18px_rgba(0,0,0,0.25)]
-                               flex items-center justify-center"
-                    style={{ height: UI.plateH }}
-                  >
-                    <span
-                      style={{
-                        fontSize: UI.brandPx,
-                        fontWeight: 900,
-                        letterSpacing: "0.30em",
-                        color: "#000",
-                      }}
-                    >
-                      {(d.brand || "vento").toUpperCase()}
-                    </span>
-                  </div>
+        @media (max-width: 1023px) {
+          .postedGrid {
+            grid-template-columns: 1fr;
+            align-items: stretch;
+          }
+        }
+      `}</style>
 
-                  <div
-                    className="rounded-xl bg-white/6 overflow-hidden flex items-center justify-center ring-1 ring-white/10"
-                    style={{
-                      width: UI.thumbBox,
-                      height: UI.thumbBox,
-                      position: "relative",
-                    }}
-                  >
-                    {d.imageUrl ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={d.imageUrl}
-                        alt="thumb"
-                        draggable={false}
-                        style={{
-                          width: "100%",
-                          height: "100%",
-                          objectFit: "contain",
-                          display: "block",
-                        }}
-                      />
-                    ) : (
-                      <div className="text-xs text-white/40">NO IMAGE</div>
-                    )}
-                  </div>
+      <div className="h-full flex flex-col">
+        <div className="shrink-0 border-b border-white/10" style={{ padding: UI.pagePad }}>
+          <div style={{ fontSize: UI.headerTitlePx, fontWeight: 900 }}>投稿済み</div>
 
-                  <div style={{ minWidth: 0 }}>
+          {authLoading ? (
+            <div className="text-sm text-white/60 mt-1">認証確認中...</div>
+          ) : (
+            <div className="text-sm text-white/60 mt-1">
+              POSTEDのみ表示：{posted.length} 件{loading ? "（読み込み中...）" : ""}
+            </div>
+          )}
+        </div>
+
+        <div className="overflow-y-auto" style={{ padding: UI.pagePad }}>
+          {authLoading ? (
+            <div className="rounded-2xl border border-white/10 bg-black/25 p-6 text-sm text-white/70">
+              認証確認中...
+            </div>
+          ) : !uid ? (
+            <div className="rounded-2xl border border-white/10 bg-black/25 p-6 text-sm text-white/70">
+              ログインしてください。
+            </div>
+          ) : posted.length === 0 ? (
+            <div className="rounded-2xl border border-white/10 bg-black/25 p-6 text-sm text-white/70">
+              投稿済みがありません。「新規作成 → 投稿済みにする」で追加されます。
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {posted.map((d) => (
+                <div key={d.id} className="postedCard">
+                  <div className="postedGrid">
                     <div
-                      style={{
-                        fontSize: UI.titlePx,
-                        fontWeight: 900,
-                        lineHeight: 1.15,
-                        color: "rgba(255,255,255,0.95)",
-                        whiteSpace: "nowrap",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                      }}
+                      className="rounded-xl bg-gradient-to-b from-[#f2f2f2] via-[#cfcfcf] to-[#9b9b9b]
+                                 border border-black/25 shadow-[inset_0_1px_0_rgba(255,255,255,0.7),inset_0_-10px_22px_rgba(0,0,0,0.25),0_8px_18px_rgba(0,0,0,0.25)]
+                                 flex items-center justify-center"
+                      style={{ height: UI.plateH }}
                     >
-                      {d.caption_final || d.vision || "（本文なし）"}
+                      <span
+                        style={{
+                          fontSize: UI.brandPx,
+                          fontWeight: 900,
+                          letterSpacing: "0.30em",
+                          color: "#000",
+                        }}
+                      >
+                        {(d.brand || "vento").toUpperCase()}
+                      </span>
                     </div>
 
-                    <div className="mt-2 text-xs text-white/55">投稿済み（POSTED）</div>
+                    <div
+                      className="rounded-xl bg-white/6 overflow-hidden flex items-center justify-center ring-1 ring-white/10"
+                      style={{
+                        width: "100%",
+                        maxWidth: UI.thumbBox,
+                        height: UI.thumbBox,
+                        position: "relative",
+                      }}
+                    >
+                      {d.imageUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={d.imageUrl}
+                          alt="thumb"
+                          draggable={false}
+                          style={{
+                            width: "100%",
+                            height: "100%",
+                            objectFit: "contain",
+                            display: "block",
+                          }}
+                        />
+                      ) : (
+                        <div className="text-xs text-white/40">NO IMAGE</div>
+                      )}
+                    </div>
+
+                    <div style={{ minWidth: 0 }}>
+                      <div
+                        style={{
+                          fontSize: UI.titlePx,
+                          fontWeight: 900,
+                          lineHeight: 1.15,
+                          color: "rgba(255,255,255,0.95)",
+                          whiteSpace: "nowrap",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                        }}
+                      >
+                        {safeTitle(d)}
+                      </div>
+
+                      <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-white/55">
+                        <span>投稿済み（POSTED）</span>
+                        <span>状態：{statusLabel(d.outcome?.status ?? "unknown")}</span>
+                      </div>
+
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <Link
+                          href={`/flow/drafts/new?id=${encodeURIComponent(d.id)}`}
+                          className="rounded-full border border-white/15 bg-white/10 px-4 py-2 text-xs font-black text-white"
+                        >
+                          編集画面へ
+                        </Link>
+                      </div>
+                    </div>
                   </div>
 
-                  <div className="text-xl text-white/35 group-hover:text-white/80 transition text-right">
-                    →
+                  <div className="mt-3">
+                    <OutcomeEditor
+                      draft={d}
+                      uid={uid}
+                      onSaved={() => toast.push("成果データを保存しました")}
+                      onError={(message) => toast.push(message)}
+                    />
                   </div>
                 </div>
-              </Link>
-            ))}
-          </div>
-        )}
+              ))}
+            </div>
+          )}
+        </div>
       </div>
-    </div>
+    </>
   );
 }

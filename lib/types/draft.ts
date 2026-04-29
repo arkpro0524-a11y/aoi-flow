@@ -10,9 +10,8 @@
  * 重要
  * - 既存機能は削除しない
  * - 互換項目は残す
- * - ただし、今後の主軸は placement / placement.background に寄せる
- * - root の backgroundScale / backgroundX / backgroundY は後方互換として残す
- * - 今回は次工程で必要になる step / undo / redo 用の型も追加する
+ * - 今後の主軸は placement / placement.background に寄せる
+ * - 今回追加：売れる判断OS用の成果データ型
  */
 
 // =========================
@@ -75,9 +74,6 @@ export type ShortCopy = {
 // =========================
 
 export type TextOverlay = {
-  /**
-   * 新UIで使う本体
-   */
   lines?: string[];
   lineHeight?: number;
   x?: number;
@@ -89,9 +85,6 @@ export type TextOverlay = {
     radius: number;
   };
 
-  /**
-   * 旧簡易UIで使う本体
-   */
   text?: string;
   enabled?: boolean;
   fontSize: number;
@@ -187,14 +180,6 @@ export type BgPickLog = {
 
 export type BackgroundSourceTab = "template_bg" | "ai_bg";
 
-/**
- * テンプレ背景おすすめ
- *
- * 重要
- * - 既存の id / score / reason は残す
- * - UI 側の都合で url / imageUrl の両方を受けられるようにする
- * - 実運用では url を主に使う
- */
 export type TemplateBgRecommendation = {
   id?: string;
   url?: string;
@@ -267,24 +252,56 @@ export type CmVideo = {
 };
 
 // =========================
+// 売れる判断OS：成果データ
+// =========================
+
+export type SellOutcomeStatus =
+  | "unknown"
+  | "listed"
+  | "sold"
+  | "unsold"
+  | "stopped";
+
+export type SellCheckRank = "A" | "B" | "C" | "D";
+
+export type DraftSellCheckSnapshot = {
+  score: number;
+  rank: SellCheckRank;
+  action: string;
+  suggestedPriceMin: number;
+  suggestedPriceMax: number;
+  improvements: string[];
+  reasons: string[];
+  learnedSampleCount: number;
+  checkedAt: number;
+};
+
+export type DraftOutcome = {
+  status: SellOutcomeStatus;
+
+  listedPrice?: number;
+  soldPrice?: number;
+
+  views?: number;
+  likes?: number;
+
+  listedAt?: number;
+  soldAt?: number;
+
+  platform?: string;
+  memo?: string;
+
+  sellCheck?: DraftSellCheckSnapshot;
+
+  updatedAt?: number;
+};
+
+// =========================
 // 新仕様: 商品配置調整
 // =========================
 
-/**
- * 商品配置編集ステップ
- *
- * 今回追加
- * - 背景 → 商品 → 影 の順番固定UI用
- */
 export type ProductPlacementStep = "background" | "product" | "shadow";
 
-/**
- * 影設定
- *
- * 重要
- * - 影は商品従属
- * - offset は将来的に微調整域へ統一する
- */
 export type ProductPlacementShadow = {
   opacity: number;
   blur: number;
@@ -293,13 +310,6 @@ export type ProductPlacementShadow = {
   offsetY: number;
 };
 
-/**
- * 背景設定
- *
- * 重要
- * - 背景は別空間
- * - preview / recomposite の共通基準
- */
 export type ProductPlacementBackground = {
   scale: number;
   x: number;
@@ -314,28 +324,12 @@ export type ProductPlacement = {
   background?: ProductPlacementBackground;
 };
 
-/**
- * undo / redo 用のスナップショット
- *
- * 重要
- * - 画面側の履歴管理で使う
- * - 保存値の意味をそのまま持つ
- */
 export type ProductPlacementSnapshot = {
   placement: ProductPlacement;
   activePhotoMode: ProductPhotoMode;
   step: ProductPlacementStep;
 };
 
-/**
- * step 保存用の partial 型
- *
- * 重要
- * - 背景だけ保存
- * - 商品だけ保存
- * - 影だけ保存
- * のような分割保存に使う
- */
 export type ProductPlacementPartial = {
   scale?: number;
   x?: number;
@@ -392,32 +386,15 @@ export type DraftDoc = {
 
   userId: string;
 
-  /**
-   * 正式系
-   */
   brandId: BrandId;
   phase: Phase;
 
-  /**
-   * 画面互換系
-   */
   brand?: BrandId;
-
-  // =================
-  // inputs
-  // =================
 
   title?: string;
   vision: string;
 
-  /**
-   * 正式保存系
-   */
   keywords?: string;
-
-  /**
-   * 画面互換系
-   */
   keywordsText?: string;
 
   memo?: string;
@@ -428,26 +405,14 @@ export type DraftDoc = {
   platform?: string;
   videoButtonId?: string;
 
-  // =================
-  // captions（正式）
-  // =================
-
   igCaption: string;
   xCaption: string;
   shortCopies: ShortCopy[];
   selectedShortCopy?: string;
 
-  // =================
-  // captions（画面互換）
-  // =================
-
   ig?: string;
   x?: string;
   ig3?: string[];
-
-  // =================
-  // EC販売用文章
-  // =================
 
   instagramSales?: string;
   xSales?: string;
@@ -455,19 +420,11 @@ export type DraftDoc = {
   ecDescription?: string;
   ecBullets?: string[];
 
-  // =================
-  // images（正式）
-  // =================
-
   baseImageUrl?: string;
   bgImageUrl?: string;
   stageImageUrl?: string;
   compositeImageUrl?: string;
   foregroundImageUrl?: string;
-
-  // =================
-  // images（画面互換）
-  // =================
 
   aiImageUrl?: string;
   imageIdeaUrl?: string;
@@ -503,52 +460,19 @@ export type DraftDoc = {
     templateBg?: ImageOriginMeta;
   };
 
-  // =================
-  // 新仕様: ① 商品写真
-  // =================
-
   activePhotoMode?: ProductPhotoMode;
-
-  /**
-   * 今後の正式な保存先
-   * - 商品位置
-   * - 商品影
-   * - 背景位置
-   * をここへ集約する
-   */
   placement?: ProductPlacement;
 
-  /**
-   * 旧 root 値（後方互換）
-   *
-   * 注意
-   * - 既存読込互換のため残す
-   * - 今後の主保存先は placement.shadow
-   */
   shadowOpacity?: number;
   shadowBlur?: number;
   shadowScale?: number;
   shadowOffsetX?: number;
   shadowOffsetY?: number;
 
-  /**
-   * 旧 root 背景値（後方互換）
-   *
-   * 注意
-   * - 既存読込互換のため残す
-   * - 今後の主保存先は placement.background
-   */
   backgroundScale?: number;
   backgroundX?: number;
   backgroundY?: number;
 
-  /**
-   * 順番固定UI用
-   *
-   * 注意
-   * - Draft に保存されていても壊れないよう optional
-   * - 未保存運用でも使える
-   */
   placementStep?: ProductPlacementStep;
 
   backgroundSourceTab?: BackgroundSourceTab;
@@ -559,59 +483,27 @@ export type DraftDoc = {
   templateBgRecommendations?: TemplateBgRecommendation[];
   templateBgRecommendReason?: string;
 
-  // =================
-  // 新仕様: ② 使用シーン
-  // =================
-
   useSceneImageUrl?: string;
   useSceneImageUrls?: string[];
-
-  // =================
-  // 新仕様: ③ サイズ
-  // =================
 
   sizeTemplateType?: SizeTemplateType;
   sizeTemplateImageUrl?: string;
 
-  // =================
-  // 新仕様: ④ ディテール
-  // =================
-
   detailImageUrl?: string;
   detailImageUrls?: string[];
 
-  // =================
-  // 新仕様: ⑤ ストーリー
-  // =================
-
   storyImageUrl?: string;
   storyImageUrls?: string[];
-
-  // =================
-  // text overlay（正式）
-  // =================
 
   textEnabled?: boolean;
   textSize?: number;
   textY?: number;
   bandOpacity?: number;
 
-  // =================
-  // text overlay（画面互換）
-  // =================
-
   textOverlayBySlot?: TextOverlayBySlot;
-
-  // =================
-  // video（正式）
-  // =================
 
   videoUrl?: string;
   videoSettings?: VideoSettings;
-
-  // =================
-  // video（画面互換）
-  // =================
 
   videoUrls?: string[];
   videoTaskId?: string;
@@ -645,9 +537,7 @@ export type DraftDoc = {
   motion?: MotionCharacter;
   cmApplied?: any;
 
-  // =================
-  // timestamps
-  // =================
+  outcome?: DraftOutcome;
 
   createdAt?: any;
   updatedAt?: any;

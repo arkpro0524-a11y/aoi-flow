@@ -1,3 +1,4 @@
+//app/flow/drafts/new/components/CaptionEditorCard.tsx
 "use client";
 
 import React from "react";
@@ -15,10 +16,6 @@ type Props = {
   onEnsureDraftId: () => void | Promise<void>;
 };
 
-/**
- * 配列欄を安全に編集するための補助
- * - ecBullets のような配列を textarea で扱いやすくする
- */
 function bulletsToText(list: unknown): string {
   if (!Array.isArray(list)) return "";
   return list.map((v) => String(v ?? "").trim()).filter(Boolean).join("\n");
@@ -30,6 +27,11 @@ function textToBullets(text: string): string[] {
     .map((v) => v.trim())
     .filter(Boolean)
     .slice(0, 5);
+}
+
+function formatYen(n: number | undefined): string {
+  if (typeof n !== "number" || !Number.isFinite(n)) return "—";
+  return `${Math.round(n).toLocaleString()}円`;
 }
 
 export default function CaptionEditorCard(props: Props) {
@@ -44,42 +46,79 @@ export default function CaptionEditorCard(props: Props) {
     onEnsureDraftId,
   } = props;
 
+  const sellCheck = d.outcome?.sellCheck;
+
   return (
     <div
       className="rounded-2xl border border-white/12 bg-black/25"
       style={{ padding: UI.cardPadding }}
     >
-      {/* =========================
-          既存：Instagram 本文
-      ========================= */}
+      {sellCheck ? (
+        <div className="mb-4 rounded-2xl border border-white/10 bg-white/5 p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <div className="text-white/90 font-black" style={{ fontSize: 13 }}>
+                売れる診断結果
+              </div>
+              <div className="mt-1 text-white/55" style={{ fontSize: 12, lineHeight: 1.6 }}>
+                スコア {sellCheck.score}/100 ・ランク {sellCheck.rank} ・{sellCheck.action}
+              </div>
+            </div>
+
+            <div className="rounded-full bg-white px-3 py-1 text-xs font-black text-black">
+              {formatYen(sellCheck.suggestedPriceMin)}〜{formatYen(sellCheck.suggestedPriceMax)}
+            </div>
+          </div>
+
+          {sellCheck.improvements.length > 0 ? (
+            <div className="mt-3 grid gap-2">
+              {sellCheck.improvements.slice(0, 3).map((x, i) => (
+                <div
+                  key={`${x}-${i}`}
+                  className="rounded-xl bg-black/25 px-3 py-2 text-xs text-white/75"
+                >
+                  {x}
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
       <div className="text-white/80 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
         Instagram 本文（編集可）
       </div>
       <textarea
-        value={d.ig ?? ""}
-        onChange={(e) => setD((p) => ({ ...p, ig: e.target.value }))}
+        value={d.ig ?? d.igCaption ?? ""}
+        onChange={(e) =>
+          setD((p) => ({
+            ...p,
+            ig: e.target.value,
+            igCaption: e.target.value,
+          }))
+        }
         className="w-full rounded-xl border p-3 outline-none"
         style={{ ...formStyle, minHeight: UI.hIG }}
         placeholder="IG本文"
       />
 
-      {/* =========================
-          既存：X 本文
-      ========================= */}
       <div className="text-white/80 mt-4 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
         X 投稿文（編集可）
       </div>
       <textarea
-        value={d.x ?? ""}
-        onChange={(e) => setD((p) => ({ ...p, x: e.target.value }))}
+        value={d.x ?? d.xCaption ?? ""}
+        onChange={(e) =>
+          setD((p) => ({
+            ...p,
+            x: e.target.value,
+            xCaption: e.target.value,
+          }))
+        }
         className="w-full rounded-xl border p-3 outline-none"
         style={{ ...formStyle, minHeight: UI.hX }}
         placeholder="X投稿文"
       />
 
-      {/* =========================
-          追加：販売用 Instagram
-      ========================= */}
       <div className="text-white/80 mt-4 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
         Instagram 販売用本文（編集可）
       </div>
@@ -96,9 +135,6 @@ export default function CaptionEditorCard(props: Props) {
         placeholder="販売導線を意識したInstagram本文"
       />
 
-      {/* =========================
-          追加：販売用 X
-      ========================= */}
       <div className="text-white/80 mt-4 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
         X 販売用投稿文（編集可）
       </div>
@@ -115,9 +151,6 @@ export default function CaptionEditorCard(props: Props) {
         placeholder="販売導線を意識したX投稿文"
       />
 
-      {/* =========================
-          追加：ECタイトル
-      ========================= */}
       <div className="text-white/80 mt-4 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
         EC商品タイトル（編集可）
       </div>
@@ -134,9 +167,6 @@ export default function CaptionEditorCard(props: Props) {
         placeholder="ECサイト用の商品タイトル"
       />
 
-      {/* =========================
-          追加：EC説明文
-      ========================= */}
       <div className="text-white/80 mt-4 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
         EC商品説明文（編集可）
       </div>
@@ -153,9 +183,6 @@ export default function CaptionEditorCard(props: Props) {
         placeholder="ECサイト用の商品説明文"
       />
 
-      {/* =========================
-          追加：EC箇条書き
-      ========================= */}
       <div className="text-white/80 mt-4 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
         EC訴求ポイント（1行1項目・編集可）
       </div>
@@ -175,9 +202,6 @@ export default function CaptionEditorCard(props: Props) {
 贈り物にも使いやすいデザイン`}
       />
 
-      {/* =========================
-          既存：IG短文候補
-      ========================= */}
       <div className="text-white/80 mt-4 mb-2" style={{ fontSize: UI.FONT.labelPx }}>
         IG短文候補（ig3）※本文は上書きしない
       </div>
@@ -218,23 +242,12 @@ export default function CaptionEditorCard(props: Props) {
         ))}
       </div>
 
-      {/* =========================
-          既存：保存系ボタン
-      ========================= */}
       <div className="mt-4 flex flex-wrap gap-2">
-        <Btn
-          variant="ghost"
-          disabled={!uid || busy}
-          onClick={onSaveDraft}
-        >
+        <Btn variant="ghost" disabled={!uid || busy} onClick={onSaveDraft}>
           保存
         </Btn>
 
-        <Btn
-          variant="secondary"
-          disabled={!uid || busy}
-          onClick={onEnsureDraftId}
-        >
+        <Btn variant="secondary" disabled={!uid || busy} onClick={onEnsureDraftId}>
           下書きIDを確定
         </Btn>
       </div>

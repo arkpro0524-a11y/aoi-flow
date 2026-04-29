@@ -36,6 +36,20 @@ type GroundingType =
   | "wall";
 type SellDirection = "sales" | "branding" | "trust" | "story";
 
+/**
+ * AI背景の世界観モード
+ *
+ * study:
+ * - 書斎・作業空間らしさを優先
+ *
+ * lifestyle:
+ * - 暮らしの空気・生活感を優先
+ *
+ * premium:
+ * - 高級感・上質感を優先
+ */
+type BackgroundWorldStyle = "study" | "lifestyle" | "premium";
+
 type KeywordScenario =
   | "entryway"
   | "study"
@@ -44,7 +58,7 @@ type KeywordScenario =
   | "vintage"
   | "generic";
 
-const AI_BG_VERSION = "v23_context_scored_dual_candidate";
+const AI_BG_VERSION = "v27_front_facing_study_tabletop_composition";
 const MAX_GENERATION_ATTEMPTS = 2;
 
 /**
@@ -114,6 +128,7 @@ type NormalizedGenerationContext = {
   productSize: ProductSize;
   groundingType: GroundingType;
   sellDirection: SellDirection;
+  backgroundWorldStyle: BackgroundWorldStyle;
   keyword: string;
   keywordScenario: KeywordScenario;
 };
@@ -208,6 +223,14 @@ function normalizeSellDirection(input: unknown): SellDirection {
   return "sales";
 }
 
+function normalizeBackgroundWorldStyle(input: unknown): BackgroundWorldStyle {
+  const v = String(input ?? "").trim();
+
+  if (v === "lifestyle") return "lifestyle";
+  if (v === "premium") return "premium";
+  return "study";
+}
+
 async function loadBrand(uid: string, brandId: string) {
   const db = getAdminDb();
   const snap = await db.doc(`users/${uid}/brands/${brandId}`).get();
@@ -269,6 +292,7 @@ function resolveGenerationContext(args: {
   productSize: ProductSize;
   groundingType: GroundingType;
   sellDirection: SellDirection;
+  backgroundWorldStyle: BackgroundWorldStyle;
   keyword: string;
 }): NormalizedGenerationContext {
   let {
@@ -277,6 +301,7 @@ function resolveGenerationContext(args: {
     productSize,
     groundingType,
     sellDirection,
+    backgroundWorldStyle,
     keyword,
   } = args;
 
@@ -344,6 +369,7 @@ function resolveGenerationContext(args: {
     productSize,
     groundingType,
     sellDirection,
+    backgroundWorldStyle,
     keyword,
     keywordScenario,
   };
@@ -393,14 +419,21 @@ function buildStructureBlueprint(
         "entryway shelf surface",
         "narrow decorative placement ledge",
       ],
-      forbiddenAccidents: [
-        "plain blank white wall only",
-        "wide hotel lobby feeling",
-        "desk-like plane",
-        "large empty floor-only composition",
-        "plants",
-        "entry decor props",
-      ],
+forbiddenAccidents: [
+  "plain blank white wall only",
+  "wide hotel lobby feeling",
+  "desk-like plane",
+  "large empty floor-only composition",
+  "umbrella placed on shelf",
+  "umbrella placed on cabinet top",
+  "umbrella placed on tabletop",
+  "umbrella floating above shelf",
+  "wall hook visually sitting on shelf",
+  "plant placed on main display shelf",
+  "shoes on shelf",
+  "entry decor props in center",
+  "props placed on the future product surface",
+],
       preferredMaterials: [
         "painted wall",
         "light stone",
@@ -417,37 +450,124 @@ function buildStructureBlueprint(
     };
   }
 
-  if (keywordScenario === "study") {
-    return {
-      scenario: keywordScenario,
-      title: "study structured place",
-      upperRole: "quiet wall transition or restrained upper alcove line",
-      leftRole: "controlled side depth or restrained built-in structure",
-      rightRole: "secondary study-side structure without objects",
-      lowerRole: groundingType === "floor" ? "prefer desk-capable plane rather than wide floor field" : commonLowerRole,
-      allowedStructures: [
-        "quiet wall plane",
-        "restrained desk-capable geometry",
-        "controlled depth",
-        "small alcove implication",
-        "work-space-like structure without props",
-      ],
-      forbiddenAccidents: [
-        "bookshelf hero",
-        "monitor",
-        "lamp",
-        "white wall only",
-        "entryway doorway feel",
-        "random wide hall",
-      ],
-      preferredMaterials: ["matte wall", "light oak", "soft gray surface", "calm plaster"],
-      extraSceneHints: [
-        "the image should suggest a quiet work-space from planes and depth only",
-        "do not let study meaning depend on objects",
-      ],
-    };
-  }
+if (keywordScenario === "study") {
+  return {
+    scenario: keywordScenario,
+    title: "cropped real study workspace with partial side context",
+    upperRole:
+      "subtle upper wall transition or ceiling edge that suggests a real room continuing beyond the frame, not a closed alcove",
+    leftRole:
+      "partial cropped side context such as a window edge, light source edge, shallow wall return, or one-sided built-in edge",
+    rightRole:
+      "partial cropped study-side context such as one-sided shelving edge, wall return, or storage edge, never a matching enclosure",
+    lowerRole:
+      groundingType === "floor"
+        ? "prefer a desk-capable plane or stable workspace surface rather than a wide empty floor field"
+        : commonLowerRole,
+allowedStructures: [
+  "front-facing quiet wall plane with visible room depth",
+  "straight horizontal desk-capable foreground plane spanning across the lower frame",
+  "stable tabletop surface parallel to the bottom edge of the image",
+  "partial room edge cropping",
+  "asymmetrical side context",
+  "window edge or light source at one side",
+  "one-sided shelf edge that belongs to the rear wall, not the foreground desk",
+  "partial storage structure at one far side with clear separation from the desk plane",
+  "subtle ceiling or upper wall transition",
+  "cropped built-in edge at only one side",
+  "work-space-like structure without props",
+  "real room portion with open continuation beyond the frame",
+  "clear physical separation between foreground desk surface and rear-side shelving",
+  "soft daylight gradient across the center wall",
+  "subtle plaster or wall texture in the central negative space",
+],
+forbiddenAccidents: [
+  "bookshelf hero",
+  "visible books as the main cue",
+  "monitor as hero object",
+  "lamp as hero object",
+  "stationery in the center",
+  "cup in the center",
+  "chair as hero object",
+  "white wall only",
+  "flat blank wall and tabletop only",
+  "entryway doorway feel",
+  "random wide hall",
+  "decorated study room",
+  "busy office room",
+  "flat wall with a single board only",
+  "storage niche without workspace feeling",
 
+  "built-in desk alcove structure that forms a box",
+  "surrounded workspace niche",
+  "three-sided enclosure feeling",
+  "recessed workspace geometry that looks like a tunnel",
+  "perfectly symmetrical enclosure forming a box",
+  "closed niche or tunnel-like workspace",
+  "center framed by identical left and right structures",
+  "fully enclosed cubby-like structure",
+  "left and right structures both fully visible",
+  "room ending inside the frame",
+
+  "bookshelf intersecting with the foreground desk",
+  "shelf physically merging into the desk surface",
+  "desk surface penetrating into side shelving",
+  "impossible join between desk and bookshelf",
+  "bookshelf sitting on top of the desk unless clearly designed as a separate rear structure",
+  "side shelf and foreground tabletop sharing an impossible plane",
+  "broken furniture geometry",
+  "ambiguous depth relationship between shelf and desk",
+
+  "diagonal tabletop perspective",
+  "side-view room composition",
+  "room-corner perspective",
+  "desk surface entering diagonally from the left foreground",
+  "desk surface entering diagonally from the right foreground",
+  "tabletop that does not span horizontally across the lower frame",
+  "floor-dominant composition when a tabletop is required",
+  "foreground desk plane angled away from the camera",
+  "product placement surface viewed from the side",
+  "perspective that prevents a front-facing product image from being placed naturally",
+],
+    preferredMaterials: [
+      "matte wall",
+      "light oak",
+      "soft gray surface",
+      "calm plaster",
+      "warm neutral wall",
+      "subtle wood built-in edge",
+    ],
+extraSceneHints: [
+  "the image should clearly suggest a quiet study or workspace from architecture alone",
+  "study meaning should come from a desk-capable plane, partial side depth, window-side structure, one-sided shelf edge, or cropped room architecture",
+  "do not let study meaning depend only on books, lamps, monitors, chairs, or decorative objects",
+  "small books, soft lighting, or wall art may appear only as subtle peripheral atmosphere",
+  "avoid becoming a blank product template; add readable architectural depth only at the far edges",
+  "keep the center completely empty and commercially usable for the future product",
+
+  "the scene should feel like a cropped portion of a real room, not a constructed niche",
+  "the scene must look like it continues beyond the frame, not ends inside it",
+  "the space should feel open beyond the frame edges",
+  "avoid showing both left and right structural boundaries fully at the same time",
+  "side elements like shelves or windows should appear partially, not symmetrically enclosing the center",
+  "prefer one strong cropped side cue and one very quiet opposite side",
+  "the environment should feel continuous outside the frame, not closed inside it",
+  "the scene must not look like a designed box structure, but like a natural part of a larger room",
+  "do not create a boxed alcove, tunnel-like enclosure, cubby, or fully surrounded workspace",
+
+  "the foreground desk surface and any side bookshelf must be physically separate structures",
+  "the desk should read as a front-facing horizontal foreground plane, while shelving should read as a rear-side wall structure",
+  "the tabletop must span horizontally across the lower foreground like a clean product display surface",
+  "the tabletop front edge should be nearly parallel to the bottom edge of the image",
+  "do not let the desk angle diagonally from the side into the center",
+  "do not let the bookshelf pierce, merge into, or sit unnaturally inside the desk surface",
+  "if a bookshelf appears, show a believable vertical side panel or rear wall connection so its depth makes sense",
+  "add slightly stronger natural daylight from the left side to create a sense of time and real atmosphere",
+  "the center wall should include subtle plaster texture, soft daylight falloff, or gentle tonal variation while remaining empty",
+  "the final image must accept a front-facing product cutout placed in the center without perspective mismatch",
+],
+  };
+}
   if (keywordScenario === "pharmacy") {
     return {
       scenario: keywordScenario,
@@ -622,12 +742,98 @@ function buildEdgePlacementRules(scene: BgScene, groundingType: GroundingType): 
   return base;
 }
 
+function buildRealisticObjectPlacementRules(keywordScenario: KeywordScenario): string[] {
+  const base = [
+    "REALISTIC OBJECT PLACEMENT RULES:",
+    "Any incidental object must be placed only where it would physically exist in a real room.",
+    "Do not place objects on surfaces where they would not normally belong.",
+    "Do not place floor items on shelves, cabinet tops, tabletops, or ledges.",
+    "Do not place wall-hung items so that they appear to rest on a shelf or cabinet top.",
+    "Do not create physically ambiguous object placement.",
+    "If an object cannot be placed realistically without interfering with the center product zone, omit the object completely.",
+    "Incidental objects are optional. Realistic architecture is more important than props.",
+    "Keep all incidental objects small, peripheral, and secondary.",
+    "Never let incidental objects become the visual subject.",
+  ];
+
+  if (keywordScenario === "entryway") {
+    return [
+      ...base,
+      "Entryway-specific realism:",
+      "Umbrellas may appear only in an umbrella stand on the floor, leaning naturally at the side, or hanging clearly from a wall hook.",
+      "Umbrellas must never be placed on a shelf, cabinet top, tabletop, shoe cabinet top, ledge, or display surface.",
+      "A wall hook for an umbrella must be clearly attached to the wall, not visually sitting above a shelf surface.",
+      "Potted plants may appear only on the floor near an edge, or on a clearly separate low side stand, not on the main display shelf.",
+      "Shoes may appear only on the floor near the far edge, and only if they are extremely subtle.",
+      "Do not place umbrellas, shoes, plants, baskets, keys, trays, or decor in the center placement zone.",
+      "The central shelf or cabinet-top display surface must remain empty for the future product.",
+    ];
+  }
+
+  if (keywordScenario === "study") {
+    return [
+      ...base,
+      "Study-specific realism:",
+      "Books, lamps, wall art, small plants, and desk tools may appear only as subtle peripheral atmosphere.",
+      "Books may appear only on far-side shelves or cropped shelf edges, not in the center product zone.",
+      "Lighting may appear as soft window light, indirect glow, or a very subtle peripheral lamp impression.",
+      "A framed picture or wall art may appear only off-center and must remain secondary.",
+"If a desk-like surface exists, keep its center completely empty.",
+"The desk surface must be a coherent foreground plane and must not intersect with shelves or storage structures.",
+"Any bookshelf must belong to the side wall or rear wall and must not merge into the desk surface.",
+"The desk must be visually and physically connected to the room architecture, not floating or staged.",
+"The desk must feel anchored to the wall or room structure through believable depth, lighting, and perspective.",
+"The desk must not appear as an isolated plane detached from the surrounding space.",
+"The relationship between desk, wall, and side structures must feel continuous and physically plausible.",
+"The workspace must read as part of a larger room, not as a cropped product shooting setup.",
+"The space must feel like it extends beyond the frame, not like a closed stage or isolated set.",
+"Do not create impossible furniture joints between the desk, shelf, wall, and floor.",
+"For study scenes only, avoid a desk placed unnaturally close to the camera.",
+"For study scenes only, avoid a foreground-dominant tabletop that feels like a shooting stage.",
+"For study scenes only, avoid a desk that is not integrated with the room structure.",
+"Do not place study props in the center product zone.",
+"Do not let any object become the visual subject.",
+    ];
+  }
+
+  if (keywordScenario === "pharmacy") {
+    return [
+      ...base,
+      "Pharmacy-specific realism:",
+      "Do not include medicines, labels, prescription bags, signage, counters, people, or medical text.",
+      "Use clean partitions and reception-like architecture instead of objects.",
+    ];
+  }
+
+  if (keywordScenario === "hotel") {
+    return [
+      ...base,
+      "Hotel-specific realism:",
+      "Do not use luxury props, luggage, lamps, flowers, framed art, or decorative objects as the scene meaning.",
+      "Hotel feeling must come from wall proportions, materials, and restrained architectural depth.",
+    ];
+  }
+
+  if (keywordScenario === "vintage") {
+    return [
+      ...base,
+      "Vintage-specific realism:",
+      "Do not use antique props as the main scene cue.",
+      "Vintage feeling must come from aged material, patina, muted wood, plaster, and architectural tone.",
+    ];
+  }
+
+  return base;
+}
+
 function buildBaseHardRules(): string[] {
   return [
+    "Do NOT create a scene that looks like a product photography stage or isolated shooting setup.",
     "Do NOT include the actual product itself in the generated image.",
     "Do NOT include any people, hands, fingers, arms, or body parts.",
     "Do NOT include any text, watermark, logo, signage, brand mark, or letters.",
     "Do NOT include decorative hero props.",
+    "Subtle peripheral atmosphere is allowed when it supports the room world, such as small books, soft lighting, wall art, or quiet shelf details.",
     "Do NOT include clutter, stacked items, styled corners, or busy room-decoration compositions.",
     "Do NOT include haze, fog, mist, glow clouds, dust effects, bloom effects, or smoky white patches.",
     "Do NOT include black walls, crushed blacks, dark voids, or empty black zones.",
@@ -791,19 +997,19 @@ function buildGroundingRules(groundingType: GroundingType): string[] {
     ];
   }
 
-  if (groundingType === "table") {
-    return [
-      "Grounding type is table.",
-      "A believable tabletop must exist in the center area.",
-      "The tabletop must be wide, level, stable, and uncluttered.",
-      "The table surface must support natural centered product placement.",
-      "Do not place props on the tabletop.",
-      "Do not use diagonal or tilted tabletop perspective.",
-      "The lower-middle area must remain readable for product grounding.",
-      "Any context must stay off the tabletop center zone.",
-      "The tabletop must read as a real continuous surface, not a floating slab or narrow band.",
-    ];
-  }
+if (groundingType === "table") {
+  return [
+    "Grounding type is table.",
+    "A believable tabletop must exist in the center area.",
+    "The tabletop must be wide, level, stable, and uncluttered.",
+    "The table surface must support natural centered product placement.",
+    "Do not place props on the tabletop.",
+    "Do not use diagonal or tilted tabletop perspective.",
+    "The lower-middle area must remain readable for product grounding.",
+    "Any context must stay off the tabletop center zone.",
+    "The tabletop must read as a real continuous surface, not a floating slab or narrow band.",
+  ];
+}
 
   if (groundingType === "shelf") {
     return [
@@ -933,34 +1139,129 @@ function buildSellDirectionRules(direction: SellDirection): string[] {
   ];
 }
 
-function buildKeywordAssistRules(keyword: string): string[] {
-  const keywordScenario = classifyKeywordScenario(keyword);
-
-  if (keywordScenario === "entryway") {
+function buildBackgroundWorldStyleRules(
+  backgroundWorldStyle: BackgroundWorldStyle,
+  keywordScenario: KeywordScenario
+): string[] {
+  if (backgroundWorldStyle === "premium") {
     return [
-      "Keyword context is mandatory: entryway.",
-      "The final scene must be recognizably readable as an entryway from structure alone.",
-      "Use readable architectural context at the far edges to express an entry space.",
-      "Prefer doorway hint, wall return, threshold feel, narrow side depth, or restrained edge transition.",
-      "Avoid shoes, umbrellas, baskets, benches, frames, or decor near the center.",
-      "Keep the center placement area open and bright.",
-      "Keep walls and floor visible and readable.",
+      "BACKGROUND WORLD STYLE: premium.",
+      "This AI background should prioritize atmosphere, brand world, and refined spatial impression.",
+      "The result should feel like an upscale interior scene, not a blank ecommerce template.",
+      "Allow restrained premium details at the far edges or upper area.",
+      "Allowed peripheral details: subtle wall art, indirect lighting, high-quality shelves, books, small ceramic objects, or carefully placed plants.",
+      "Keep every detail secondary, quiet, and outside the central product placement zone.",
+      "Use warm neutral materials, soft shadows, refined wall texture, light oak, stone, plaster, or muted premium finishes.",
+      "Do not make the scene look like a luxury showroom full of props.",
+      "Do not place decorative objects in the center area.",
+      "The center must remain calm and usable, but the room must not feel empty or sterile.",
+    ];
+  }
+
+  if (backgroundWorldStyle === "lifestyle") {
+    return [
+      "BACKGROUND WORLD STYLE: lifestyle.",
+      "This AI background should prioritize a believable real-life atmosphere.",
+      "The scene may include subtle signs of life at the edges.",
+      "Allowed peripheral details: a few books, a small plant, soft daylight, a small framed picture, a quiet shelf, or a gentle lamp glow.",
+      "The scene should feel like a cropped portion of a real room, not a constructed template.",
+      "Keep the center open for product placement.",
+      "Details should fade toward the center and stay stronger only near frame edges.",
+      "Avoid clutter, staged decoration, or a room where props become the subject.",
+      "Do not make the image sterile; add enough room memory and visual warmth to carry brand world.",
     ];
   }
 
   if (keywordScenario === "study") {
     return [
-      "Keyword context is mandatory: study.",
-      "The final scene must be recognizably readable as a study-like space from structure alone.",
-      "Use readable but restrained architectural context at the far edges to express the place.",
-      "Prefer stable wall-plane, controlled depth, quiet side structure, or restrained work-space geometry.",
-      "If a desk implication exists, it must remain structural and non-decorative.",
-      "Avoid books, stationery, lamps, monitors, shelves, or styled desk objects near the center.",
-      "Keep the center area open for product placement.",
-      "Do not let the back wall disappear into darkness.",
+      "BACKGROUND WORLD STYLE: study.",
+      "This AI background should prioritize a quiet study or workspace atmosphere.",
+      "Study feeling may come from peripheral books, a shelf edge, a window edge, warm desk lighting, a small framed artwork, or soft wall texture.",
+      "Books are allowed only as small peripheral shelf details, never as the main subject.",
+      "A lamp glow is allowed only as indirect or peripheral lighting, not as a visible hero lamp near the center.",
+      "A small wall art or framed picture is allowed if it is off-center and secondary.",
+      "The center desk or wall area must remain clean and empty for the future product.",
+      "The room should feel useful, quiet, intelligent, and lived-in without becoming cluttered.",
+      "Avoid pure blank wall and board template feeling.",
     ];
   }
 
+  return [
+    "BACKGROUND WORLD STYLE: study.",
+    "Use subtle study-like atmosphere while keeping the center clean.",
+  ];
+}
+
+function buildDesignedWhitespaceRules(
+  backgroundWorldStyle: BackgroundWorldStyle
+): string[] {
+  return [
+    "DESIGNED WHITESPACE RULE:",
+    "The center must not feel like a plain template background.",
+    "The center should remain empty for the future product, but it should contain subtle wall texture, soft daylight gradient, gentle shadow falloff, and natural material variation.",
+    "Empty does not mean sterile.",
+    "The background should feel like designed negative space in a real room.",
+    "Use quiet visual memory around the edges so the room has atmosphere without blocking product placement.",
+    "The center product zone must stay clean, but the surrounding world should carry brand mood.",
+    "Avoid pure blank wall and pure flat board composition.",
+    "Prefer a real photographed room feeling with calm depth, warm light, texture, and peripheral story.",
+
+    backgroundWorldStyle === "premium"
+      ? "For premium style, use refined light, calm luxury materials, and carefully restrained edge details."
+      : "",
+
+    backgroundWorldStyle === "lifestyle"
+      ? "For lifestyle style, use believable lived-in warmth, daylight, and subtle peripheral room details."
+      : "",
+
+    backgroundWorldStyle === "study"
+      ? "For study style, use quiet intelligence, books or shelf hints at the edge, slightly stronger soft window light from the left, calm wall texture, and a physically coherent workspace atmosphere."
+      : "",
+  ].filter((rule): rule is string => rule.trim().length > 0);
+}
+
+function buildKeywordAssistRules(keyword: string): string[] {
+  const keywordScenario = classifyKeywordScenario(keyword);
+
+if (keywordScenario === "entryway") {
+  return [
+    "Keyword context is mandatory: entryway.",
+    "The final scene must be recognizably readable as an entryway from structure alone.",
+    "Use readable architectural context at the far edges to express an entry space.",
+    "Prefer doorway hint, wall return, threshold feel, narrow side depth, shoe-cabinet-top geometry, or restrained edge transition.",
+    "A clean shoe-cabinet-top or entry shelf may exist as the future product placement surface.",
+    "The future product placement surface must remain empty.",
+    "Umbrellas are allowed only if they are realistically placed in a floor umbrella stand, leaning on the floor at the side, or clearly hanging from a wall hook.",
+    "Umbrellas must never be on a shelf, cabinet top, tabletop, ledge, or the future product placement surface.",
+    "Plants are allowed only as very subtle peripheral floor objects, never on the main display surface.",
+    "Avoid shoes, umbrellas, baskets, benches, frames, plants, or decor near the center.",
+    "Keep the center placement area open and bright.",
+    "Keep walls, floor, and any display surface visible and readable.",
+  ];
+}
+
+if (keywordScenario === "study") {
+  return [
+    "Keyword context is mandatory: study.",
+    "The final scene must be recognizably readable as a quiet study or workspace from structure alone.",
+    "Do not make the scene a plain blank wall and simple board.",
+    "Use readable but restrained architectural context at the far edges to express the study place.",
+    "Prefer a desk-capable plane, shallow workspace alcove, side wall return, window-side edge, built-in vertical line, subtle ceiling line, or recessed wall depth.",
+    "The study feeling should come from both architecture and restrained peripheral atmosphere.",
+    "Small books, soft indirect lighting, or a quiet framed artwork may appear only at the far edges or upper-side background.",
+    "Left-side daylight should be slightly visible through soft brightness, gentle shadow falloff, or a natural window-side glow.",
+    "The central wall should not be perfectly blank; use subtle plaster texture or soft tonal variation while keeping it empty.",
+"If a desk implication exists, it must remain clean, empty, and non-decorative in the center.",
+"The desk or tabletop must be front-facing and horizontal so a front-facing product cutout can be placed naturally.",
+"The tabletop must run across the lower foreground, not diagonally from one side.",
+"A shelf-like structure may include a few small books or quiet objects only at the far edge.",
+"Any shelf must be physically separated from the desk plane and must not appear to penetrate, merge with, or rest impossibly inside the tabletop.",
+"Avoid stationery, lamps, monitors, chairs, shelves with objects, or styled desk objects near the center.",
+"Keep the center area open, bright, and immediately usable for front-facing product placement.",
+    "Do not let the back wall disappear into darkness.",
+    "Add enough side depth or upper structure so the viewer can imagine the product placed in a real study-like space.",
+  ];
+}
   if (keywordScenario === "pharmacy") {
     return [
       "Keyword context is mandatory: pharmacy or reception.",
@@ -1111,6 +1412,7 @@ function buildPrompt(args: {
   productSize: ProductSize;
   groundingType: GroundingType;
   sellDirection: SellDirection;
+  backgroundWorldStyle: BackgroundWorldStyle;
   styleText: string;
   mergedRules: string[];
   blueprint: StructureBlueprint;
@@ -1127,6 +1429,7 @@ function buildPrompt(args: {
     productSize,
     groundingType,
     sellDirection,
+    backgroundWorldStyle,
     styleText,
     mergedRules,
     blueprint,
@@ -1208,8 +1511,9 @@ function buildPrompt(args: {
     "LIFESTYLE INTERPRETATION:",
     "- This is NOT a styled interior photo.",
     "- This is NOT a decorated room.",
-    "- This is a minimal real living space used only as context.",
-    "- Use architecture (walls, floor, depth) instead of objects.",
+    "- This is a minimal real living space used as brand-world context.",
+    "- Use architecture first, but allow subtle peripheral atmosphere when it improves the world view.",
+    "- Small books, soft lighting, wall art, quiet shelf details, or a small plant may appear only at the edges.",
     "",
     "ANTI-CGI RULE:",
     "- Avoid synthetic gradients, glowing panels, or artificial surfaces.",
@@ -1258,7 +1562,10 @@ function buildPrompt(args: {
     "- Context must be readable, structurally clear, and non-competitive with the center.",
     "- Context must come from architectural structure such as wall transitions, doorway hints, built-in structure, depth, or material changes.",
     "- Do NOT use visible decorative hero props to create place feeling.",
+    "- Subtle peripheral atmosphere is allowed if it supports the brand world and stays away from the center.",
     "- The wall, floor, or tabletop must read naturally as a real surface.",
+    "- Furniture geometry must be physically coherent: shelves, desks, walls, and floors must connect in a believable way.",
+    "- If shelving appears at the side, it must be clearly behind or beside the foreground surface, not merged into it.",
     "- The scene must not contain abstract blocks, glowing panels, random frames, or broken geometric artifacts.",
     "- Do not generate a fake central plate, square panel, stage, niche, or floating box shape.",
     "- Do not generate single hard lines pretending to be a floor or table.",
@@ -1270,6 +1577,7 @@ function buildPrompt(args: {
     "",
     "LIGHTING IS CRITICAL:",
     "- Use high readability commercial lighting.",
+    "- For study-style backgrounds, allow slightly stronger soft daylight from the left side to create a natural sense of time.",
     "- Even lighting across the whole frame.",
     "- No dark corners.",
     "- No moody lighting.",
@@ -1281,12 +1589,12 @@ function buildPrompt(args: {
     "- The wall and floor must always be clearly visible.",
     "- The image must look like a well-lit studio photo.",
     "",
-    "COMPOSITION IS CRITICAL:",
-    "- Front-facing or near-front-facing only.",
-    "- Balanced left-right composition.",
-    "- Stable horizontal grounding.",
-    "- No room-corner composition.",
-    "- No styled interior composition.",
+"COMPOSITION IS CRITICAL:",
+"- Front-facing or near-front-facing only.",
+"- Balanced left-right composition.",
+"- Stable horizontal grounding.",
+"- No room-corner composition.",
+"- No styled interior composition.",
     "",
     "FORBIDDEN:",
     "- No furniture as a visible subject near center.",
@@ -1295,6 +1603,7 @@ function buildPrompt(args: {
     "- No books near center.",
     "- No frames near center.",
     "- No lamps near center.",
+    "- Books, frames, plants, and soft lighting are allowed only as subtle peripheral background elements.",
     "- No mirrors near center.",
     "- No decor near center.",
     "- No props near center.",
@@ -1307,7 +1616,7 @@ function buildPrompt(args: {
     "- Prefer light beige, white, light gray environments.",
     "- Reject broken scene geometry.",
     "- Reject noisy artifacted generations.",
-    "- Reject images where the center becomes a square slab or flat glowing plate.",
+"- Reject images where the center becomes a square slab or flat glowing plate.",
     "",
     "SCENE DIRECTION:",
     sceneInstruction,
@@ -1321,6 +1630,7 @@ function buildPrompt(args: {
     `Product size: ${productSize}`,
     `Grounding type: ${groundingType}`,
     `Selling direction: ${sellDirection}`,
+    `Background world style: ${backgroundWorldStyle}`,
     `Generation attempt: ${attempt}`,
     keywords.length ? `Keywords: ${keywords.join(", ")}` : "",
     styleText ? `Style: ${styleText}` : "",
@@ -1993,7 +2303,14 @@ function shouldApplyVisibilityLift(a: ImageVisibilityAnalysis): boolean {
 }
 
 function isTemplateLike(a: ImageVisibilityAnalysis): boolean {
+  const hasReadableWorldContext =
+    a.context.topContextVariance > 9 ||
+    a.context.leftContextStrength > 0.35 ||
+    a.context.rightContextStrength > 0.35 ||
+    a.context.sideContextBalance > 0.28;
+
   return (
+    !hasReadableWorldContext &&
     a.avgStdDev < 7 &&
     a.centerBand.stdDev < 5 &&
     a.lowerBand.stdDev < 5 &&
@@ -2560,6 +2877,7 @@ function buildAttemptMergedRules(args: {
   productSize: ProductSize;
   groundingType: GroundingType;
   sellDirection: SellDirection;
+  backgroundWorldStyle: BackgroundWorldStyle;
   keyword: string;
   brandRules: string[];
   hardConstraints: string[];
@@ -2571,25 +2889,59 @@ function buildAttemptMergedRules(args: {
     productSize,
     groundingType,
     sellDirection,
+    backgroundWorldStyle,
     keyword,
     brandRules,
     hardConstraints,
     attempt,
   } = args;
 
-  return [
-    ...buildBaseHardRules(),
-    ...buildSceneRules(scene),
-    ...buildCategoryRules(productCategory),
-    ...buildGroundingRules(groundingType),
-    ...buildSizeRules(productSize),
-    ...buildSellDirectionRules(sellDirection),
-    ...buildKeywordAssistRules(keyword),
-    ...buildEdgePlacementRules(scene, groundingType),
-    ...buildAttemptOverrideRules(attempt, groundingType),
-    ...brandRules,
-    ...hardConstraints,
-  ].filter(Boolean);
+return [
+  ...buildBaseHardRules(),
+  ...buildSceneRules(scene),
+  ...buildCategoryRules(productCategory),
+  ...buildGroundingRules(groundingType),
+  ...buildSizeRules(productSize),
+  ...buildSellDirectionRules(sellDirection),
+  ...buildBackgroundWorldStyleRules(
+    backgroundWorldStyle,
+    classifyKeywordScenario(keyword)
+  ),
+  ...buildDesignedWhitespaceRules(backgroundWorldStyle),
+  ...buildKeywordAssistRules(keyword),
+  ...buildEdgePlacementRules(scene, groundingType),
+  ...buildRealisticObjectPlacementRules(classifyKeywordScenario(keyword)),
+  ...buildAttemptOverrideRules(attempt, groundingType),
+  ...brandRules,
+  ...hardConstraints,
+].filter((rule): rule is string => typeof rule === "string" && rule.trim().length > 0);
+}
+
+
+/**
+ * AIRA構図違反スコア
+ * 0〜1（1が良い）
+ */
+function calcAiraStructureScore(a: ImageVisibilityAnalysis): number {
+  // 中央侵入（エッジ多い＝何かある）
+  const centerViolation = clamp01(a.centerEdgeDensity / 0.08);
+
+  // ベタ板（フラットすぎ）
+  const platePenalty =
+    a.centerFlatness > 0.85 && a.centralPlateRatio > 0.65 ? 1 : 0;
+
+  // 支持面不安定（下部エッジ少なすぎ or 多すぎ）
+  const groundingBad =
+    a.lowerEdgeDensity < 0.005 || a.lowerEdgeDensity > 0.12 ? 1 : 0;
+
+  // 最終
+  const score =
+    1 -
+    (centerViolation * 0.5 +
+      platePenalty * 0.3 +
+      groundingBad * 0.2);
+
+  return clamp01(score);
 }
 
 /**
@@ -2611,14 +2963,23 @@ function calcAcceptScore(a: ImageVisibilityAnalysis): number {
       )) *
     100;
 
-  return (
-    brightnessScore * 0.12 +
-    centerScore * 0.16 +
-    lowerScore * 0.12 +
-    darkPenalty * 0.12 +
-    structurePenalty * 0.18 +
-    a.context.contextReadabilityScore * 0.30
-  );
+const airaStructureScore = calcAiraStructureScore(a) * 100;
+
+const worldContextScore =
+  clamp01(a.context.topContextVariance / 18) * 40 +
+  clamp01(a.context.sideContextBalance / 0.5) * 40 +
+  clamp01((a.avgStdDev - 6) / 16) * 20;
+
+return (
+  brightnessScore * 0.08 +
+  centerScore * 0.12 +
+  lowerScore * 0.09 +
+  darkPenalty * 0.09 +
+  structurePenalty * 0.14 +
+  a.context.contextReadabilityScore * 0.22 +
+  airaStructureScore * 0.13 +
+  worldContextScore * 0.13
+);
 }
 
 export async function POST(req: Request) {
@@ -2647,6 +3008,9 @@ export async function POST(req: Request) {
     const rawProductSize = normalizeProductSize(body.productSize);
     const rawGroundingType = normalizeGroundingType(body.groundingType);
     const rawSellDirection = normalizeSellDirection(body.sellDirection);
+    const rawBackgroundWorldStyle = normalizeBackgroundWorldStyle(
+      body.backgroundWorldStyle
+    );
 
     logDraftId = draftId || "unknown";
     logKeyword = rawKeyword || "unknown";
@@ -2704,22 +3068,24 @@ export async function POST(req: Request) {
       );
     }
 
-    const resolved = resolveGenerationContext({
-      scene: rawScene,
-      productCategory: rawProductCategory,
-      productSize: rawProductSize,
-      groundingType: rawGroundingType,
-      sellDirection: rawSellDirection,
-      keyword: rawKeyword,
-    });
+const resolved = resolveGenerationContext({
+  scene: rawScene,
+  productCategory: rawProductCategory,
+  productSize: rawProductSize,
+  groundingType: rawGroundingType,
+  sellDirection: rawSellDirection,
+  backgroundWorldStyle: rawBackgroundWorldStyle,
+  keyword: rawKeyword,
+}); // ← ★これを追加
 
-    const scene = resolved.scene;
-    const productCategory = resolved.productCategory;
-    const productSize = resolved.productSize;
-    const groundingType = resolved.groundingType;
-    const sellDirection = resolved.sellDirection;
-    const keyword = resolved.keyword;
-    const keywordScenario = resolved.keywordScenario;
+const scene = resolved.scene;
+const productCategory = resolved.productCategory;
+const productSize = resolved.productSize;
+const groundingType = resolved.groundingType;
+const sellDirection = resolved.sellDirection;
+const backgroundWorldStyle = resolved.backgroundWorldStyle;
+const keyword = resolved.keyword;
+const keywordScenario = resolved.keywordScenario;
 
     logKeyword = keyword || "unknown";
     logScene = scene;
@@ -2749,11 +3115,12 @@ export async function POST(req: Request) {
       productSize,
       groundingType,
       sellDirection,
+      backgroundWorldStyle,
       blueprint,
       styleText,
       brandRules,
       hardConstraints,
-      type: "bg_usage_context_v23_context_scored_dual_candidate",
+type: "bg_usage_context_v27_front_facing_study_tabletop_composition",
       size: "1024x1024",
       version: AI_BG_VERSION,
       maxAttempts: MAX_GENERATION_ATTEMPTS,
@@ -2806,6 +3173,7 @@ export async function POST(req: Request) {
           referenceImageAccepted: !!referenceImageUrl,
           referenceImageUsedForGeneration: false,
           generationAttempt: 0,
+          backgroundWorldStyle,
         },
       });
     }
@@ -2830,6 +3198,7 @@ export async function POST(req: Request) {
           productSize,
           groundingType,
           sellDirection,
+          backgroundWorldStyle,
           keyword,
           brandRules,
           hardConstraints,
@@ -2847,6 +3216,7 @@ export async function POST(req: Request) {
           productSize,
           groundingType,
           sellDirection,
+          backgroundWorldStyle,
           styleText,
           mergedRules,
           blueprint,
@@ -3038,6 +3408,7 @@ export async function POST(req: Request) {
         referenceImageAccepted: !!referenceImageUrl,
         referenceImageUsedForGeneration: false,
         generationAttempt: ensuredResult.attempt,
+        backgroundWorldStyle,
         acceptScore: ensuredResult.acceptScore,
         visibilityBefore: ensuredResult.before,
         visibilityAfter: ensuredResult.after,

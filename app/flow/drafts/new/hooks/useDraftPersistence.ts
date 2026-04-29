@@ -1,5 +1,4 @@
 //app/flow/drafts/new/hooks/useDraftPersistence.ts
-
 "use client";
 
 import { useCallback, useEffect } from "react";
@@ -12,24 +11,17 @@ import type {
   BrandId,
   Phase,
   VideoSettings,
+  DraftOutcome,
+  SellOutcomeStatus,
 } from "@/lib/types/draft";
 import type { AppRouterInstance } from "next/dist/shared/lib/app-router-context.shared-runtime";
 
 /**
  * 保存・読込専用 hook
  *
- * このファイルの責務
- * - saveDraft
- * - enqueueSave
- * - 既存 draft 読込
- * - dRef / draftIdRef の安全同期
- *
- * 今回の重要修正
- * - drafts/save の正式スキーマに合わせて保存する
- * - drafts/get はまだ薄いAPIなので、ここで旧互換を吸収する
- * - brand / brandId を吸収
- * - keywords / keywordsText を吸収
- * - ig / x / ig3 と igCaption / xCaption / shortCopies を吸収
+ * 今回追加
+ * - outcome を保存・読込対象へ追加
+ * - 売れる判断OS用の成果データを draft に紐づける
  */
 
 type PreviewMode = "base" | "idea" | "composite";
@@ -73,10 +65,6 @@ type Params = {
   setVideoPickerValue: React.Dispatch<React.SetStateAction<VideoPickerValue>>;
 };
 
-/* -------------------------------------------------- */
-/* 小関数 */
-/* -------------------------------------------------- */
-
 function normalizeBrandId(v: unknown): BrandId {
   return v === "riva" ? "riva" : "vento";
 }
@@ -97,6 +85,18 @@ function normalizeOptionalString(v: unknown): string | undefined {
   return s ? s : undefined;
 }
 
+function normalizeOptionalNumber(v: unknown): number | undefined {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return undefined;
+  return n;
+}
+
+function normalizeOptionalPositiveNumber(v: unknown): number | undefined {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 0) return undefined;
+  return Math.round(n);
+}
+
 function normalizeStringUrlArray(input: unknown, limit = 10): string[] {
   if (!Array.isArray(input)) return [];
 
@@ -111,6 +111,83 @@ function normalizeStringUrlArray(input: unknown, limit = 10): string[] {
     seen.add(s);
     out.push(s);
     if (out.length >= limit) break;
+  }
+
+  return out;
+}
+
+function normalizeOutcomeStatus(v: unknown): SellOutcomeStatus {
+  if (v === "listed") return "listed";
+  if (v === "sold") return "sold";
+  if (v === "unsold") return "unsold";
+  if (v === "stopped") return "stopped";
+  return "unknown";
+}
+
+function normalizeOutcome(raw: unknown): DraftOutcome | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+
+  const data = raw as any;
+  const status = normalizeOutcomeStatus(data.status);
+
+  const out: DraftOutcome = {
+    status,
+  };
+
+  const listedPrice = normalizeOptionalPositiveNumber(data.listedPrice);
+  const soldPrice = normalizeOptionalPositiveNumber(data.soldPrice);
+  const views = normalizeOptionalPositiveNumber(data.views);
+  const likes = normalizeOptionalPositiveNumber(data.likes);
+  const listedAt = normalizeOptionalPositiveNumber(data.listedAt);
+  const soldAt = normalizeOptionalPositiveNumber(data.soldAt);
+  const updatedAt = normalizeOptionalPositiveNumber(data.updatedAt);
+
+  if (listedPrice !== undefined) out.listedPrice = listedPrice;
+  if (soldPrice !== undefined) out.soldPrice = soldPrice;
+  if (views !== undefined) out.views = views;
+  if (likes !== undefined) out.likes = likes;
+  if (listedAt !== undefined) out.listedAt = listedAt;
+  if (soldAt !== undefined) out.soldAt = soldAt;
+  if (updatedAt !== undefined) out.updatedAt = updatedAt;
+
+  const platform = normalizeOptionalString(data.platform);
+  const memo = normalizeOptionalString(data.memo);
+
+  if (platform) out.platform = platform;
+  if (memo) out.memo = memo;
+
+  if (data.sellCheck && typeof data.sellCheck === "object") {
+    const sc = data.sellCheck as any;
+    const score = normalizeOptionalNumber(sc.score);
+    const suggestedPriceMin = normalizeOptionalPositiveNumber(sc.suggestedPriceMin);
+    const suggestedPriceMax = normalizeOptionalPositiveNumber(sc.suggestedPriceMax);
+    const checkedAt = normalizeOptionalPositiveNumber(sc.checkedAt);
+
+    if (
+      score !== undefined &&
+      suggestedPriceMin !== undefined &&
+      suggestedPriceMax !== undefined
+    ) {
+      out.sellCheck = {
+        score: Math.max(0, Math.min(100, Math.round(score))),
+        rank:
+          sc.rank === "A" || sc.rank === "B" || sc.rank === "C" || sc.rank === "D"
+            ? sc.rank
+            : "C",
+        action: typeof sc.action === "string" ? sc.action : "",
+        suggestedPriceMin,
+        suggestedPriceMax,
+        improvements: Array.isArray(sc.improvements)
+          ? sc.improvements.map((x: unknown) => String(x || "").trim()).filter(Boolean)
+          : [],
+        reasons: Array.isArray(sc.reasons)
+          ? sc.reasons.map((x: unknown) => String(x || "").trim()).filter(Boolean)
+          : [],
+        learnedSampleCount:
+          normalizeOptionalPositiveNumber(sc.learnedSampleCount) ?? 0,
+        checkedAt: checkedAt ?? Date.now(),
+      };
+    }
   }
 
   return out;
@@ -305,7 +382,6 @@ function buildFormalPatch(next: DraftDoc) {
 
     images: next.images,
 
-    /* ここからは仕様書で許容されている内部実装用フィールド */
     imageIdeaUrl: next.imageIdeaUrl,
     imageIdeaUrls: next.imageIdeaUrls,
     bgImageUrls: next.bgImageUrls,
@@ -324,12 +400,48 @@ function buildFormalPatch(next: DraftDoc) {
     bgRefinedPrompt: next.bgRefinedPrompt,
     bgRefinedUrl: next.bgRefinedUrl,
     bgRefineEnabled: next.bgRefineEnabled,
+
+    activePhotoMode: next.activePhotoMode,
+    placement: next.placement,
+    placementStep: next.placementStep,
+
+    shadowOpacity: next.shadowOpacity,
+    shadowBlur: next.shadowBlur,
+    shadowScale: next.shadowScale,
+    shadowOffsetX: next.shadowOffsetX,
+    shadowOffsetY: next.shadowOffsetY,
+
+    backgroundScale: next.backgroundScale,
+    backgroundX: next.backgroundX,
+    backgroundY: next.backgroundY,
+
+    backgroundSourceTab: next.backgroundSourceTab,
+    templateBgUrl: next.templateBgUrl,
+    templateBgUrls: next.templateBgUrls,
+    templateBgSelectedId: next.templateBgSelectedId,
+    templateBgRecommendedIds: next.templateBgRecommendedIds,
+    templateBgRecommendations: next.templateBgRecommendations,
+    templateBgRecommendReason: next.templateBgRecommendReason,
+
+    useSceneImageUrl: next.useSceneImageUrl,
+    useSceneImageUrls: next.useSceneImageUrls,
+
+    sizeTemplateType: next.sizeTemplateType,
+    sizeTemplateImageUrl: next.sizeTemplateImageUrl,
+
+    detailImageUrl: next.detailImageUrl,
+    detailImageUrls: next.detailImageUrls,
+
+    storyImageUrl: next.storyImageUrl,
+    storyImageUrls: next.storyImageUrls,
+
     productVideo: next.productVideo,
     cmVideo: next.cmVideo,
     motion: next.motion,
     cmApplied: next.cmApplied,
 
-    /* 読込互換のため当面保持 */
+    outcome: next.outcome,
+
     brand: brandId,
     keywordsText: keywords,
     memo: next.memo,
@@ -509,7 +621,6 @@ export default function useDraftPersistence(params: Params) {
 
         const brandId = normalizeBrandId(data.brandId ?? data.brand);
         const phase = normalizePhase(data.phase);
-
         const vision = normalizeString(data.vision);
 
         const keywords =
@@ -668,7 +779,9 @@ export default function useDraftPersistence(params: Params) {
               ? data.imagePurpose
               : "sales",
 
-          staticImageVariants: Array.isArray(data.staticImageVariants) ? data.staticImageVariants : [],
+          staticImageVariants: Array.isArray(data.staticImageVariants)
+            ? data.staticImageVariants
+            : [],
           staticImageLogs: Array.isArray(data.staticImageLogs) ? data.staticImageLogs : [],
 
           selectedStaticVariantId: normalizeOptionalString(data.selectedStaticVariantId),
@@ -683,7 +796,60 @@ export default function useDraftPersistence(params: Params) {
           bgRefinedUrl: normalizeOptionalString(data.bgRefinedUrl),
           bgRefineEnabled: data.bgRefineEnabled === true,
 
-          originMeta: typeof data.originMeta === "object" && data.originMeta ? data.originMeta : undefined,
+          originMeta:
+            typeof data.originMeta === "object" && data.originMeta
+              ? data.originMeta
+              : undefined,
+
+          activePhotoMode: data.activePhotoMode === "template" ? "template" : "ai_bg",
+          placement: data.placement ?? undefined,
+          placementStep:
+            data.placementStep === "background" ||
+            data.placementStep === "product" ||
+            data.placementStep === "shadow"
+              ? data.placementStep
+              : undefined,
+
+          shadowOpacity: normalizeOptionalNumber(data.shadowOpacity),
+          shadowBlur: normalizeOptionalNumber(data.shadowBlur),
+          shadowScale: normalizeOptionalNumber(data.shadowScale),
+          shadowOffsetX: normalizeOptionalNumber(data.shadowOffsetX),
+          shadowOffsetY: normalizeOptionalNumber(data.shadowOffsetY),
+
+          backgroundScale: normalizeOptionalNumber(data.backgroundScale),
+          backgroundX: normalizeOptionalNumber(data.backgroundX),
+          backgroundY: normalizeOptionalNumber(data.backgroundY),
+
+          backgroundSourceTab:
+            data.backgroundSourceTab === "template_bg" ||
+            data.backgroundSourceTab === "ai_bg"
+              ? data.backgroundSourceTab
+              : undefined,
+
+          templateBgUrl: normalizeOptionalString(data.templateBgUrl),
+          templateBgUrls: normalizeStringUrlArray(data.templateBgUrls, 20),
+          templateBgSelectedId: normalizeOptionalString(data.templateBgSelectedId),
+          templateBgRecommendedIds: Array.isArray(data.templateBgRecommendedIds)
+            ? data.templateBgRecommendedIds
+                .map((x: unknown) => String(x || "").trim())
+                .filter(Boolean)
+            : undefined,
+          templateBgRecommendations: Array.isArray(data.templateBgRecommendations)
+            ? data.templateBgRecommendations
+            : undefined,
+          templateBgRecommendReason: normalizeOptionalString(data.templateBgRecommendReason),
+
+          useSceneImageUrl: normalizeOptionalString(data.useSceneImageUrl),
+          useSceneImageUrls: normalizeStringUrlArray(data.useSceneImageUrls, 10),
+
+          sizeTemplateType: data.sizeTemplateType,
+          sizeTemplateImageUrl: normalizeOptionalString(data.sizeTemplateImageUrl),
+
+          detailImageUrl: normalizeOptionalString(data.detailImageUrl),
+          detailImageUrls: normalizeStringUrlArray(data.detailImageUrls, 10),
+
+          storyImageUrl: normalizeOptionalString(data.storyImageUrl),
+          storyImageUrls: normalizeStringUrlArray(data.storyImageUrls, 10),
 
           textEnabled: typeof data.textEnabled === "boolean" ? data.textEnabled : true,
           textSize: typeof data.textSize === "number" ? data.textSize : 44,
@@ -740,6 +906,8 @@ export default function useDraftPersistence(params: Params) {
           cmVideo: data.cmVideo ?? undefined,
           motion: data.motion ?? undefined,
           cmApplied: data.cmApplied,
+
+          outcome: normalizeOutcome(data.outcome),
 
           createdAt: data.createdAt,
           updatedAt: data.updatedAt,
