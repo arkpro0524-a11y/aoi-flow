@@ -1,4 +1,4 @@
-//app/flow/posted/page.tsx
+// app/flow/posted/page.tsx
 "use client";
 
 import Link from "next/link";
@@ -51,13 +51,11 @@ function resolveListImageUrl(data: DocumentData): string | undefined {
 
   if (compositeImageUrl) return compositeImageUrl;
 
-  const aiImageUrl =
-    typeof data.aiImageUrl === "string" ? data.aiImageUrl.trim() : "";
+  const aiImageUrl = typeof data.aiImageUrl === "string" ? data.aiImageUrl.trim() : "";
 
   if (aiImageUrl) return aiImageUrl;
 
-  const imageUrl =
-    typeof data.imageUrl === "string" ? data.imageUrl.trim() : "";
+  const imageUrl = typeof data.imageUrl === "string" ? data.imageUrl.trim() : "";
 
   if (imageUrl) return imageUrl;
 
@@ -153,9 +151,7 @@ function OutcomeEditor(props: {
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  const [status, setStatus] = useState<SellOutcomeStatus>(
-    current?.status ?? "unknown"
-  );
+  const [status, setStatus] = useState<SellOutcomeStatus>(current?.status ?? "unknown");
   const [listedPrice, setListedPrice] = useState(
     current?.listedPrice ? String(current.listedPrice) : ""
   );
@@ -377,6 +373,7 @@ export default function PostedPage() {
       setUid(u?.uid ?? null);
       setAuthLoading(false);
     });
+
     return () => unsub();
   }, []);
 
@@ -483,14 +480,14 @@ export default function PostedPage() {
         }
       `}</style>
 
-      <div className="h-full flex flex-col">
+      <div className="flex h-full flex-col">
         <div className="shrink-0 border-b border-white/10" style={{ padding: UI.pagePad }}>
           <div style={{ fontSize: UI.headerTitlePx, fontWeight: 900 }}>投稿済み</div>
 
           {authLoading ? (
-            <div className="text-sm text-white/60 mt-1">認証確認中...</div>
+            <div className="mt-1 text-sm text-white/60">認証確認中...</div>
           ) : (
-            <div className="text-sm text-white/60 mt-1">
+            <div className="mt-1 text-sm text-white/60">
               POSTEDのみ表示：{posted.length} 件{loading ? "（読み込み中...）" : ""}
             </div>
           )}
@@ -515,9 +512,7 @@ export default function PostedPage() {
                 <div key={d.id} className="postedCard">
                   <div className="postedGrid">
                     <div
-                      className="rounded-xl bg-gradient-to-b from-[#f2f2f2] via-[#cfcfcf] to-[#9b9b9b]
-                                 border border-black/25 shadow-[inset_0_1px_0_rgba(255,255,255,0.7),inset_0_-10px_22px_rgba(0,0,0,0.25),0_8px_18px_rgba(0,0,0,0.25)]
-                                 flex items-center justify-center"
+                      className="flex items-center justify-center rounded-xl border border-black/25 bg-gradient-to-b from-[#f2f2f2] via-[#cfcfcf] to-[#9b9b9b] shadow-[inset_0_1px_0_rgba(255,255,255,0.7),inset_0_-10px_22px_rgba(0,0,0,0.25),0_8px_18px_rgba(0,0,0,0.25)]"
                       style={{ height: UI.plateH }}
                     >
                       <span
@@ -533,7 +528,7 @@ export default function PostedPage() {
                     </div>
 
                     <div
-                      className="rounded-xl bg-white/6 overflow-hidden flex items-center justify-center ring-1 ring-white/10"
+                      className="flex items-center justify-center overflow-hidden rounded-xl bg-white/6 ring-1 ring-white/10"
                       style={{
                         width: "100%",
                         maxWidth: UI.thumbBox,
