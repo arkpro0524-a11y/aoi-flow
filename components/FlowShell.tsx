@@ -1,4 +1,4 @@
-//components/FlowShell.tsx
+// components/FlowShell.tsx
 "use client";
 
 import Link from "next/link";
@@ -18,6 +18,7 @@ function cx(...xs: (string | false | undefined)[]) {
 
 function isAdminUser(user: User | null): boolean {
   const raw = process.env.NEXT_PUBLIC_ADMIN_UIDS || "";
+
   const adminUids = raw
     .split(",")
     .map((x) => x.trim())
@@ -108,18 +109,18 @@ export default function FlowShell({ user, onLogout, children }: Props) {
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_10%,rgba(255,255,255,0.07),transparent_35%),radial-gradient(circle_at_80%_30%,rgba(255,255,255,0.05),transparent_40%)]" />
       </div>
 
-      <header className="sticky top-0 z-30 border-b border-white/12 bg-black/45 backdrop-blur overflow-x-hidden">
-        <div className="px-4 md:px-6 py-3">
+      <header className="sticky top-0 z-30 border-b border-white/12 bg-black/45 backdrop-blur">
+        <div className="px-4 py-3 md:px-6">
           <div className="flex items-center gap-3">
-            <div className="flex items-center gap-3 md:gap-4 min-w-0">
+            <div className="flex min-w-0 items-center gap-3 md:gap-4">
               <img
                 src="/logo-aoi-flow2.png"
                 alt="AOI FLOW"
-                className="rounded-2xl bg-white/8 p-1 ring-1 ring-white/10 shrink-0"
+                className="shrink-0 rounded-2xl bg-white/8 p-1 ring-1 ring-white/10"
                 style={{ width: UI.logo as any, height: UI.logo as any }}
               />
 
-              <div className="leading-tight min-w-0">
+              <div className="min-w-0 leading-tight">
                 <div
                   style={{
                     fontSize: UI.title as any,
@@ -159,18 +160,19 @@ export default function FlowShell({ user, onLogout, children }: Props) {
             </div>
           </div>
 
-          <div className="mt-3">
+          <div className="mt-3 w-full min-w-0 overflow-hidden">
             <div
               className="[&::-webkit-scrollbar]:hidden"
               style={{
                 width: "100%",
+                maxWidth: "100%",
                 overflowX: "auto",
                 overflowY: "hidden",
                 WebkitOverflowScrolling: "touch",
                 touchAction: "pan-x",
                 overscrollBehaviorX: "contain",
                 paddingLeft: 6,
-                paddingRight: 18,
+                paddingRight: 48,
                 scrollbarWidth: "none" as any,
                 msOverflowStyle: "none" as any,
               }}
@@ -178,6 +180,8 @@ export default function FlowShell({ user, onLogout, children }: Props) {
               <div
                 style={{
                   display: "inline-flex",
+                  width: "max-content",
+                  minWidth: "max-content",
                   gap: 10,
                   padding: 6,
                   borderRadius: 9999,
@@ -205,7 +209,7 @@ export default function FlowShell({ user, onLogout, children }: Props) {
 
       <div className="w-full px-3 sm:px-4 md:px-6">
         <div className="mx-auto w-full max-w-[1600px]">
-          <div className="py-6 min-h-0">
+          <div className="min-h-0 py-6">
             <main className="min-h-0">
               <div
                 className={cx(
