@@ -208,9 +208,7 @@ export default function FlowShell({ user, onLogout, children }: Props) {
                 <Tab href="/flow/drafts/new" label="新規作成" />
                 <Tab href="/flow/sell-check" label="売れる診断" />
 
-                {isAdmin ? (
-                  <Tab href="/flow/sell-check/admin" label="学習データ管理" />
-                ) : null}
+<Tab href="/flow/sell-check/admin" label="学習データ管理" />
 
                 <Tab href="/flow/inbox" label="投稿待ち" />
                 <Tab href="/flow/posted" label="投稿済み" />
