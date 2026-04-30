@@ -4,7 +4,9 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import type { User } from "firebase/auth";
-import React from "react";
+import { onAuthStateChanged } from "firebase/auth";
+import React, { useEffect, useMemo, useState } from "react";
+import { auth } from "@/firebase";
 
 type Props = {
   user: User | null;
@@ -16,7 +18,7 @@ function cx(...xs: (string | false | undefined)[]) {
   return xs.filter(Boolean).join(" ");
 }
 
-function isAdminUser(user: User | null): boolean {
+function isAdminUid(uid: string | null): boolean {
   const raw = process.env.NEXT_PUBLIC_ADMIN_UIDS || "";
 
   const adminUids = raw
@@ -24,20 +26,18 @@ function isAdminUser(user: User | null): boolean {
     .map((x) => x.trim())
     .filter(Boolean);
 
-  if (!user?.uid) return false;
+  if (!uid) return false;
 
-  return adminUids.includes(user.uid);
+  return adminUids.includes(uid);
 }
 
 const UI = {
   logo: "clamp(48px, 7vw, 90px)",
   title: "clamp(18px, 2.6vw, 34px)",
   sub: "clamp(12px, 1.8vw, 18px)",
-
   tabFont: "clamp(12px, 1.7vw, 16px)",
   tabPadY: "clamp(10px, 1.6vw, 14px)",
   tabPadX: "clamp(14px, 2.2vw, 22px)",
-
   logoutFont: "clamp(11px, 1.3vw, 12px)",
   logoutPadY: "clamp(10px, 1.6vw, 12px)",
   logoutPadX: "clamp(12px, 2.0vw, 16px)",
@@ -47,7 +47,27 @@ export default function FlowShell({ user, onLogout, children }: Props) {
   const pathname = usePathname();
   const router = useRouter();
 
-  const isAdmin = isAdminUser(user);
+  const [liveUser, setLiveUser] = useState<User | null>(user);
+
+  useEffect(() => {
+    setLiveUser(user);
+  }, [user]);
+
+  useEffect(() => {
+    if (!auth) return;
+
+    const unsub = onAuthStateChanged(auth, (u) => {
+      setLiveUser(u ?? null);
+    });
+
+    return () => unsub();
+  }, []);
+
+  const effectiveUid = liveUser?.uid ?? user?.uid ?? null;
+
+  const isAdmin = useMemo(() => {
+    return isAdminUid(effectiveUid);
+  }, [effectiveUid]);
 
   const isActive = (href: string) =>
     pathname === href || pathname.startsWith(href + "/");
@@ -69,12 +89,8 @@ export default function FlowShell({ user, onLogout, children }: Props) {
           alignItems: "center",
           gap: 10,
           whiteSpace: "nowrap",
-          color: active
-            ? "rgba(255,255,255,0.98)"
-            : "rgba(255,255,255,0.78)",
-          background: active
-            ? "rgba(255,255,255,0.22)"
-            : "rgba(255,255,255,0.08)",
+          color: active ? "rgba(255,255,255,0.98)" : "rgba(255,255,255,0.78)",
+          background: active ? "rgba(255,255,255,0.22)" : "rgba(255,255,255,0.08)",
           border: active
             ? "1px solid rgba(255,255,255,0.18)"
             : "1px solid rgba(255,255,255,0.10)",
@@ -86,9 +102,7 @@ export default function FlowShell({ user, onLogout, children }: Props) {
             width: 10,
             height: 10,
             borderRadius: 9999,
-            background: active
-              ? "rgba(255,255,255,0.98)"
-              : "rgba(255,255,255,0.45)",
+            background: active ? "rgba(255,255,255,0.98)" : "rgba(255,255,255,0.45)",
           }}
         />
         {label}
