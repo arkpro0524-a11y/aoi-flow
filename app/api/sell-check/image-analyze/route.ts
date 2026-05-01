@@ -1,19 +1,4 @@
-// app/api/sell-check/image-analyze/route.ts
-// 売れる診断：画像解析API
-//
-// 目的：
-// - 商品画像URL、または画像ファイルを受け取る
-// - OpenAI Visionで、明るさ・構図・背景・傷リスクを数値化する
-// - ここでは保存しない
-// - 保存は /api/sell-check/import または /api/sell-check/save 側で行う
-//
-// 重要：
-// - 管理者だけが実行できる
-// - ユーザー一般には見せない管理者用AI補助
-// - null / undefined を返さないように整形する
-// - 既存の imageUrl 受け取り機能は削除しない
-// - 新しく FormData の image ファイルにも対応する
-
+//app/api/sell-check/image-analyze/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
 import { getAdminAuth } from "@/app/api/_firebase/admin";
@@ -73,6 +58,31 @@ function normalizeResult(v: any): ImageAnalyzeResult {
   };
 }
 
+function averageResults(results: ImageAnalyzeResult[]): ImageAnalyzeResult {
+  if (results.length === 0) {
+    return {
+      brightnessScore: 50,
+      compositionScore: 50,
+      backgroundScore: 50,
+      damageRiskScore: 50,
+      overallImageScore: 50,
+      imageReasons: [],
+    };
+  }
+
+  const avg = (key: keyof Omit<ImageAnalyzeResult, "imageReasons">) =>
+    Math.round(results.reduce((sum, item) => sum + item[key], 0) / results.length);
+
+  return {
+    brightnessScore: avg("brightnessScore"),
+    compositionScore: avg("compositionScore"),
+    backgroundScore: avg("backgroundScore"),
+    damageRiskScore: avg("damageRiskScore"),
+    overallImageScore: avg("overallImageScore"),
+    imageReasons: results.flatMap((x) => x.imageReasons).slice(0, 12),
+  };
+}
+
 function extractJsonText(text: string): string {
   const s = safeString(text);
   if (!s) return "";
@@ -119,79 +129,47 @@ async function getUidFromRequest(req: NextRequest): Promise<string | null> {
   }
 }
 
-async function resolveImageInput(req: NextRequest): Promise<string> {
+async function fileToDataUrl(file: File): Promise<string> {
+  const arrayBuffer = await file.arrayBuffer();
+  const base64 = Buffer.from(arrayBuffer).toString("base64");
+  const mime = file.type || "image/png";
+
+  return `data:${mime};base64,${base64}`;
+}
+
+async function resolveImageInputs(req: NextRequest): Promise<string[]> {
   const contentType = req.headers.get("content-type") || "";
 
   if (contentType.includes("multipart/form-data")) {
     const form = await req.formData();
-    const file = form.get("image");
 
-    if (!(file instanceof File)) {
-      return "";
+    const files = [
+      ...form.getAll("images"),
+      ...form.getAll("image"),
+    ].filter((x): x is File => x instanceof File);
+
+    const urls: string[] = [];
+
+    for (const file of files.slice(0, 8)) {
+      urls.push(await fileToDataUrl(file));
     }
 
-    const arrayBuffer = await file.arrayBuffer();
-    const base64 = Buffer.from(arrayBuffer).toString("base64");
-    const mime = file.type || "image/png";
-
-    return `data:${mime};base64,${base64}`;
+    return urls;
   }
 
   const body = await req.json().catch(() => ({}));
-  return safeString(body.imageUrl);
+
+  if (Array.isArray(body.imageUrls)) {
+    return body.imageUrls.map(safeString).filter(Boolean).slice(0, 8);
+  }
+
+  const single = safeString(body.imageUrl);
+
+  return single ? [single] : [];
 }
 
-export async function POST(req: NextRequest) {
-  try {
-    const uid = await getUidFromRequest(req);
-
-    if (!uid) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: "ログイン確認が必要です",
-        },
-        { status: 401 }
-      );
-    }
-
-    if (!isAdminUid(uid)) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: "管理者のみ実行できます",
-        },
-        { status: 403 }
-      );
-    }
-
-    const imageUrl = await resolveImageInput(req);
-
-    if (!imageUrl) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: "画像URLまたは画像ファイルが空です",
-        },
-        { status: 400 }
-      );
-    }
-
-    if (!process.env.OPENAI_API_KEY) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: "OPENAI_API_KEY が設定されていません",
-        },
-        { status: 500 }
-      );
-    }
-
-    const client = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY,
-    });
-
-    const prompt = `
+async function analyzeOneImage(client: OpenAI, imageUrl: string) {
+  const prompt = `
 あなたは中古販売・フリマ商品画像の評価担当です。
 画像を見て、売れる診断に使うための画像特徴を数値化してください。
 
@@ -209,25 +187,11 @@ export async function POST(req: NextRequest) {
 }
 
 採点基準：
-- brightnessScore：
-  明るく、商品細部が見やすいほど高い。
-  暗い、影が強い、色が潰れている場合は低い。
-
-- compositionScore：
-  商品全体が見え、中央に近く、余白が適切なら高い。
-  見切れ、傾き、遠すぎる、近すぎる場合は低い。
-
-- backgroundScore：
-  背景が清潔で商品を邪魔しないほど高い。
-  生活感、散らかり、強い柄、余計な物がある場合は低い。
-
-- damageRiskScore：
-  傷、汚れ、破損、使用感、色褪せが目立つほど高い。
-  新品に近く見えるほど低い。
-
-- overallImageScore：
-  売れやすい商品画像としての総合点。
-  明るさ・構図・背景・傷リスクを総合してください。
+- brightnessScore：明るく、商品細部が見やすいほど高い。
+- compositionScore：商品全体が見え、中央に近く、余白が適切なら高い。
+- backgroundScore：背景が清潔で商品を邪魔しないほど高い。
+- damageRiskScore：傷、汚れ、破損、使用感、色褪せが目立つほど高い。
+- overallImageScore：売れやすい商品画像としての総合点。
 
 注意：
 - 実際に売れる保証はしない。
@@ -235,63 +199,93 @@ export async function POST(req: NextRequest) {
 - 傷や汚れが不明な場合は、damageRiskScoreを中間寄りにする。
 `.trim();
 
-    const completion = await client.chat.completions.create({
-      model: "gpt-4o-mini",
-      temperature: 0.1,
-      response_format: { type: "json_object" },
-      messages: [
-        {
-          role: "system",
-          content:
-            "あなたは中古販売の商品画像をJSONで数値評価する補助エンジンです。必ず有効なJSONだけを返します。",
-        },
-        {
-          role: "user",
-          content: [
-            {
-              type: "text",
-              text: prompt,
+  const completion = await client.chat.completions.create({
+    model: "gpt-4o-mini",
+    temperature: 0.1,
+    response_format: { type: "json_object" },
+    messages: [
+      {
+        role: "system",
+        content:
+          "あなたは中古販売の商品画像をJSONで数値評価する補助エンジンです。必ず有効なJSONだけを返します。",
+      },
+      {
+        role: "user",
+        content: [
+          { type: "text", text: prompt },
+          {
+            type: "image_url",
+            image_url: {
+              url: imageUrl,
             },
-            {
-              type: "image_url",
-              image_url: {
-                url: imageUrl,
-              },
-            },
-          ],
-        },
-      ],
-    });
+          },
+        ],
+      },
+    ],
+  });
 
-    const content = completion.choices[0]?.message?.content || "";
-    const jsonText = extractJsonText(content);
+  const content = completion.choices[0]?.message?.content || "";
+  const jsonText = extractJsonText(content);
+  const parsed = JSON.parse(jsonText);
 
-    let parsed: any = {};
+  return normalizeResult(parsed);
+}
 
-    try {
-      parsed = JSON.parse(jsonText);
-    } catch {
+export async function POST(req: NextRequest) {
+  try {
+    const uid = await getUidFromRequest(req);
+
+    if (!uid) {
       return NextResponse.json(
-        {
-          ok: false,
-          error: "画像解析結果のJSON解析に失敗しました",
-        },
+        { ok: false, error: "ログイン確認が必要です" },
+        { status: 401 }
+      );
+    }
+
+    if (!isAdminUid(uid)) {
+      return NextResponse.json(
+        { ok: false, error: "管理者のみ実行できます" },
+        { status: 403 }
+      );
+    }
+
+    const imageUrls = await resolveImageInputs(req);
+
+    if (imageUrls.length === 0) {
+      return NextResponse.json(
+        { ok: false, error: "画像URLまたは画像ファイルが空です" },
+        { status: 400 }
+      );
+    }
+
+    if (!process.env.OPENAI_API_KEY) {
+      return NextResponse.json(
+        { ok: false, error: "OPENAI_API_KEY が設定されていません" },
         { status: 500 }
       );
     }
 
+    const client = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+    });
+
+    const results: ImageAnalyzeResult[] = [];
+
+    for (const imageUrl of imageUrls) {
+      results.push(await analyzeOneImage(client, imageUrl));
+    }
+
     return NextResponse.json({
       ok: true,
-      result: normalizeResult(parsed),
+      result: averageResults(results),
+      results,
+      analyzedCount: results.length,
     });
   } catch (error) {
     console.error(error);
 
     return NextResponse.json(
-      {
-        ok: false,
-        error: "画像解析に失敗しました",
-      },
+      { ok: false, error: "画像解析に失敗しました" },
       { status: 500 }
     );
   }

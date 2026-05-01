@@ -1,6 +1,4 @@
-// app/api/sell-check/extract-rich/route.ts
-// 売れる診断：商品ページ本文＋画像 統合解析API
-
+//app/api/sell-check/extract-rich/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
 import { getAdminAuth } from "@/app/api/_firebase/admin";
@@ -164,6 +162,19 @@ async function getUidFromRequest(req: NextRequest): Promise<string | null> {
   }
 }
 
+async function fileToImagePart(file: File) {
+  const arrayBuffer = await file.arrayBuffer();
+  const base64 = Buffer.from(arrayBuffer).toString("base64");
+  const mime = file.type || "image/png";
+
+  return {
+    type: "image_url" as const,
+    image_url: {
+      url: `data:${mime};base64,${base64}`,
+    },
+  };
+}
+
 export async function POST(req: NextRequest) {
   try {
     const uid = await getUidFromRequest(req);
@@ -184,7 +195,11 @@ export async function POST(req: NextRequest) {
 
     const form = await req.formData();
     const text = safeString(form.get("text"));
-    const file = form.get("image");
+
+    const files = [
+      ...form.getAll("images"),
+      ...form.getAll("image"),
+    ].filter((x): x is File => x instanceof File);
 
     if (!text) {
       return NextResponse.json(
@@ -193,7 +208,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    if (!(file instanceof File)) {
+    if (files.length === 0) {
       return NextResponse.json(
         { ok: false, error: "商品画像が必要です" },
         { status: 400 }
@@ -207,9 +222,11 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const arrayBuffer = await file.arrayBuffer();
-    const base64 = Buffer.from(arrayBuffer).toString("base64");
-    const mime = file.type || "image/png";
+    const imageParts = [];
+
+    for (const file of files.slice(0, 8)) {
+      imageParts.push(await fileToImagePart(file));
+    }
 
     const client = new OpenAI({
       apiKey: process.env.OPENAI_API_KEY,
@@ -217,7 +234,7 @@ export async function POST(req: NextRequest) {
 
     const prompt = `
 あなたは中古販売・フリマ商品の学習データ作成担当です。
-商品ページ本文と商品画像を同時に見て、売れる診断の学習データを1行に整理してください。
+商品ページ本文と複数の商品画像を同時に見て、売れる診断の学習データを1行に整理してください。
 
 必ずJSONだけを返してください。
 説明文は不要です。
@@ -244,23 +261,21 @@ export async function POST(req: NextRequest) {
       "conditionRiskScore": "本文と画像を合わせた状態リスク 0〜100。高いほどリスク大",
       "descriptionQualityScore": "説明文品質 0〜100。高いほど説明が十分",
 
-      "brightnessScore": "画像の明るさ 0〜100",
-      "compositionScore": "画像の構図 0〜100",
-      "backgroundScore": "背景の良さ 0〜100",
+      "brightnessScore": "複数画像全体の明るさ 0〜100",
+      "compositionScore": "複数画像全体の構図 0〜100",
+      "backgroundScore": "複数画像全体の背景の良さ 0〜100",
       "damageRiskScore": "画像上の傷・汚れ・破損リスク 0〜100。高いほどリスク大",
       "overallImageScore": "商品画像としての総合点 0〜100"
     }
   ]
 }
 
-重要な判断：
-- 本文と画像を別々に見ず、必ず照合する
-- 画像で傷・汚れ・破損が見えるのに本文に説明がない場合、memoに書く
-- 本文の状態説明と画像の印象がズレる場合、conditionRiskScoreを上げる
-- ブランド・型番・素材は本文と画像の両方から推定する
+重要：
+- 複数画像は同じ商品の別角度として扱う
+- 傷・汚れ・欠品が1枚でも見える場合はmemoに書く
+- 本文と画像の状態説明がズレる場合、conditionRiskScoreを上げる
 - 分からないことは断定しない
 - 実際に売れる保証はしない
-- 画像から判断できない傷は断定しない
 
 カテゴリ判断：
 - バッグ、服、靴、アクセサリー → fashion
@@ -288,19 +303,11 @@ ${text}
         {
           role: "system",
           content:
-            "あなたは中古販売データを本文と画像からJSON化する補助エンジンです。必ず有効なJSONだけを返します。",
+            "あなたは中古販売データを本文と複数画像からJSON化する補助エンジンです。必ず有効なJSONだけを返します。",
         },
         {
           role: "user",
-          content: [
-            { type: "text", text: prompt },
-            {
-              type: "image_url",
-              image_url: {
-                url: `data:${mime};base64,${base64}`,
-              },
-            },
-          ],
+          content: [{ type: "text", text: prompt }, ...imageParts],
         },
       ],
     });
@@ -328,6 +335,7 @@ ${text}
     return NextResponse.json({
       ok: true,
       rows,
+      analyzedImageCount: imageParts.length,
     });
   } catch (error) {
     console.error(error);
