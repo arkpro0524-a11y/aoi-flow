@@ -45,35 +45,76 @@ export function categoryLabel(category: SellCheckCategory): string {
   return "その他";
 }
 
-/**
- * 価格の基本点
- *
- * 目的：
- * - 安いほど売れやすい、という単純ルールは残す
- * - ただし高単価商品も利益商品になり得るため、落としすぎない
- */
 export function priceBaseScore(price: number): number {
   const p = normalizePrice(price);
 
   if (p <= 1000) return 88;
   if (p <= 1500) return 86;
   if (p <= 3000) return 78;
-  if (p <= 6000) return 66;
-  if (p <= 12000) return 54;
-  if (p <= 30000) return 44;
+  if (p <= 6000) return 68;
+  if (p <= 12000) return 60;
+  if (p <= 30000) return 52;
+  if (p <= 80000) return 46;
 
-  return 36;
+  return 40;
 }
 
-/**
- * 状態点
- *
- * 中古販売では状態の不安が購入停止要因になるため、
- * fair / poor は明確に下げる。
- */
 export function conditionScore(condition: SellCheckCondition): number {
   if (condition === "excellent") return 92;
   if (condition === "good") return 78;
   if (condition === "fair") return 56;
   return 34;
+}
+
+export const RARE_KEYWORDS = [
+  "昭和",
+  "昭和レトロ",
+  "当時物",
+  "ヴィンテージ",
+  "ビンテージ",
+  "レトロ",
+  "廃盤",
+  "絶版",
+  "限定",
+  "限定品",
+  "初版",
+  "旧ロゴ",
+  "希少",
+  "レア",
+  "入手困難",
+  "非売品",
+  "コラボ",
+  "記念",
+  "デッドストック",
+  "未開封",
+  "箱付き",
+  "円谷",
+  "ブルマァク",
+  "ポピー",
+  "バンダイ",
+  "タカラ",
+  "マルサン",
+  "ソフビ",
+  "ブリキ",
+  "ゼンマイ",
+  "怪獣",
+  "ウルトラマン",
+  "仮面ライダー",
+];
+
+export function normalizeSearchText(value: unknown): string {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[Ａ-Ｚａ-ｚ０-９]/g, (s) =>
+      String.fromCharCode(s.charCodeAt(0) - 0xfee0)
+    );
+}
+
+export function countRareKeywordHits(words: string[]): number {
+  const text = normalizeSearchText(words.join(" "));
+
+  return RARE_KEYWORDS.filter((keyword) => {
+    return text.includes(normalizeSearchText(keyword));
+  }).length;
 }

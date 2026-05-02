@@ -1,5 +1,5 @@
-//lib/sellCheck/imageScore.ts
-// 画像評価（軽量版：実用レベル）
+// /lib/sellCheck/imageScore.ts
+
 export function evaluateImageQuality(meta: {
   brightness: number;
   centered: boolean;

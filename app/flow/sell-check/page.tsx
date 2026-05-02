@@ -295,7 +295,7 @@ export default function SellCheckPage() {
     if (selectedDraft.condition) setCondition(selectedDraft.condition);
   }, [selectedDraft]);
 
-  async function saveResultLog(args: {
+  async function saveDiagnosisResult(args: {
     result: SellCheckResult;
     imageUrl: string;
     imageSource: "manual" | "draft";
@@ -407,7 +407,7 @@ export default function SellCheckPage() {
       const nextResult = data.result as SellCheckResult;
       setResult(nextResult);
 
-      await saveResultLog({
+      await saveDiagnosisResult({
         result: nextResult,
         imageUrl: usedImageUrl,
         imageSource,
@@ -429,7 +429,7 @@ export default function SellCheckPage() {
         <h1 className="text-2xl font-black tracking-wide">売れる診断</h1>
         <p className="mt-2 text-sm text-white/65">
           診断対象は、AOI FLOWで作成した下書き・投稿済み画像、または手動アップロード画像です。
-          診断結果は、draftに戻して成果データとして蓄積できます。
+          診断結果は表示・履歴保存されますが、売却実績の学習データには自動保存されません。
         </p>
       </div>
 
@@ -811,10 +811,12 @@ export default function SellCheckPage() {
 
               <div className="text-xs text-white/45">
                 学習データ参照数：{result.learnedSampleCount}件
+                <br />
+                この診断結果は売却実績の学習データには自動保存されません。
                 {sourceMode === "draft" && selectedDraft ? (
                   <>
                     <br />
-                    この診断結果は draft の outcome.sellCheck に保存されます。
+                    draft の outcome.sellCheck には診断結果のみ保存されます。
                   </>
                 ) : null}
               </div>
@@ -827,7 +829,7 @@ export default function SellCheckPage() {
         <div className="mb-4">
           <div className="text-lg font-black">3. 学習状況 管理パネル</div>
           <div className="mt-1 text-sm text-white/60">
-            Firestoreに保存された診断ログの状態です。データが増えるほど価格判断が安定します。
+            Firestoreの売却実績データの状態です。診断しただけの商品は学習データに含めません。
           </div>
         </div>
 
@@ -838,7 +840,7 @@ export default function SellCheckPage() {
         ) : (
           <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
             <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-              <div className="text-xs text-white/50">診断ログ</div>
+              <div className="text-xs text-white/50">学習データ</div>
               <div className="mt-1 text-2xl font-black">{stats.total}</div>
             </div>
 

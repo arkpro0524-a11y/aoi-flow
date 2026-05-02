@@ -1,4 +1,4 @@
-// app/flow/sell-check/admin/page.tsx
+//app/flow/sell-check/admin/page.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -23,6 +23,15 @@ type ImportRow = {
   extractedKeywords: string;
   conditionRiskScore: string;
   descriptionQualityScore: string;
+
+  rarityScore: string;
+  demandScore: string;
+  brandPowerScore: string;
+  collectorScore: string;
+  ageValueScore: string;
+  trendScore: string;
+  marketSupplyScore: string;
+  keywordStrength: string;
 
   brightnessScore: string;
   compositionScore: string;
@@ -65,6 +74,44 @@ const CONDITION_OPTIONS = [
   { value: "poor", label: "状態悪い" },
 ];
 
+const EXPORT_HEADERS = [
+  "商品名",
+  "出品価格",
+  "売却価格",
+  "カテゴリ",
+  "状態",
+  "売却済み",
+  "閲覧数",
+  "いいね",
+  "メモ",
+  "ブランド",
+  "型番",
+  "素材",
+  "キーワード",
+  "状態リスク",
+  "説明文品質",
+  "希少性",
+  "需要",
+  "ブランド力",
+  "コレクター価値",
+  "年代価値",
+  "現在人気度",
+  "出品数の少なさ",
+  "検索キーワード強度",
+  "明るさ",
+  "構図",
+  "背景",
+  "傷リスク",
+  "画像総合",
+  "診断スコア",
+  "ランク",
+  "画像あり",
+  "画像ファイル名",
+  "作成日時",
+  "更新日時",
+  "ID",
+];
+
 function createEmptyRow(): ImportRow {
   return {
     title: "",
@@ -84,6 +131,15 @@ function createEmptyRow(): ImportRow {
     extractedKeywords: "",
     conditionRiskScore: "",
     descriptionQualityScore: "",
+
+    rarityScore: "",
+    demandScore: "",
+    brandPowerScore: "",
+    collectorScore: "",
+    ageValueScore: "",
+    trendScore: "",
+    marketSupplyScore: "",
+    keywordStrength: "",
 
     brightnessScore: "",
     compositionScore: "",
@@ -150,6 +206,15 @@ function normalizeRow(raw: any): ImportRow {
     extractedKeywords: normalizeKeywords(raw?.extractedKeywords),
     conditionRiskScore: String(raw?.conditionRiskScore ?? "").trim(),
     descriptionQualityScore: String(raw?.descriptionQualityScore ?? "").trim(),
+
+    rarityScore: String(raw?.rarityScore ?? "").trim(),
+    demandScore: String(raw?.demandScore ?? "").trim(),
+    brandPowerScore: String(raw?.brandPowerScore ?? "").trim(),
+    collectorScore: String(raw?.collectorScore ?? "").trim(),
+    ageValueScore: String(raw?.ageValueScore ?? "").trim(),
+    trendScore: String(raw?.trendScore ?? "").trim(),
+    marketSupplyScore: String(raw?.marketSupplyScore ?? "").trim(),
+    keywordStrength: String(raw?.keywordStrength ?? "").trim(),
 
     brightnessScore: String(raw?.brightnessScore ?? "").trim(),
     compositionScore: String(raw?.compositionScore ?? "").trim(),
@@ -250,6 +315,84 @@ function getDuplicateGroups(logs: SavedLog[]): DuplicateGroup[] {
   });
 
   return groups;
+}
+
+function csvEscape(value: unknown): string {
+  const text = String(value ?? "").replace(/\r?\n/g, " ").trim();
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
+function htmlEscape(value: unknown): string {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function getExportRows(logs: SavedLog[]) {
+  return logs.map((log) => [
+    log.title,
+    log.price,
+    log.soldPrice,
+    log.category,
+    log.condition,
+    log.sold ? "売却済み" : "未売却",
+    log.views,
+    log.likes,
+    log.memo,
+    log.brandName,
+    log.modelName,
+    log.material,
+    log.extractedKeywords,
+    log.conditionRiskScore,
+    log.descriptionQualityScore,
+    log.rarityScore,
+    log.demandScore,
+    log.brandPowerScore,
+    log.collectorScore,
+    log.ageValueScore,
+    log.trendScore,
+    log.marketSupplyScore,
+    log.keywordStrength,
+    log.brightnessScore,
+    log.compositionScore,
+    log.backgroundScore,
+    log.damageRiskScore,
+    log.overallImageScore,
+    log.score ?? "",
+    log.rank ?? "",
+    log.hasImage ? "あり" : "なし",
+    log.imageFileName,
+    formatDate(log.createdAt),
+    formatDate(log.updatedAt),
+    log.id,
+  ]);
+}
+
+function downloadFile(args: { fileName: string; mimeType: string; content: string }) {
+  const blob = new Blob([args.content], { type: args.mimeType });
+  const url = URL.createObjectURL(blob);
+
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = args.fileName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+
+  URL.revokeObjectURL(url);
+}
+
+function buildExportFileName(ext: "csv" | "xls") {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, "0");
+  const d = String(now.getDate()).padStart(2, "0");
+  const hh = String(now.getHours()).padStart(2, "0");
+  const mm = String(now.getMinutes()).padStart(2, "0");
+
+  return `sell-check-logs-${y}${m}${d}-${hh}${mm}.${ext}`;
 }
 
 export default function SellCheckAdminPage() {
@@ -397,6 +540,84 @@ export default function SellCheckAdminPage() {
     setRichImagePreviewUrls(files.map((file) => URL.createObjectURL(file)));
   }
 
+  function exportLogsAsCsv() {
+    setError("");
+    setMsg("");
+
+    if (logs.length === 0) {
+      setError("出力できる保存済み学習データがありません。");
+      return;
+    }
+
+    const rowsForExport = getExportRows(logs);
+    const csv = [
+      EXPORT_HEADERS.map(csvEscape).join(","),
+      ...rowsForExport.map((row) => row.map(csvEscape).join(",")),
+    ].join("\n");
+
+    downloadFile({
+      fileName: buildExportFileName("csv"),
+      mimeType: "text/csv;charset=utf-8",
+      content: `\uFEFF${csv}`,
+    });
+
+    setMsg(`保存済み学習データ ${logs.length}件をCSV出力しました。`);
+  }
+
+  function exportLogsAsExcel() {
+    setError("");
+    setMsg("");
+
+    if (logs.length === 0) {
+      setError("出力できる保存済み学習データがありません。");
+      return;
+    }
+
+    const rowsForExport = getExportRows(logs);
+
+    const tableRows = [
+      `<tr>${EXPORT_HEADERS.map((h) => `<th>${htmlEscape(h)}</th>`).join("")}</tr>`,
+      ...rowsForExport.map((row) => {
+        return `<tr>${row.map((cell) => `<td>${htmlEscape(cell)}</td>`).join("")}</tr>`;
+      }),
+    ].join("");
+
+    const html = `
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      table {
+        border-collapse: collapse;
+        font-family: Arial, sans-serif;
+        font-size: 12px;
+      }
+      th {
+        background: #e7ecf1;
+        font-weight: bold;
+      }
+      th, td {
+        border: 1px solid #999;
+        padding: 6px;
+        white-space: nowrap;
+      }
+    </style>
+  </head>
+  <body>
+    <table>${tableRows}</table>
+  </body>
+</html>
+`.trim();
+
+    downloadFile({
+      fileName: buildExportFileName("xls"),
+      mimeType: "application/vnd.ms-excel;charset=utf-8",
+      content: html,
+    });
+
+    setMsg(`保存済み学習データ ${logs.length}件をExcel出力しました。`);
+  }
+
   function applyCsvText() {
     setError("");
     setMsg("");
@@ -430,6 +651,14 @@ export default function SellCheckAdminPage() {
         extractedKeywords: cols[12] || "",
         conditionRiskScore: cols[13] || "",
         descriptionQualityScore: cols[14] || "",
+        rarityScore: cols[15] || "",
+        demandScore: cols[16] || "",
+        brandPowerScore: cols[17] || "",
+        collectorScore: cols[18] || "",
+        ageValueScore: cols[19] || "",
+        trendScore: cols[20] || "",
+        marketSupplyScore: cols[21] || "",
+        keywordStrength: cols[22] || "",
       });
     });
 
@@ -1081,14 +1310,14 @@ export default function SellCheckAdminPage() {
       <section className="rounded-3xl border border-white/10 bg-black/30 p-5">
         <div className="mb-3 text-lg font-black">CSV貼り付け</div>
         <div className="mb-3 text-sm text-white/55">
-          形式：商品名,出品価格,売却価格,カテゴリ,状態,売却済み,閲覧数,いいね,メモ,ブランド,型番,素材,キーワード,状態リスク,説明文品質
+          形式：商品名,出品価格,売却価格,カテゴリ,状態,売却済み,閲覧数,いいね,メモ,ブランド,型番,素材,キーワード,状態リスク,説明文品質,希少性,需要,ブランド力,コレクター価値,年代価値,現在人気度,出品数の少なさ,検索キーワード強度
         </div>
 
         <textarea
           value={csvText}
           onChange={(e) => setCsvText(e.target.value)}
           className="min-h-[140px] w-full rounded-2xl border border-white/10 bg-black/45 p-4 text-sm text-white outline-none"
-          placeholder="レザーショルダーバッグ,9800,8500,fashion,good,売却済み,320,18,TOD'S系,TOD'S,Dバッグ,レザー,バッグ 革 ブラウン,25,85"
+          placeholder="帰ってきたウルトラマン ブリキ玩具,49800,45000,hobby,fair,売却済み,1200,80,当時物,TOMY,ゼンマイ歩行,ブリキ ソフビ,昭和レトロ 当時物 円谷 ブリキ,65,80,92,88,72,95,90,76,85,94"
         />
 
         <div className="mt-3 flex flex-wrap gap-2">
@@ -1107,7 +1336,7 @@ export default function SellCheckAdminPage() {
           <div>
             <div className="text-lg font-black">学習データ入力</div>
             <div className="mt-1 text-sm text-white/55">
-              売れた商品の実績を入れるほど、価格帯の判断が安定します。
+              売れた商品の実績・希少性・需要・ブランド力を入れるほど、価格帯の判断が安定します。
             </div>
           </div>
 
@@ -1170,7 +1399,7 @@ export default function SellCheckAdminPage() {
             <div className="text-lg font-black">保存済み学習データ</div>
             <div className="mt-1 text-sm text-white/55">
               sellCheckLogs に保存されたデータをExcel風の表で確認・編集・削除できます。
-              重複データは、新しい1件だけ残して自動削除できます。
+              CSV / Excel形式で出力できます。
             </div>
           </div>
 
@@ -1189,6 +1418,24 @@ export default function SellCheckAdminPage() {
             >
               重複削除候補：{duplicateRemoveCount}件
             </div>
+
+            <button
+              type="button"
+              onClick={exportLogsAsCsv}
+              disabled={logs.length === 0}
+              className="rounded-full border border-sky-300/30 bg-sky-400/15 px-5 py-2 text-sm font-black text-sky-100 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              CSV出力
+            </button>
+
+            <button
+              type="button"
+              onClick={exportLogsAsExcel}
+              disabled={logs.length === 0}
+              className="rounded-full border border-emerald-300/30 bg-emerald-400/15 px-5 py-2 text-sm font-black text-emerald-100 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Excel出力
+            </button>
 
             <button
               type="button"
@@ -1217,7 +1464,7 @@ export default function SellCheckAdminPage() {
         ) : (
           <div className="rounded-2xl border border-white/10 bg-black/40">
             <div className="max-h-[560px] overflow-auto">
-              <table className="min-w-[2300px] border-collapse text-left text-xs text-white/75">
+              <table className="min-w-[3100px] border-collapse text-left text-xs text-white/75">
                 <thead className="sticky top-0 z-20 bg-[#10131a] text-white">
                   <tr>
                     <ExcelTh stickyLeft>操作</ExcelTh>
@@ -1236,6 +1483,14 @@ export default function SellCheckAdminPage() {
                     <ExcelTh>キーワード</ExcelTh>
                     <ExcelTh>状態リスク</ExcelTh>
                     <ExcelTh>説明文品質</ExcelTh>
+                    <ExcelTh>希少性</ExcelTh>
+                    <ExcelTh>需要</ExcelTh>
+                    <ExcelTh>ブランド力</ExcelTh>
+                    <ExcelTh>コレクター価値</ExcelTh>
+                    <ExcelTh>年代価値</ExcelTh>
+                    <ExcelTh>現在人気度</ExcelTh>
+                    <ExcelTh>出品数の少なさ</ExcelTh>
+                    <ExcelTh>検索KW強度</ExcelTh>
                     <ExcelTh>明るさ</ExcelTh>
                     <ExcelTh>構図</ExcelTh>
                     <ExcelTh>背景</ExcelTh>
@@ -1310,6 +1565,14 @@ export default function SellCheckAdminPage() {
                         </ExcelTd>
                         <ExcelTd>{shortText(log.conditionRiskScore)}</ExcelTd>
                         <ExcelTd>{shortText(log.descriptionQualityScore)}</ExcelTd>
+                        <ExcelTd>{shortText(log.rarityScore)}</ExcelTd>
+                        <ExcelTd>{shortText(log.demandScore)}</ExcelTd>
+                        <ExcelTd>{shortText(log.brandPowerScore)}</ExcelTd>
+                        <ExcelTd>{shortText(log.collectorScore)}</ExcelTd>
+                        <ExcelTd>{shortText(log.ageValueScore)}</ExcelTd>
+                        <ExcelTd>{shortText(log.trendScore)}</ExcelTd>
+                        <ExcelTd>{shortText(log.marketSupplyScore)}</ExcelTd>
+                        <ExcelTd>{shortText(log.keywordStrength)}</ExcelTd>
                         <ExcelTd>{shortText(log.brightnessScore)}</ExcelTd>
                         <ExcelTd>{shortText(log.compositionScore)}</ExcelTd>
                         <ExcelTd>{shortText(log.backgroundScore)}</ExcelTd>
@@ -1563,7 +1826,7 @@ function RowEditor(props: {
               updateRow(index, { extractedKeywords: e.target.value })
             }
             className="mt-1 w-full rounded-xl border border-white/10 bg-black/45 px-3 py-2 text-white outline-none"
-            placeholder="例：バッグ, レザー, ブラウン"
+            placeholder="例：昭和レトロ, 当時物, ブリキ, 円谷"
           />
         </Field>
 
@@ -1588,6 +1851,13 @@ function RowEditor(props: {
             className="mt-1 w-full rounded-xl border border-white/10 bg-black/45 px-3 py-2 text-white outline-none"
           />
         </Field>
+      </div>
+
+      <div className="mt-3 rounded-2xl border border-white/10 bg-white/5 p-4">
+        <div className="mb-3 text-sm font-black text-white/80">
+          希少性・市場価値スコア
+        </div>
+        <MarketValueScoreFields row={row} index={index} updateRow={updateRow} />
       </div>
 
       {!hideImageAnalyzer ? (
@@ -1693,6 +1963,90 @@ function Field(props: { label: string; children: React.ReactNode }) {
       {props.label}
       {props.children}
     </label>
+  );
+}
+
+function MarketValueScoreFields(props: {
+  row: ImportRow;
+  index: number;
+  updateRow: (index: number, patch: Partial<ImportRow>) => void;
+}) {
+  const { row, index, updateRow } = props;
+
+  return (
+    <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+      <Field label="希少性 0〜100">
+        <input
+          value={row.rarityScore}
+          onChange={(e) => updateRow(index, { rarityScore: e.target.value })}
+          inputMode="numeric"
+          className="mt-1 w-full rounded-xl border border-white/10 bg-black/45 px-3 py-2 text-white outline-none"
+        />
+      </Field>
+
+      <Field label="需要 0〜100">
+        <input
+          value={row.demandScore}
+          onChange={(e) => updateRow(index, { demandScore: e.target.value })}
+          inputMode="numeric"
+          className="mt-1 w-full rounded-xl border border-white/10 bg-black/45 px-3 py-2 text-white outline-none"
+        />
+      </Field>
+
+      <Field label="ブランド力 0〜100">
+        <input
+          value={row.brandPowerScore}
+          onChange={(e) => updateRow(index, { brandPowerScore: e.target.value })}
+          inputMode="numeric"
+          className="mt-1 w-full rounded-xl border border-white/10 bg-black/45 px-3 py-2 text-white outline-none"
+        />
+      </Field>
+
+      <Field label="コレクター価値 0〜100">
+        <input
+          value={row.collectorScore}
+          onChange={(e) => updateRow(index, { collectorScore: e.target.value })}
+          inputMode="numeric"
+          className="mt-1 w-full rounded-xl border border-white/10 bg-black/45 px-3 py-2 text-white outline-none"
+        />
+      </Field>
+
+      <Field label="年代価値 0〜100">
+        <input
+          value={row.ageValueScore}
+          onChange={(e) => updateRow(index, { ageValueScore: e.target.value })}
+          inputMode="numeric"
+          className="mt-1 w-full rounded-xl border border-white/10 bg-black/45 px-3 py-2 text-white outline-none"
+        />
+      </Field>
+
+      <Field label="現在人気度 0〜100">
+        <input
+          value={row.trendScore}
+          onChange={(e) => updateRow(index, { trendScore: e.target.value })}
+          inputMode="numeric"
+          className="mt-1 w-full rounded-xl border border-white/10 bg-black/45 px-3 py-2 text-white outline-none"
+        />
+      </Field>
+
+      <Field label="出品数の少なさ 0〜100">
+        <input
+          value={row.marketSupplyScore}
+          onChange={(e) => updateRow(index, { marketSupplyScore: e.target.value })}
+          inputMode="numeric"
+          className="mt-1 w-full rounded-xl border border-white/10 bg-black/45 px-3 py-2 text-white outline-none"
+        />
+      </Field>
+
+      <Field label="検索キーワード強度 0〜100">
+        <input
+          value={row.keywordStrength}
+          onChange={(e) => updateRow(index, { keywordStrength: e.target.value })}
+          inputMode="numeric"
+          className="mt-1 w-full rounded-xl border border-white/10 bg-black/45 px-3 py-2 text-white outline-none"
+        />
+      </Field>
+    </div>
   );
 }
 

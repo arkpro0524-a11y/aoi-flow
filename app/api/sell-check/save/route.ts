@@ -96,9 +96,6 @@ export async function POST(req: NextRequest) {
     const condition = safeString(body.condition);
     const category = safeString(body.category);
 
-    // ★追加（既存そのまま）
-    const soldPrice = safeNonNegativeNumber(body.soldPrice);
-
     const rankRaw = safeString(body.rank);
     const rank =
       rankRaw === "A" || rankRaw === "B" || rankRaw === "C" || rankRaw === "D"
@@ -174,16 +171,13 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 🔥ここが今回の追加（AI結果保存）
-    const logPayload = cleanObject({
+    const diagnosisPayload = cleanObject({
       uid: uid || undefined,
       draftId: draftId || undefined,
       imageUrl: imageUrl || undefined,
       imageSource,
 
       price,
-      soldPrice,
-
       condition: condition || undefined,
       category: category || undefined,
 
@@ -197,21 +191,26 @@ export async function POST(req: NextRequest) {
       learnedSampleCount,
       targetSummary: targetSummary || undefined,
 
-      // 👇追加（重要）
       imageAnalysis: body.imageAnalysis,
       textAnalysis: body.textAnalysis,
       similarData: body.similarData,
 
       hasImage: !!imageUrl || body.hasImage === true,
-      sold: body.sold === true,
+
+      isLearningData: false,
+      learningNote: "診断履歴です。売却実績ではないため sellCheckLogs には保存していません。",
 
       createdAt: nowDate,
       updatedAt: nowDate,
     });
 
-    await db.collection("sellCheckLogs").add(logPayload);
+    await db.collection("sellCheckDiagnosisLogs").add(diagnosisPayload);
 
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({
+      ok: true,
+      savedToLearningLogs: false,
+      savedToDiagnosisLogs: true,
+    });
   } catch (e) {
     console.error(e);
 

@@ -9,12 +9,15 @@ import type {
   SellCheckImageAnalysis,
   SellCheckTextAnalysis,
   SellCheckSimilarData,
+  SellCheckMarketAnalysis,
 } from "@/lib/types/sellCheck";
 import {
   categoryLabel,
   conditionLabel,
   conditionScore,
   priceBaseScore,
+  countRareKeywordHits,
+  normalizeSearchText,
 } from "@/lib/sellCheck/rules";
 
 type LearnedData = {
@@ -22,6 +25,11 @@ type LearnedData = {
   soldCount: number;
   totalCount: number;
   logs?: SellCheckLog[];
+};
+
+type WeightedLog = {
+  log: SellCheckLog;
+  weight: number;
 };
 
 function clampScore(n: number): number {
@@ -66,6 +74,17 @@ function median(values: number[]): number | undefined {
   return Math.round((list[mid - 1] + list[mid]) / 2);
 }
 
+function percentile(values: number[], rate: number): number | undefined {
+  const list = values
+    .filter((n) => Number.isFinite(n) && n > 0)
+    .sort((a, b) => a - b);
+
+  if (list.length === 0) return undefined;
+
+  const index = Math.min(list.length - 1, Math.max(0, Math.floor(list.length * rate)));
+  return list[index];
+}
+
 function pushUnique(list: string[], text: string) {
   const s = String(text || "").trim();
   if (!s) return;
@@ -73,36 +92,7 @@ function pushUnique(list: string[], text: string) {
   list.push(s);
 }
 
-function normalizeKeyword(v: unknown): string {
-  return String(v ?? "")
-    .trim()
-    .toLowerCase();
-}
-
-function keywordHitScore(target: string[], log: SellCheckLog): number {
-  const targetSet = new Set(target.map(normalizeKeyword).filter(Boolean));
-  const logWords = [
-    log.title,
-    log.brandName,
-    log.modelName,
-    log.material,
-    ...(Array.isArray(log.extractedKeywords) ? log.extractedKeywords : []),
-  ]
-    .map(normalizeKeyword)
-    .filter(Boolean);
-
-  if (targetSet.size === 0 || logWords.length === 0) return 0;
-
-  let hit = 0;
-
-  logWords.forEach((word) => {
-    if (targetSet.has(word)) hit += 1;
-  });
-
-  return hit;
-}
-
-function getTargetKeywords(textAnalysis?: SellCheckTextAnalysis): string[] {
+function wordsFromTarget(textAnalysis?: SellCheckTextAnalysis): string[] {
   if (!textAnalysis) return [];
 
   return [
@@ -117,151 +107,244 @@ function getTargetKeywords(textAnalysis?: SellCheckTextAnalysis): string[] {
     .filter(Boolean);
 }
 
-function getSimilarLogs(args: {
+function wordsFromLog(log: SellCheckLog): string[] {
+  return [
+    log.title,
+    log.brandName,
+    log.modelName,
+    log.material,
+    ...(Array.isArray(log.extractedKeywords) ? log.extractedKeywords : []),
+  ]
+    .map((x) => String(x ?? "").trim())
+    .filter(Boolean);
+}
+
+function includesNormalized(a: string, b: string): boolean {
+  const x = normalizeSearchText(a);
+  const y = normalizeSearchText(b);
+  if (!x || !y) return false;
+  return x.includes(y) || y.includes(x);
+}
+
+function keywordHitCount(targetWords: string[], log: SellCheckLog): number {
+  const logWords = wordsFromLog(log);
+  let hit = 0;
+
+  targetWords.forEach((target) => {
+    if (logWords.some((word) => includesNormalized(word, target))) {
+      hit += 1;
+    }
+  });
+
+  return hit;
+}
+
+function calcMarketAnalysis(textAnalysis?: SellCheckTextAnalysis): SellCheckMarketAnalysis {
+  const targetWords = wordsFromTarget(textAnalysis);
+  const rareHit = countRareKeywordHits(targetWords);
+  const keywordCount = targetWords.length;
+
+  const rarityScore = safeScore(
+    textAnalysis?.rarityScore,
+    clampScore(35 + rareHit * 12)
+  );
+
+  const collectorScore = safeScore(
+    textAnalysis?.collectorScore,
+    clampScore(30 + rareHit * 10)
+  );
+
+  const ageValueScore = safeScore(
+    textAnalysis?.ageValueScore,
+    targetWords.some((x) => normalizeSearchText(x).includes("昭和"))
+      ? 80
+      : clampScore(35 + rareHit * 8)
+  );
+
+  const brandPowerScore = safeScore(
+    textAnalysis?.brandPowerScore,
+    textAnalysis?.brandName ? 65 : 45
+  );
+
+  const demandScore = safeScore(
+    textAnalysis?.demandScore,
+    clampScore(45 + rareHit * 5 + keywordCount * 2)
+  );
+
+  const trendScore = safeScore(textAnalysis?.trendScore, 50);
+
+  const marketSupplyScore = safeScore(
+    textAnalysis?.marketSupplyScore,
+    clampScore(40 + rareHit * 8)
+  );
+
+  const keywordStrength = safeScore(
+    textAnalysis?.keywordStrength,
+    clampScore(35 + keywordCount * 5 + rareHit * 6)
+  );
+
+  const rareReasons = Array.isArray(textAnalysis?.rareReasons)
+    ? textAnalysis!.rareReasons!.filter(Boolean).slice(0, 10)
+    : [];
+
+  if (rareHit > 0 && rareReasons.length === 0) {
+    rareReasons.push("希少性・年代価値・コレクター需要につながるキーワードを検出しました");
+  }
+
+  return {
+    rarityScore,
+    demandScore,
+    brandPowerScore,
+    collectorScore,
+    ageValueScore,
+    trendScore,
+    marketSupplyScore,
+    keywordStrength,
+    rareReasons,
+  };
+}
+
+function weightedSimilarity(args: {
+  log: SellCheckLog;
+  category: SellCheckCategory;
+  condition: SellCheckCondition;
+  textAnalysis?: SellCheckTextAnalysis;
+  imageAnalysis?: SellCheckImageAnalysis;
+  marketAnalysis: SellCheckMarketAnalysis;
+}): number {
+  const targetWords = wordsFromTarget(args.textAnalysis);
+  const log = args.log;
+
+  let weight = 0;
+
+  if (log.category === args.category) weight += 8;
+  if (log.condition === args.condition) weight += 3;
+
+  if (args.textAnalysis?.brandName && log.brandName) {
+    if (includesNormalized(args.textAnalysis.brandName, log.brandName)) {
+      weight += 18;
+    }
+  }
+
+  if (args.textAnalysis?.modelName && log.modelName) {
+    if (includesNormalized(args.textAnalysis.modelName, log.modelName)) {
+      weight += 24;
+    }
+  }
+
+  weight += keywordHitCount(targetWords, log) * 5;
+
+  const targetRareHits = countRareKeywordHits(targetWords);
+  const logRareHits = countRareKeywordHits(wordsFromLog(log));
+
+  if (targetRareHits > 0 && logRareHits > 0) {
+    weight += Math.min(20, Math.min(targetRareHits, logRareHits) * 7);
+  }
+
+  if (
+    typeof args.imageAnalysis?.overallImageScore === "number" &&
+    typeof log.overallImageScore === "number"
+  ) {
+    const diff = Math.abs(args.imageAnalysis.overallImageScore - log.overallImageScore);
+    if (diff <= 10) weight += 5;
+    else if (diff <= 20) weight += 2;
+  }
+
+  if (
+    typeof args.textAnalysis?.conditionRiskScore === "number" &&
+    typeof log.conditionRiskScore === "number"
+  ) {
+    const diff = Math.abs(args.textAnalysis.conditionRiskScore - log.conditionRiskScore);
+    if (diff <= 15) weight += 5;
+    else if (diff <= 30) weight += 2;
+  }
+
+  if (args.marketAnalysis.rarityScore >= 70 && safeScore(log.rarityScore, 0) >= 60) {
+    weight += 8;
+  }
+
+  return weight;
+}
+
+function getWeightedSimilarLogs(args: {
   logs?: SellCheckLog[];
   category: SellCheckCategory;
   condition: SellCheckCondition;
   textAnalysis?: SellCheckTextAnalysis;
   imageAnalysis?: SellCheckImageAnalysis;
-}): SellCheckLog[] {
+  marketAnalysis: SellCheckMarketAnalysis;
+}): WeightedLog[] {
   if (!Array.isArray(args.logs)) return [];
 
-  const targetKeywords = getTargetKeywords(args.textAnalysis);
-
-  return args.logs.filter((log) => {
-    if (log.category !== args.category) return false;
-
-    let score = 0;
-
-    if (log.condition === args.condition) score += 2;
-
-    score += keywordHitScore(targetKeywords, log) * 2;
-
-    if (
-      typeof args.imageAnalysis?.overallImageScore === "number" &&
-      typeof log.overallImageScore === "number"
-    ) {
-      const diff = Math.abs(args.imageAnalysis.overallImageScore - log.overallImageScore);
-      if (diff <= 15) score += 1;
-    }
-
-    if (
-      typeof args.textAnalysis?.conditionRiskScore === "number" &&
-      typeof log.conditionRiskScore === "number"
-    ) {
-      const diff = Math.abs(args.textAnalysis.conditionRiskScore - log.conditionRiskScore);
-      if (diff <= 20) score += 1;
-    }
-
-    return score >= 2;
-  });
+  return args.logs
+    .map((log) => ({
+      log,
+      weight: weightedSimilarity({
+        log,
+        category: args.category,
+        condition: args.condition,
+        textAnalysis: args.textAnalysis,
+        imageAnalysis: args.imageAnalysis,
+        marketAnalysis: args.marketAnalysis,
+      }),
+    }))
+    .filter((x) => x.weight >= 8)
+    .sort((a, b) => b.weight - a.weight)
+    .slice(0, 80);
 }
 
-function getSoldPricesFromLogs(
-  logs: SellCheckLog[] | undefined,
-  category: SellCheckCategory
-): number[] {
-  if (!Array.isArray(logs)) return [];
+function soldPriceFromLog(log: SellCheckLog): number | undefined {
+  return safePrice(log.soldPrice) ?? safePrice(log.price);
+}
 
-  return logs
-    .filter((log) => log.category === category)
-    .filter((log) => log.sold === true)
-    .map((log) => safePrice(log.soldPrice) ?? safePrice(log.price))
+function buildSimilarData(weightedLogs: WeightedLog[]): SellCheckSimilarData {
+  const soldWeighted = weightedLogs.filter((x) => x.log.sold === true);
+  const soldPrices = soldWeighted
+    .map((x) => soldPriceFromLog(x.log))
     .filter((price): price is number => typeof price === "number" && price > 0);
-}
-
-function getSoldPricesFromSimilarLogs(logs: SellCheckLog[]): number[] {
-  return logs
-    .filter((log) => log.sold === true)
-    .map((log) => safePrice(log.soldPrice) ?? safePrice(log.price))
-    .filter((price): price is number => typeof price === "number" && price > 0);
-}
-
-function buildSimilarData(similarLogs: SellCheckLog[]): SellCheckSimilarData {
-  const soldPrices = getSoldPricesFromSimilarLogs(similarLogs);
 
   const averageSoldPrice =
     soldPrices.length > 0
       ? Math.round(soldPrices.reduce((sum, n) => sum + n, 0) / soldPrices.length)
       : undefined;
 
+  const maxWeight = weightedLogs[0]?.weight ?? 0;
+
+  const matchLevel: SellCheckSimilarData["matchLevel"] =
+    maxWeight >= 50
+      ? "rare"
+      : maxWeight >= 38
+      ? "model"
+      : maxWeight >= 26
+      ? "brand"
+      : maxWeight >= 16
+      ? "keyword"
+      : maxWeight >= 8
+      ? "category"
+      : "weak";
+
   return {
-    similarCount: similarLogs.length,
+    similarCount: weightedLogs.length,
     similarSoldCount: soldPrices.length,
     averageSoldPrice,
     medianSoldPrice: median(soldPrices),
     minSoldPrice: soldPrices.length > 0 ? Math.min(...soldPrices) : undefined,
     maxSoldPrice: soldPrices.length > 0 ? Math.max(...soldPrices) : undefined,
+    premiumPrice: percentile(soldPrices, 0.8),
+    matchLevel,
   };
 }
 
-function resolveLearnedSoldPrices(
-  learned: LearnedData,
-  category: SellCheckCategory
-): number[] {
-  return getSoldPricesFromLogs(learned.logs, category);
+function categorySoldPrices(logs: SellCheckLog[] | undefined, category: SellCheckCategory): number[] {
+  if (!Array.isArray(logs)) return [];
+
+  return logs
+    .filter((log) => log.category === category && log.sold === true)
+    .map(soldPriceFromLog)
+    .filter((price): price is number => typeof price === "number" && price > 0);
 }
 
-function resolveAverageSoldPrice(
-  learned: LearnedData,
-  category: SellCheckCategory,
-  similarData?: SellCheckSimilarData
-): number | undefined {
-  if (
-    similarData?.similarSoldCount &&
-    similarData.similarSoldCount >= 2 &&
-    similarData.averageSoldPrice
-  ) {
-    return similarData.averageSoldPrice;
-  }
-
-  const prices = resolveLearnedSoldPrices(learned, category);
-
-  if (prices.length > 0) {
-    return Math.round(prices.reduce((sum, n) => sum + n, 0) / prices.length);
-  }
-
-  if (learned.averageSoldPrice && learned.averageSoldPrice > 0) {
-    return Math.round(learned.averageSoldPrice);
-  }
-
-  return undefined;
-}
-
-function resolveMedianSoldPrice(
-  learned: LearnedData,
-  category: SellCheckCategory,
-  similarData?: SellCheckSimilarData
-): number | undefined {
-  if (
-    similarData?.similarSoldCount &&
-    similarData.similarSoldCount >= 2 &&
-    similarData.medianSoldPrice
-  ) {
-    return similarData.medianSoldPrice;
-  }
-
-  return median(resolveLearnedSoldPrices(learned, category));
-}
-
-function resolveSoldCount(
-  learned: LearnedData,
-  category: SellCheckCategory,
-  similarData?: SellCheckSimilarData
-): number {
-  if (similarData?.similarSoldCount && similarData.similarSoldCount >= 2) {
-    return similarData.similarSoldCount;
-  }
-
-  const prices = resolveLearnedSoldPrices(learned, category);
-  if (prices.length > 0) return prices.length;
-  return Math.max(0, learned.soldCount || 0);
-}
-
-function imageScore(
-  imageMeta: SellCheckImageMeta,
-  imageAnalysis?: SellCheckImageAnalysis
-): number {
+function imageScore(imageMeta: SellCheckImageMeta, imageAnalysis?: SellCheckImageAnalysis): number {
   if (imageAnalysis) {
     const overall = safeScore(imageAnalysis.overallImageScore, 50);
     const damageRisk = safeScore(imageAnalysis.damageRiskScore, 50);
@@ -273,10 +356,7 @@ function imageScore(
   if (imageMeta.fileSize <= 0) return 38;
   if (imageMeta.fileSize < 80_000) return 50;
   if (imageMeta.fileSize > 8_000_000) return 62;
-
-  if (imageMeta.fileSize >= 300_000 && imageMeta.fileSize <= 4_000_000) {
-    return 78;
-  }
+  if (imageMeta.fileSize >= 300_000 && imageMeta.fileSize <= 4_000_000) return 78;
 
   return 68;
 }
@@ -290,34 +370,35 @@ function textScore(textAnalysis?: SellCheckTextAnalysis): number {
   return clampScore(descriptionQuality * 0.7 + (100 - conditionRisk) * 0.3);
 }
 
-function learnedReliabilityBySoldCount(soldCount: number): number {
-  if (soldCount >= 20) return 1;
-  if (soldCount >= 10) return 0.8;
-  if (soldCount >= 5) return 0.6;
-  if (soldCount >= 3) return 0.45;
+function marketScore(marketAnalysis: SellCheckMarketAnalysis): number {
+  return clampScore(
+    marketAnalysis.rarityScore * 0.18 +
+      marketAnalysis.demandScore * 0.18 +
+      marketAnalysis.brandPowerScore * 0.14 +
+      marketAnalysis.collectorScore * 0.16 +
+      marketAnalysis.ageValueScore * 0.12 +
+      marketAnalysis.trendScore * 0.08 +
+      marketAnalysis.marketSupplyScore * 0.08 +
+      marketAnalysis.keywordStrength * 0.06
+  );
+}
+
+function learnedReliability(similarData: SellCheckSimilarData): number {
+  if (similarData.matchLevel === "rare" && similarData.similarSoldCount >= 1) return 0.9;
+  if (similarData.matchLevel === "model" && similarData.similarSoldCount >= 1) return 0.82;
+  if (similarData.similarSoldCount >= 10) return 0.8;
+  if (similarData.similarSoldCount >= 5) return 0.65;
+  if (similarData.similarSoldCount >= 3) return 0.5;
+  if (similarData.similarSoldCount >= 1) return 0.3;
   return 0;
 }
 
-function learnedReliability(
-  learned: LearnedData,
-  category: SellCheckCategory,
-  similarData?: SellCheckSimilarData
-): number {
-  return learnedReliabilityBySoldCount(resolveSoldCount(learned, category, similarData));
-}
+function learnedPriceScore(price: number, similarData: SellCheckSimilarData): number {
+  const base = similarData.medianSoldPrice ?? similarData.averageSoldPrice;
 
-function learnedPriceScore(
-  price: number,
-  learned: LearnedData,
-  category: SellCheckCategory,
-  similarData?: SellCheckSimilarData
-): number {
-  const avg = resolveAverageSoldPrice(learned, category, similarData);
-  const soldCount = resolveSoldCount(learned, category, similarData);
+  if (!base || base <= 0 || similarData.similarSoldCount < 1) return 55;
 
-  if (!avg || avg <= 0 || soldCount < 3) return 55;
-
-  const diffRate = Math.abs(price - avg) / avg;
+  const diffRate = Math.abs(price - base) / base;
 
   if (diffRate <= 0.1) return 88;
   if (diffRate <= 0.2) return 78;
@@ -327,42 +408,57 @@ function learnedPriceScore(
   return 34;
 }
 
-function suggestedPriceRange(
-  priceInput: number,
-  learned: LearnedData,
-  category: SellCheckCategory,
-  similarData?: SellCheckSimilarData
-): { min: number; max: number } {
-  const price = fallbackPrice(priceInput);
+function premiumRate(marketAnalysis: SellCheckMarketAnalysis): number {
+  const rare = marketAnalysis.rarityScore;
+  const collector = marketAnalysis.collectorScore;
+  const age = marketAnalysis.ageValueScore;
+  const brand = marketAnalysis.brandPowerScore;
+  const supply = marketAnalysis.marketSupplyScore;
 
-  const reliability = learnedReliability(learned, category, similarData);
-  const medianSoldPrice = resolveMedianSoldPrice(learned, category, similarData);
-  const averageSoldPrice = resolveAverageSoldPrice(learned, category, similarData);
+  const total = rare * 0.32 + collector * 0.24 + age * 0.18 + brand * 0.16 + supply * 0.1;
 
-  const base =
-    reliability > 0
-      ? medianSoldPrice ?? averageSoldPrice ?? price
-      : price;
-
-  const minRate = reliability >= 0.6 ? 0.9 : 0.86;
-  const maxRate = reliability >= 0.6 ? 1.08 : 1.1;
-
-  const min = Math.max(300, Math.round(base * minRate));
-  const max = Math.max(min + 100, Math.round(base * maxRate));
-
-  return { min, max };
+  if (total >= 85) return 1.45;
+  if (total >= 75) return 1.3;
+  if (total >= 65) return 1.18;
+  if (total >= 55) return 1.08;
+  return 1;
 }
 
-function pricePositionReason(price: number, min: number, max: number): string {
-  if (price < min) {
-    return "入力価格は推奨価格帯より低めです。早く売れる可能性はありますが、利益を取り切れていない可能性があります";
-  }
+function suggestedPriceRange(args: {
+  priceInput: number;
+  learned: LearnedData;
+  category: SellCheckCategory;
+  similarData: SellCheckSimilarData;
+  marketAnalysis: SellCheckMarketAnalysis;
+}): { min: number; max: number } {
+  const price = fallbackPrice(args.priceInput);
+  const reliability = learnedReliability(args.similarData);
+  const categoryPrices = categorySoldPrices(args.learned.logs, args.category);
 
-  if (price > max) {
-    return "入力価格は推奨価格帯より高めです。閲覧は取れても購入判断で止まる可能性があります";
-  }
+  const categoryMedian = median(categoryPrices);
+  const base =
+    reliability >= 0.3
+      ? args.similarData.medianSoldPrice ??
+        args.similarData.averageSoldPrice ??
+        categoryMedian ??
+        price
+      : categoryMedian ?? price;
 
-  return "入力価格は推奨価格帯に近いです";
+  const premium = premiumRate(args.marketAnalysis);
+  const premiumBase =
+    args.similarData.matchLevel === "rare" && args.similarData.premiumPrice
+      ? Math.max(base, args.similarData.premiumPrice)
+      : base;
+
+  const correctedBase = Math.round(premiumBase * premium);
+
+  const minRate = reliability >= 0.6 ? 0.88 : 0.82;
+  const maxRate = premium >= 1.18 ? 1.25 : reliability >= 0.6 ? 1.12 : 1.16;
+
+  const min = Math.max(300, Math.round(correctedBase * minRate));
+  const max = Math.max(min + 100, Math.round(correctedBase * maxRate));
+
+  return { min, max };
 }
 
 function buildAction(score: number): string {
@@ -382,57 +478,55 @@ export function calculateSellCheckResult(args: {
   textAnalysis?: SellCheckTextAnalysis;
 }): SellCheckResult {
   const price = fallbackPrice(args.price);
+  const marketAnalysis = calcMarketAnalysis(args.textAnalysis);
 
-  const similarLogs = getSimilarLogs({
+  const weightedLogs = getWeightedSimilarLogs({
     logs: args.learned.logs,
     category: args.category,
     condition: args.condition,
     textAnalysis: args.textAnalysis,
     imageAnalysis: args.imageAnalysis,
+    marketAnalysis,
   });
 
-  const similarData = buildSimilarData(similarLogs);
-
-  const soldCount = resolveSoldCount(args.learned, args.category, similarData);
-  const averageSoldPrice = resolveAverageSoldPrice(args.learned, args.category, similarData);
-  const medianSoldPrice = resolveMedianSoldPrice(args.learned, args.category, similarData);
+  const similarData = buildSimilarData(weightedLogs);
 
   const priceScore = priceBaseScore(price);
   const stateScore = conditionScore(args.condition);
   const photoScore = imageScore(args.imageMeta, args.imageAnalysis);
   const descriptionScore = textScore(args.textAnalysis);
-  const learnedScore = learnedPriceScore(price, args.learned, args.category, similarData);
-  const reliability = learnedReliability(args.learned, args.category, similarData);
+  const mScore = marketScore(marketAnalysis);
+  const learnedScore = learnedPriceScore(price, similarData);
 
   const score = clampScore(
-    priceScore * 0.28 +
-      stateScore * 0.18 +
-      photoScore * 0.2 +
-      descriptionScore * 0.14 +
-      learnedScore * 0.2
+    priceScore * 0.16 +
+      stateScore * 0.13 +
+      photoScore * 0.15 +
+      descriptionScore * 0.12 +
+      learnedScore * 0.2 +
+      mScore * 0.24
   );
 
   const rank = rankFromScore(score);
-  const range = suggestedPriceRange(price, args.learned, args.category, similarData);
+  const range = suggestedPriceRange({
+    priceInput: price,
+    learned: args.learned,
+    category: args.category,
+    similarData,
+    marketAnalysis,
+  });
 
   const improvements: string[] = [];
   const reasons: string[] = [];
 
   if (!args.imageMeta.hasImage) {
     pushUnique(improvements, "診断対象の画像をアップロードしてください");
-    pushUnique(reasons, "画像がないため、写真の売れやすさを評価できません");
   } else {
-    pushUnique(
-      reasons,
-      `画像「${args.imageMeta.fileName || "uploaded-image"}」を診断対象として扱っています`
-    );
+    pushUnique(reasons, `画像「${args.imageMeta.fileName || "uploaded-image"}」を診断対象として扱っています`);
   }
 
   if (args.imageAnalysis) {
-    pushUnique(
-      reasons,
-      `画像評価は ${args.imageAnalysis.overallImageScore}/100 として反映しています`
-    );
+    pushUnique(reasons, `画像評価は ${args.imageAnalysis.overallImageScore}/100 として反映しています`);
 
     args.imageAnalysis.imageReasons.forEach((reason) => {
       pushUnique(reasons, `画像評価：${reason}`);
@@ -453,19 +547,6 @@ export function calculateSellCheckResult(args: {
     if (args.imageAnalysis.damageRiskScore >= 70) {
       pushUnique(improvements, "傷・汚れ・破損箇所を説明文と追加写真で明確にする");
     }
-  } else {
-    if (args.imageMeta.hasImage && args.imageMeta.fileSize < 80_000) {
-      pushUnique(improvements, "画像が小さい可能性があるため、明るく大きい写真に差し替える");
-      pushUnique(reasons, "画像サイズが小さく、細部確認に弱い可能性があります");
-    }
-
-    if (args.imageMeta.hasImage && args.imageMeta.fileSize > 8_000_000) {
-      pushUnique(improvements, "画像容量が大きすぎる場合は、表示速度を考えて軽量化する");
-      pushUnique(
-        reasons,
-        "画像情報量はありますが、容量が大きいと表示やアップロードで不利になる場合があります"
-      );
-    }
   }
 
   if (args.textAnalysis) {
@@ -475,10 +556,6 @@ export function calculateSellCheckResult(args: {
 
     if (args.textAnalysis.modelName) {
       pushUnique(reasons, `型番・モデル名「${args.textAnalysis.modelName}」を類似判定に使っています`);
-    }
-
-    if (args.textAnalysis.material) {
-      pushUnique(reasons, `素材「${args.textAnalysis.material}」を類似判定に使っています`);
     }
 
     if (args.textAnalysis.descriptionQualityScore < 55) {
@@ -494,6 +571,34 @@ export function calculateSellCheckResult(args: {
     });
   }
 
+  if (marketAnalysis.rarityScore >= 70) {
+    pushUnique(reasons, `希少性スコア ${marketAnalysis.rarityScore}/100 を価格補正に反映しています`);
+  }
+
+  if (marketAnalysis.collectorScore >= 70) {
+    pushUnique(reasons, `コレクター価値 ${marketAnalysis.collectorScore}/100 を反映しています`);
+  }
+
+  if (marketAnalysis.ageValueScore >= 70) {
+    pushUnique(reasons, `年代価値 ${marketAnalysis.ageValueScore}/100 を反映しています`);
+  }
+
+  marketAnalysis.rareReasons.forEach((reason) => {
+    pushUnique(reasons, `希少性評価：${reason}`);
+  });
+
+  if (similarData.similarSoldCount >= 1) {
+    pushUnique(
+      reasons,
+      `類似売却データ ${similarData.similarSoldCount}件を参照しました。一致度は ${similarData.matchLevel} です`
+    );
+  } else {
+    pushUnique(
+      reasons,
+      "強い類似売却データが少ないため、希少性・ブランド・キーワード・状態・画像を重めに判断しています"
+    );
+  }
+
   if (price < range.min || price > range.max) {
     pushUnique(
       improvements,
@@ -501,66 +606,21 @@ export function calculateSellCheckResult(args: {
     );
   }
 
-  pushUnique(reasons, pricePositionReason(price, range.min, range.max));
-
   if (args.condition === "fair") {
     pushUnique(improvements, "傷・使用感が伝わる写真を追加する");
-    pushUnique(reasons, "使用感ありの商品は、購入前の不安を写真で減らす必要があります");
   }
 
   if (args.condition === "poor") {
     pushUnique(improvements, "状態の悪い箇所を隠さず、説明文と写真で明確にする");
     pushUnique(improvements, "価格をやや低めに設定し、納得感を優先する");
-    pushUnique(reasons, "状態が悪い商品は、価格よりも不安解消の情報量が重要です");
-  }
-
-  if (args.condition === "excellent" || args.condition === "good") {
-    pushUnique(
-      reasons,
-      `${conditionLabel(args.condition)}として扱えるため、状態面の大きな減点はありません`
-    );
-  }
-
-  if (similarData.similarSoldCount >= 2) {
-    pushUnique(
-      reasons,
-      `類似売却データ ${similarData.similarSoldCount}件を価格判断に優先反映しています`
-    );
-  }
-
-  if (soldCount >= 3 && averageSoldPrice) {
-    pushUnique(reasons, `同カテゴリの売却実績 ${soldCount}件を価格判断に反映しています`);
-
-    if (medianSoldPrice) {
-      pushUnique(
-        reasons,
-        `実売価格の中央値 ${medianSoldPrice.toLocaleString()}円 を推奨価格帯の基準にしています`
-      );
-    }
-
-    if (reliability < 0.6) {
-      pushUnique(
-        reasons,
-        "ただし売却実績数がまだ少ないため、学習データの影響は控えめにしています"
-      );
-    }
-  } else {
-    pushUnique(
-      reasons,
-      "同カテゴリの売却実績がまだ少ないため、価格・状態・画像・説明文の基本ルールを中心に判断しています"
-    );
   }
 
   if (score < 52) {
     pushUnique(improvements, "出品前に価格・写真・状態説明を見直す");
   }
 
-  if (score >= 68 && improvements.length === 0) {
-    pushUnique(improvements, "このまま出品して問題ありません");
-  }
-
   if (improvements.length === 0) {
-    pushUnique(improvements, "価格と写真を確認したうえで出品してください");
+    pushUnique(improvements, "このまま出品して問題ありません");
   }
 
   return {
@@ -572,11 +632,10 @@ export function calculateSellCheckResult(args: {
     improvements,
     reasons,
     learnedSampleCount: args.learned.totalCount,
-    targetSummary: `${categoryLabel(args.category)} / ${conditionLabel(
-      args.condition
-    )} / ${price.toLocaleString()}円`,
+    targetSummary: `${categoryLabel(args.category)} / ${conditionLabel(args.condition)} / ${price.toLocaleString()}円`,
     imageAnalysis: args.imageAnalysis,
     textAnalysis: args.textAnalysis,
+    marketAnalysis,
     similarData,
   };
 }
