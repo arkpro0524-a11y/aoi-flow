@@ -12,6 +12,7 @@
 // - ユーザー一般には見せない管理者用AI補助
 // - null / undefined を返さないように整形する
 // - 商品名 / ブランド / 型番 / 素材 / 状態リスク / キーワードも抽出する
+// - 市場データが十分でない場合でも、理論推定で希少性・需要・年代価値・コレクター価値を補助判定する
 
 import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
@@ -36,6 +37,16 @@ type ExtractRow = {
   extractedKeywords: string[];
   conditionRiskScore: string;
   descriptionQualityScore: string;
+
+  rarityScore: string;
+  demandScore: string;
+  brandPowerScore: string;
+  collectorScore: string;
+  ageValueScore: string;
+  trendScore: string;
+  marketSupplyScore: string;
+  keywordStrength: string;
+  rareReasons: string[];
 };
 
 function safeString(v: unknown): string {
@@ -48,6 +59,9 @@ function safeNumberString(v: unknown): string {
 
 function safeScoreString(v: unknown): string {
   const raw = safeNumberString(v);
+
+  if (!raw) return "";
+
   const n = Number(raw);
 
   if (!Number.isFinite(n)) return "";
@@ -60,12 +74,22 @@ function safeBoolean(v: unknown): boolean {
 }
 
 function safeStringArray(v: unknown): string[] {
-  if (!Array.isArray(v)) return [];
+  if (Array.isArray(v)) {
+    return v
+      .map((x) => String(x ?? "").trim())
+      .filter(Boolean)
+      .slice(0, 12);
+  }
 
-  return v
-    .map((x) => String(x ?? "").trim())
-    .filter(Boolean)
-    .slice(0, 12);
+  if (typeof v === "string") {
+    return v
+      .split(/[,\n、]+/g)
+      .map((x) => x.trim())
+      .filter(Boolean)
+      .slice(0, 12);
+  }
+
+  return [];
 }
 
 function normalizeCategory(v: unknown): string {
@@ -113,6 +137,16 @@ function normalizeRow(v: any): ExtractRow {
     extractedKeywords: safeStringArray(v?.extractedKeywords),
     conditionRiskScore: safeScoreString(v?.conditionRiskScore),
     descriptionQualityScore: safeScoreString(v?.descriptionQualityScore),
+
+    rarityScore: safeScoreString(v?.rarityScore),
+    demandScore: safeScoreString(v?.demandScore),
+    brandPowerScore: safeScoreString(v?.brandPowerScore),
+    collectorScore: safeScoreString(v?.collectorScore),
+    ageValueScore: safeScoreString(v?.ageValueScore),
+    trendScore: safeScoreString(v?.trendScore),
+    marketSupplyScore: safeScoreString(v?.marketSupplyScore),
+    keywordStrength: safeScoreString(v?.keywordStrength),
+    rareReasons: safeStringArray(v?.rareReasons),
   };
 }
 
@@ -239,7 +273,17 @@ export async function POST(req: NextRequest) {
       "material": "素材。なければ空文字",
       "extractedKeywords": ["検索・類似判定に使えるキーワード"],
       "conditionRiskScore": "状態リスクを0〜100で数字だけ。高いほどリスク大",
-      "descriptionQualityScore": "説明文の情報量を0〜100で数字だけ。高いほど説明が十分"
+      "descriptionQualityScore": "説明文の情報量を0〜100で数字だけ。高いほど説明が十分",
+
+      "rarityScore": "希少性を0〜100で数字だけ",
+      "demandScore": "需要を0〜100で数字だけ",
+      "brandPowerScore": "ブランド力・IP力を0〜100で数字だけ",
+      "collectorScore": "コレクター価値を0〜100で数字だけ",
+      "ageValueScore": "年代価値・ヴィンテージ価値を0〜100で数字だけ",
+      "trendScore": "現在人気度を0〜100で数字だけ",
+      "marketSupplyScore": "出品数の少なさ・市場供給の少なさを0〜100で数字だけ",
+      "keywordStrength": "検索キーワード強度を0〜100で数字だけ",
+      "rareReasons": ["希少性・需要・年代価値・コレクター価値の判断理由"]
     }
   ]
 }
@@ -269,6 +313,17 @@ export async function POST(req: NextRequest) {
 - 一通り説明あり → 60〜79
 - 情報が少ない → 30〜59
 - かなり不足 → 0〜29
+
+市場価値の理論推定：
+- これは市場実測ではなく、本文に含まれる特徴からの推定です。
+- 昭和、平成初期、70年代、80年代、90年代、当時物、初期、旧ロゴ、廃盤、絶版、限定、非売品、ヴィンテージ、レトロ、デッドストック、箱付き、タグ付き、動作確認済み、ソフビ、ブリキ、セルロイド、ホーロー、真鍮、無垢材、円谷、東映、任天堂、サンリオ、ポピー、ブルマァク、タカラ、トミー、バンダイなどは価値推定に反映してください。
+- コレクター価値は、ファンが収集対象にしやすいジャンル・IP・メーカー・年代・状態・付属品の有無で判断してください。
+- 年代価値は、古いだけで高くせず、当時物・廃盤・素材・保存状態・ジャンル需要が揃うほど高くしてください。
+- 需要は、キャラクターIP、ブランド認知、検索されやすい語、用途の明確さ、現代でも欲しい人がいるかで判断してください。
+- 現在人気度は、実測データがない場合は断定せず、ジャンルの一般的な人気・SNS映え・検索語の強さから控えめに推定してください。
+- 出品数の少なさは、限定・廃盤・当時物・型番明記・古い素材・現存しにくい状態から推定してください。
+- 分からない場合は50前後にしてください。
+- 実際に売れる保証はしないでください。
 
 本文：
 ${text}

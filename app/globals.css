@@ -25,12 +25,10 @@ body {
   height: 100%;
 }
 
-/* ✅ rem基準を固定（巨大化対策） */
 html {
   font-size: 16px;
 }
 
-/* ✅ iOS/Safari text inflation を止める */
 body {
   -webkit-text-size-adjust: none;
   text-size-adjust: none;
@@ -41,86 +39,48 @@ body {
 }
 
 /* ---------------------------------------------
-   2) カラートーン（AIRA系「静」）
+   2) カラートーン
 --------------------------------------------- */
 :root {
-  --bg-0: #060a12;
-  --bg-1: #070d1a;
-
-  --glow-blue: 28, 79, 130; /* #1C4F82 */
-  --glow-cyan: 70, 220, 220;
-  --glow-violet: 125, 95, 220;
+  --bg-0: #020814;
+  --bg-1: #071827;
 
   --text-0: 248, 250, 252;
   --text-1: 231, 236, 241;
 }
 
 /* ---------------------------------------------
-   3) 背景（宇宙）
+   3) 全体背景
+   - 既存の宇宙グラデーションをやめる
+   - public/flow-bg-tech1.png を背景として使う
 --------------------------------------------- */
 body {
   margin: 0;
   color: rgba(var(--text-0), 0.92);
-  background: linear-gradient(180deg, var(--bg-0), var(--bg-1));
+  background:
+    linear-gradient(
+      180deg,
+      rgba(2, 8, 20, 0.28),
+      rgba(2, 8, 20, 0.68)
+    ),
+    url("/flow-bg-tech1.png");
+  background-size: cover;
+  background-position: center;
   background-attachment: fixed;
   overflow-x: hidden;
 }
 
-/* 流れ（背景だけ transform OK） */
+/* ---------------------------------------------
+   4) 旧 body::before は無効化
+   - ここが群青背景の主原因だった
+--------------------------------------------- */
 body::before {
-  content: "";
-  position: fixed;
-  inset: -20%;
-  pointer-events: none;
-  z-index: 0;
-
-  background:
-    linear-gradient(
-      140deg,
-      rgba(255, 255, 255, 0) 35%,
-      rgba(255, 255, 255, 0.035) 42%,
-      rgba(255, 255, 255, 0.010) 52%,
-      rgba(255, 255, 255, 0) 60%
-    ),
-    linear-gradient(
-      140deg,
-      rgba(var(--glow-blue), 0) 18%,
-      rgba(var(--glow-blue), 0.18) 34%,
-      rgba(var(--glow-blue), 0.06) 50%,
-      rgba(var(--glow-blue), 0) 66%
-    ),
-    linear-gradient(
-      140deg,
-      rgba(var(--glow-cyan), 0) 26%,
-      rgba(var(--glow-cyan), 0.12) 44%,
-      rgba(var(--glow-cyan), 0.03) 58%,
-      rgba(var(--glow-cyan), 0) 72%
-    ),
-    radial-gradient(
-      1100px 900px at 52% 92%,
-      rgba(var(--glow-violet), 0.22) 0%,
-      rgba(var(--glow-violet), 0.08) 38%,
-      rgba(0, 0, 0, 0) 68%
-    ),
-    radial-gradient(
-      1000px 800px at 16% 20%,
-      rgba(var(--glow-blue), 0.40) 0%,
-      rgba(var(--glow-blue), 0.14) 34%,
-      rgba(0, 0, 0, 0) 66%
-    ),
-    radial-gradient(
-      1000px 800px at 84% 22%,
-      rgba(var(--glow-cyan), 0.26) 0%,
-      rgba(var(--glow-cyan), 0.10) 38%,
-      rgba(0, 0, 0, 0) 70%
-    );
-
-  filter: blur(12px) saturate(1.12);
-  opacity: 0.95;
-  transform: rotate(-2deg);
+  content: none;
 }
 
-/* 粒 */
+/* ---------------------------------------------
+   5) 粒だけ残す
+--------------------------------------------- */
 body::after {
   content: "";
   position: fixed;
@@ -128,12 +88,14 @@ body::after {
   pointer-events: none;
   z-index: 0;
 
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.78' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)' opacity='.20'/%3E%3C/svg%3E");
-  opacity: 0.10;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.78' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)' opacity='.18'/%3E%3C/svg%3E");
+  opacity: 0.08;
   mix-blend-mode: overlay;
 }
 
-/* ビネット（締まり） */
+/* ---------------------------------------------
+   6) ビネット
+--------------------------------------------- */
 #_vignette {
   position: fixed;
   inset: 0;
@@ -141,19 +103,17 @@ body::after {
   z-index: 0;
   background: radial-gradient(
     1200px 900px at 50% 45%,
-    rgba(0, 0, 0, 0) 42%,
-    rgba(0, 0, 0, 0.45) 84%,
-    rgba(0, 0, 0, 0.70) 100%
+    rgba(0, 0, 0, 0) 40%,
+    rgba(0, 0, 0, 0.35) 82%,
+    rgba(0, 0, 0, 0.62) 100%
   );
 }
 
 /* ---------------------------------------------
-   4) UI本体を前面に固定（背景より上）
+   7) UI本体を前面に固定
 --------------------------------------------- */
 #_appRoot {
   position: relative;
   z-index: 1;
-
-  /* ✅ UI本体は transform を禁止（スケール事故防止） */
   transform: none;
 }

@@ -1,4 +1,4 @@
-// app/login/page.tsx
+//app/login/page.tsx
 "use client";
 
 import { useEffect, useState } from "react";
@@ -28,19 +28,23 @@ export default function LoginPage() {
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => {
-      if (u) router.replace("/flow/drafts");
+      if (u) router.replace("/");
     });
+
     return () => unsub();
   }, [router]);
 
   const loginWithGoogle = async () => {
     setError(null);
     setBusy(true);
+
     try {
       const provider = new GoogleAuthProvider();
       provider.setCustomParameters({ prompt: "select_account" });
+
       await signInWithPopup(auth, provider);
-      router.replace("/flow/drafts");
+
+      router.replace("/");
     } catch (e: any) {
       const msg =
         e?.code === "auth/popup-closed-by-user"
@@ -50,6 +54,7 @@ export default function LoginPage() {
           : e?.code === "auth/popup-blocked"
           ? "ポップアップがブロックされています（Safariの設定を確認）"
           : "ログインに失敗しました";
+
       setError(msg);
       console.error(e);
     } finally {

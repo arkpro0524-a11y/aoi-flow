@@ -1,4 +1,4 @@
-//components/FlowShell.tsx
+// components/FlowShell.tsx
 "use client";
 
 import Link from "next/link";
@@ -69,8 +69,10 @@ export default function FlowShell({ user, onLogout, children }: Props) {
     return isAdminUid(effectiveUid);
   }, [effectiveUid]);
 
-  const isActive = (href: string) =>
-    pathname === href || pathname.startsWith(href + "/");
+  const isActive = (href: string) => {
+    if (href === "/") return pathname === "/";
+    return pathname === href || pathname.startsWith(href + "/");
+  };
 
   const Tab = ({ href, label }: { href: string; label: string }) => {
     const active = isActive(href);
@@ -90,10 +92,15 @@ export default function FlowShell({ user, onLogout, children }: Props) {
           gap: 10,
           whiteSpace: "nowrap",
           color: active ? "rgba(255,255,255,0.98)" : "rgba(255,255,255,0.78)",
-          background: active ? "rgba(255,255,255,0.22)" : "rgba(255,255,255,0.08)",
+          background: active
+            ? "linear-gradient(135deg, rgba(70,220,220,0.24), rgba(0,255,180,0.14))"
+            : "rgba(255,255,255,0.08)",
           border: active
-            ? "1px solid rgba(255,255,255,0.18)"
+            ? "1px solid rgba(120,255,220,0.38)"
             : "1px solid rgba(255,255,255,0.10)",
+          boxShadow: active
+            ? "0 0 18px rgba(0,255,180,0.18), inset 0 0 18px rgba(255,255,255,0.06)"
+            : "none",
           flex: "0 0 auto",
         }}
       >
@@ -102,7 +109,8 @@ export default function FlowShell({ user, onLogout, children }: Props) {
             width: 10,
             height: 10,
             borderRadius: 9999,
-            background: active ? "rgba(255,255,255,0.98)" : "rgba(255,255,255,0.45)",
+            background: active ? "rgba(120,255,220,0.98)" : "rgba(255,255,255,0.45)",
+            boxShadow: active ? "0 0 10px rgba(0,255,180,0.75)" : "none",
           }}
         />
         {label}
@@ -116,14 +124,28 @@ export default function FlowShell({ user, onLogout, children }: Props) {
   }
 
   return (
-    <div className="min-h-screen text-white">
-      <div className="pointer-events-none fixed inset-0 -z-10">
-        <div className="absolute inset-0 bg-[#05070c]" />
-        <div className="absolute inset-0 bg-gradient-to-b from-white/6 via-transparent to-black/35" />
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_10%,rgba(255,255,255,0.07),transparent_35%),radial-gradient(circle_at_80%_30%,rgba(255,255,255,0.05),transparent_40%)]" />
+    <div className="relative min-h-screen text-white">
+      {/* /flow 配下専用背景 */}
+      <div className="pointer-events-none fixed inset-0 z-0">
+        <img
+          src="/flow-bg-tech1.png"
+          alt=""
+          className="absolute inset-0 h-full w-full object-cover"
+          draggable={false}
+        />
+
+        {/* 背景の上に暗めの膜をかけて、文字を読みやすくする */}
+        <div className="absolute inset-0 bg-[#020814]/45" />
+
+        {/* 緑のサイバー発光を追加 */}
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_72%_28%,rgba(0,255,180,0.20),transparent_38%)]" />
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_72%,rgba(70,220,220,0.14),transparent_42%)]" />
+
+        {/* 下側を少し締める */}
+        <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-black/15 to-black/58" />
       </div>
 
-      <header className="sticky top-0 z-30 border-b border-white/12 bg-black/45 backdrop-blur">
+      <header className="sticky top-0 z-30 border-b border-white/12 bg-black/60 backdrop-blur">
         <div className="px-4 py-3 md:px-6">
           <div className="flex items-center gap-3">
             <div className="flex min-w-0 items-center gap-3 md:gap-4">
@@ -199,11 +221,13 @@ export default function FlowShell({ user, onLogout, children }: Props) {
                   gap: 10,
                   padding: 6,
                   borderRadius: 9999,
-                  border: "1px solid rgba(255,255,255,0.10)",
-                  background: "rgba(0,0,0,0.35)",
+                  border: "1px solid rgba(255,255,255,0.12)",
+                  background: "rgba(0,0,0,0.42)",
                   whiteSpace: "nowrap",
+                  boxShadow: "inset 0 0 20px rgba(255,255,255,0.04)",
                 }}
               >
+                <Tab href="/" label="トップ" />
                 <Tab href="/flow/drafts" label="下書き一覧" />
                 <Tab href="/flow/drafts/new" label="新規作成" />
                 <Tab href="/flow/sell-check" label="売れる診断" />
@@ -221,13 +245,13 @@ export default function FlowShell({ user, onLogout, children }: Props) {
         </div>
       </header>
 
-      <div className="w-full px-3 sm:px-4 md:px-6">
+      <div className="relative z-10 w-full px-3 sm:px-4 md:px-6">
         <div className="mx-auto w-full max-w-[1600px]">
           <div className="min-h-0 py-6">
             <main className="min-h-0">
               <div
                 className={cx(
-                  "w-full min-h-0 rounded-3xl border border-white/10 bg-black/35 p-5 md:p-7 backdrop-blur",
+                  "w-full min-h-0 rounded-3xl border border-white/15 bg-black/18 p-5 md:p-7 backdrop-blur-[1px] shadow-[0_0_40px_rgba(0,0,0,0.18)]",
                   "flex flex-col",
                   "[&_a]:text-white/90 [&_a:visited]:text-white/90 [&_a:hover]:text-white",
                   "[&_a]:no-underline"

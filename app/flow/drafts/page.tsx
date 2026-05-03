@@ -1,4 +1,3 @@
-// /app/flow/drafts/page.tsx
 "use client";
 
 import Link from "next/link";
@@ -17,7 +16,7 @@ import { auth, db } from "@/firebase";
 import { useToast } from "@/components/ToastProvider";
 
 type Brand = "vento" | "riva";
-type Phase = "draft"; // ← draft のみ
+type Phase = "draft";
 
 type DraftRow = {
   id: string;
@@ -26,16 +25,7 @@ type DraftRow = {
   phase: Phase;
   vision: string;
   caption_final: string;
-
-  /**
-   * 一覧で表示するサムネURL
-   *
-   * 今回の修正ポイント
-   * - 「通常合成画像」を最優先にする
-   * - 旧データとの互換のため fallback も残す
-   */
   imageUrl?: string;
-
   updatedAt?: any;
 };
 
@@ -56,35 +46,21 @@ const COL_GAP = 14;
 const PLATE_CLASS =
   "rounded-xl bg-gradient-to-b from-[#f2f2f2] via-[#cfcfcf] to-[#9b9b9b] border border-black/25 shadow-[inset_0_1px_0_rgba(255,255,255,0.7),inset_0_-10px_22px_rgba(0,0,0,0.25),0_8px_18px_rgba(0,0,0,0.25)] flex items-center justify-center";
 
-/**
- * 一覧表示用サムネURLを安全に決める関数
- *
- * 優先順
- * 1. compositeImageUrl ・・・通常合成画像
- * 2. aiImageUrl         ・・・旧保存との互換
- * 3. imageUrl           ・・・さらに旧保存との互換
- */
 function resolveListImageUrl(data: DocumentData): string | undefined {
   const compositeImageUrl =
     typeof data.compositeImageUrl === "string" ? data.compositeImageUrl.trim() : "";
 
-  if (compositeImageUrl) {
-    return compositeImageUrl;
-  }
+  if (compositeImageUrl) return compositeImageUrl;
 
   const aiImageUrl =
     typeof data.aiImageUrl === "string" ? data.aiImageUrl.trim() : "";
 
-  if (aiImageUrl) {
-    return aiImageUrl;
-  }
+  if (aiImageUrl) return aiImageUrl;
 
   const imageUrl =
     typeof data.imageUrl === "string" ? data.imageUrl.trim() : "";
 
-  if (imageUrl) {
-    return imageUrl;
-  }
+  if (imageUrl) return imageUrl;
 
   return undefined;
 }
@@ -110,7 +86,7 @@ export default function DraftsPage() {
         const qy = query(
           collection(db, "drafts"),
           where("userId", "==", uid),
-          where("phase", "==", "draft"), // ✅ 計画C：draft のみ
+          where("phase", "==", "draft"),
           orderBy("updatedAt", "desc"),
           limit(100)
         );
@@ -129,13 +105,7 @@ export default function DraftsPage() {
             vision: typeof data.vision === "string" ? data.vision : "",
             caption_final:
               typeof data.caption_final === "string" ? data.caption_final : "",
-
-            /**
-             * 今回の修正
-             * - 一覧表示は通常合成画像を優先する
-             */
             imageUrl: resolveListImageUrl(data),
-
             updatedAt: data.updatedAt,
           };
         });
@@ -168,7 +138,6 @@ export default function DraftsPage() {
           }
         }
 
-        /* スマホ */
         .mWrap {
           padding: ${CARD_PAD}px;
           display: grid;
@@ -200,7 +169,6 @@ export default function DraftsPage() {
           text-overflow: ellipsis;
         }
 
-        /* PC */
         .pcWrap {
           height: ${CARD_H}px;
           padding: ${CARD_PAD}px;
@@ -222,7 +190,7 @@ export default function DraftsPage() {
 
       <div className="h-full flex flex-col">
         <div
-          className="shrink-0 border-b border-white/10"
+          className="shrink-0 border-b border-white/10 bg-black/10 rounded-2xl"
           style={{ padding: PAGE_PAD }}
         >
           <div style={{ fontSize: HEADER_TITLE_PX, fontWeight: 900 }}>
@@ -235,7 +203,7 @@ export default function DraftsPage() {
 
         <div className="overflow-y-auto space-y-3" style={{ padding: PAGE_PAD }}>
           {rows.length === 0 ? (
-            <div className="rounded-2xl border border-white/10 bg-black/25 p-5 text-sm text-white/75">
+            <div className="rounded-2xl border border-white/10 bg-black/10 p-5 text-sm text-white/75">
               下書きがまだありません。
             </div>
           ) : (
@@ -245,8 +213,7 @@ export default function DraftsPage() {
                 href={`/flow/drafts/new?id=${encodeURIComponent(d.id)}`}
                 className="block no-underline text-white/90 visited:text-white/90 hover:text-white"
               >
-                <div className="group rounded-2xl border border-white/10 bg-black/25 hover:bg-black/30 transition">
-                  {/* PC */}
+                <div className="group rounded-2xl border border-white/12 bg-black/10 transition hover:bg-black/20">
                   <div className="cardPC">
                     <div className="pcWrap">
                       <div className={PLATE_CLASS} style={{ height: PLATE_H }}>
@@ -299,7 +266,6 @@ export default function DraftsPage() {
                     </div>
                   </div>
 
-                  {/* Mobile */}
                   <div className="cardMobile">
                     <div className="mWrap">
                       <div className="mTop">

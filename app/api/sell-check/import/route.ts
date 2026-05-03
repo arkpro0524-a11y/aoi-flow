@@ -45,12 +45,22 @@ function safeBoolean(v: unknown): boolean {
 }
 
 function safeStringArray(v: unknown): string[] {
-  if (!Array.isArray(v)) return [];
+  if (Array.isArray(v)) {
+    return v
+      .map((x) => String(x ?? "").trim())
+      .filter(Boolean)
+      .slice(0, 12);
+  }
 
-  return v
-    .map((x) => String(x ?? "").trim())
-    .filter(Boolean)
-    .slice(0, 12);
+  if (typeof v === "string") {
+    return v
+      .split(/[,\n、]+/g)
+      .map((x) => x.trim())
+      .filter(Boolean)
+      .slice(0, 12);
+  }
+
+  return [];
 }
 
 function cleanObject(obj: CleanObject): CleanObject {
@@ -178,6 +188,16 @@ export async function POST(req: NextRequest) {
       const conditionRiskScore = safeScore(row.conditionRiskScore);
       const descriptionQualityScore = safeScore(row.descriptionQualityScore);
 
+      const rarityScore = safeScore(row.rarityScore);
+      const demandScore = safeScore(row.demandScore);
+      const brandPowerScore = safeScore(row.brandPowerScore);
+      const collectorScore = safeScore(row.collectorScore);
+      const ageValueScore = safeScore(row.ageValueScore);
+      const trendScore = safeScore(row.trendScore);
+      const marketSupplyScore = safeScore(row.marketSupplyScore);
+      const keywordStrength = safeScore(row.keywordStrength);
+      const rareReasons = safeStringArray(row.rareReasons);
+
       const brightnessScore = safeScore(row.brightnessScore);
       const compositionScore = safeScore(row.compositionScore);
       const backgroundScore = safeScore(row.backgroundScore);
@@ -220,6 +240,16 @@ export async function POST(req: NextRequest) {
 
         conditionRiskScore,
         descriptionQualityScore,
+
+        rarityScore,
+        demandScore,
+        brandPowerScore,
+        collectorScore,
+        ageValueScore,
+        trendScore,
+        marketSupplyScore,
+        keywordStrength,
+        rareReasons,
 
         brightnessScore,
         compositionScore,

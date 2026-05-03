@@ -35,6 +35,12 @@ export type SellCheckMarketAnalysis = {
   marketSupplyScore: number;
   keywordStrength: number;
   rareReasons: string[];
+
+  // 市場データが十分でない場合でも、商品名・説明文・画像・キーワードから近似判定したかどうか
+  estimatedByTheory: boolean;
+
+  // 実際の類似売却データをどれくらい使えたか
+  dataConfidence: "low" | "medium" | "high";
 };
 
 export type SellCheckTextAnalysis = {

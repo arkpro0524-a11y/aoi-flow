@@ -333,7 +333,9 @@ export default function SellCheckPage() {
 
         imageAnalysis: args.result.imageAnalysis,
         textAnalysis: args.result.textAnalysis,
+        marketAnalysis: args.result.marketAnalysis,
         similarData: args.result.similarData,
+
 
         hasImage: true,
       }),
@@ -774,6 +776,64 @@ export default function SellCheckPage() {
                       ))}
                     </div>
                   ) : null}
+                                {result.marketAnalysis ? (
+                <div className="rounded-2xl border border-white/10 bg-black/35 p-4">
+                  <div className="text-sm font-bold text-white/55">
+                    市場価値推定
+                  </div>
+
+                  <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">
+                    <MiniScoreCard
+                      label="希少性"
+                      value={result.marketAnalysis.rarityScore}
+                    />
+                    <MiniScoreCard
+                      label="需要"
+                      value={result.marketAnalysis.demandScore}
+                    />
+                    <MiniScoreCard
+                      label="ブランド力"
+                      value={result.marketAnalysis.brandPowerScore}
+                    />
+                    <MiniScoreCard
+                      label="コレクター価値"
+                      value={result.marketAnalysis.collectorScore}
+                    />
+                    <MiniScoreCard
+                      label="年代価値"
+                      value={result.marketAnalysis.ageValueScore}
+                    />
+                    <MiniScoreCard
+                      label="現在人気度"
+                      value={result.marketAnalysis.trendScore}
+                    />
+                    <MiniScoreCard
+                      label="出品数の少なさ"
+                      value={result.marketAnalysis.marketSupplyScore}
+                    />
+                    <MiniScoreCard
+                      label="検索KW強度"
+                      value={result.marketAnalysis.keywordStrength}
+                    />
+                  </div>
+
+                  <div className="mt-3 rounded-xl border border-white/10 bg-white/5 p-3 text-xs text-white/60">
+                    {result.marketAnalysis.estimatedByTheory
+                      ? "類似売却データが少ないため、商品名・ブランド・年代語・素材・コレクター語句から理論推定しています。"
+                      : `類似データ信頼度：${result.marketAnalysis.dataConfidence}`}
+                  </div>
+
+                  {result.marketAnalysis.rareReasons?.length ? (
+                    <div className="mt-3 space-y-1">
+                      {result.marketAnalysis.rareReasons.map((x, i) => (
+                        <div key={`${x}-${i}`} className="text-sm text-white/70">
+                          ・{x}
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
 
                   {result.textAnalysis.textReasons?.length ? (
                     <div className="mt-3 space-y-1">
