@@ -2,8 +2,7 @@
 "use client";
 
 import React from "react";
-import { auth, storage } from "@/firebase";
-import { getDownloadURL, ref as storageRef, uploadBytes } from "firebase/storage";
+import { auth } from "@/firebase";
 import ImageUploader from "@/components/upload/ImageUploader";
 import type { DraftDoc, TextOverlay } from "@/lib/types/draft";
 import { Btn, RangeControl, UI } from "../ui";
@@ -238,9 +237,7 @@ export default function BaseImagePanel(props: Props) {
           const dx = px - x0;
           const dy = py - y0;
 
-          if (dx * dx + dy * dy > radius * radius) {
-            continue;
-          }
+          if (dx * dx + dy * dy > radius * radius) continue;
 
           const idx = (py * width + px) * 4;
 
@@ -412,6 +409,38 @@ export default function BaseImagePanel(props: Props) {
 
   return (
     <details open className="area1 rounded-2xl border border-white/10 bg-black/20">
+      <style jsx>{`
+        .fixedPreview {
+          position: sticky;
+          top: 0;
+          z-index: 5;
+          background: rgba(0, 0, 0, 0.18);
+          backdrop-filter: blur(8px);
+          padding-bottom: 10px;
+        }
+
+        .controlScroll {
+          max-height: clamp(320px, 46vh, 620px);
+          overflow-y: auto;
+          overscroll-behavior: contain;
+          padding-right: 6px;
+        }
+
+        .controlScroll::-webkit-scrollbar {
+          width: 6px;
+        }
+
+        .controlScroll::-webkit-scrollbar-thumb {
+          background: rgba(255, 255, 255, 0.22);
+          border-radius: 9999px;
+        }
+
+        .controlScroll::-webkit-scrollbar-track {
+          background: rgba(255, 255, 255, 0.04);
+          border-radius: 9999px;
+        }
+      `}</style>
+
       <summary className="cursor-pointer select-none p-3">
         <div className="text-white/70" style={{ fontSize: 12 }}>
           ① 元画像 + 文字（投稿用）
@@ -419,507 +448,507 @@ export default function BaseImagePanel(props: Props) {
       </summary>
 
       <div className="p-3 pt-0">
-        {d.baseImageUrl ? (
-          <img
-            src={overlayPreviewDataUrl || d.baseImageUrl || ""}
-            alt="base"
-            className="w-full rounded-xl border border-white/10"
-            style={{ height: 240, objectFit: "contain", background: "rgba(0,0,0,0.25)" }}
-          />
-        ) : (
-          <div
-            className="w-full rounded-xl border border-white/10 bg-black/30 flex items-center justify-center text-white/55"
-            style={{ aspectRatio: "1 / 1", fontSize: 13 }}
-          >
-            元画像がありません（アップロード→保存）
-          </div>
-        )}
-
-        <div className="mt-3">
-          <ImageUploader
-            disabled={!uid || busy}
-            multiple
-            label="元画像をアップロード"
-            onPick={(files) => {
-              console.log("[UI] picked files:", files.map((f) => `${f.name} ${f.size}`));
-              void (async () => {
-                try {
-                  await onUploadImageFilesNew(files);
-                  showMsg("アップロード開始しました");
-                } catch (e: any) {
-                  console.error("upload failed:", e);
-                  showMsg(`アップロード失敗: ${e?.message || "不明"}`);
-                }
-              })();
-            }}
-          />
-
+        <div className="fixedPreview">
           {d.baseImageUrl ? (
-            <div className="mt-2 flex flex-wrap items-center gap-2">
-              <Btn
-                variant="secondary"
-                disabled={busy || cutoutBusy}
-                onClick={onCutoutCurrentBaseToReplace}
-                title="いまの元画像を透過PNGにして置き換える"
-              >
-                透過して元画像にする
-              </Btn>
+            <img
+              src={overlayPreviewDataUrl || d.baseImageUrl || ""}
+              alt="base"
+              className="w-full rounded-xl border border-white/10"
+              style={{
+                height: 240,
+                objectFit: "contain",
+                background: "rgba(0,0,0,0.25)",
+              }}
+            />
+          ) : (
+            <div
+              className="w-full rounded-xl border border-white/10 bg-black/30 flex items-center justify-center text-white/55"
+              style={{ aspectRatio: "1 / 1", fontSize: 13 }}
+            >
+              元画像がありません（アップロード→保存）
+            </div>
+          )}
+        </div>
 
-              <Btn
-                variant="danger"
-                disabled={!d.baseImageUrl || busy || cutoutBusy || editorBusy}
-                onClick={() => {
-                  void onRemoveBaseOrMaterialImage(String(d.baseImageUrl || "").trim());
-                }}
-                title="画面上と下書き上だけから外します。Storageの本体は消しません"
-              >
-                元画像を外す
-              </Btn>
+        <div className="controlScroll">
+          <div className="mt-3">
+            <ImageUploader
+              disabled={!uid || busy}
+              multiple
+              label="元画像をアップロード"
+              onPick={(files) => {
+                console.log("[UI] picked files:", files.map((f) => `${f.name} ${f.size}`));
+                void (async () => {
+                  try {
+                    await onUploadImageFilesNew(files);
+                    showMsg("アップロード開始しました");
+                  } catch (e: any) {
+                    console.error("upload failed:", e);
+                    showMsg(`アップロード失敗: ${e?.message || "不明"}`);
+                  }
+                })();
+              }}
+            />
 
-              <Btn
-                variant="secondary"
-                disabled={!uid || busy || cutoutBusy || editorBusy}
-                onClick={() => {
-                  void onSyncBaseAndMaterialImagesFromStorage();
-                }}
-                title="Storage から元画像 / 素材画像を復活します"
-              >
-                元画像を同期
-              </Btn>
+            {d.baseImageUrl ? (
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <Btn
+                  variant="secondary"
+                  disabled={busy || cutoutBusy}
+                  onClick={onCutoutCurrentBaseToReplace}
+                  title="いまの元画像を透過PNGにして置き換える"
+                >
+                  透過して元画像にする
+                </Btn>
 
-              <Btn
-                variant="secondary"
-                disabled={!d.baseImageUrl || busy || cutoutBusy || editorBusy}
-                onClick={() => {
-                  setEditorOpen((prev) => !prev);
-                }}
-                title="AI切り抜き後に、人の手で細部を直します"
-              >
-                {editorOpen ? "手修正UIを閉じる" : "手修正UIを開く"}
-              </Btn>
+                <Btn
+                  variant="danger"
+                  disabled={!d.baseImageUrl || busy || cutoutBusy || editorBusy}
+                  onClick={() => {
+                    void onRemoveBaseOrMaterialImage(String(d.baseImageUrl || "").trim());
+                  }}
+                  title="画面上と下書き上だけから外します。Storageの本体は消しません"
+                >
+                  元画像を外す
+                </Btn>
 
-              {cutoutReason ? (
-                <div className="text-white/70" style={{ fontSize: 12 }}>
-                  {cutoutReason}
+                <Btn
+                  variant="secondary"
+                  disabled={!uid || busy || cutoutBusy || editorBusy}
+                  onClick={() => {
+                    void onSyncBaseAndMaterialImagesFromStorage();
+                  }}
+                  title="Storage から元画像 / 素材画像を復活します"
+                >
+                  元画像を同期
+                </Btn>
+
+                <Btn
+                  variant="secondary"
+                  disabled={!d.baseImageUrl || busy || cutoutBusy || editorBusy}
+                  onClick={() => {
+                    setEditorOpen((prev) => !prev);
+                  }}
+                  title="AI切り抜き後に、人の手で細部を直します"
+                >
+                  {editorOpen ? "手修正UIを閉じる" : "手修正UIを開く"}
+                </Btn>
+
+                {cutoutReason ? (
+                  <div className="text-white/70" style={{ fontSize: 12 }}>
+                    {cutoutReason}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
+            <div className="text-white/55 mt-2" style={{ fontSize: 12, lineHeight: 1.5 }}>
+              ※ 画像を選ぶとすぐアップロードが始まります（別のボタンは不要）
+            </div>
+          </div>
+
+          {editorOpen ? (
+            <div className="mt-3 rounded-2xl border border-white/10 bg-black/15 p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="text-white/85 font-bold" style={{ fontSize: 12 }}>
+                  手修正UI（AI切り抜きの最後の仕上げ）
                 </div>
-              ) : null}
+
+                <div className="text-white/60" style={{ fontSize: 12 }}>
+                  消す＝余計な背景を消す / 戻す＝消しすぎた所を戻す
+                </div>
+              </div>
+
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Btn
+                  variant={editMode === "erase" ? "primary" : "secondary"}
+                  disabled={editorBusy}
+                  onClick={() => setEditMode("erase")}
+                >
+                  消す
+                </Btn>
+
+                <Btn
+                  variant={editMode === "restore" ? "primary" : "secondary"}
+                  disabled={editorBusy}
+                  onClick={() => setEditMode("restore")}
+                >
+                  戻す
+                </Btn>
+
+                <Btn variant="secondary" disabled={editorBusy} onClick={undoOnce}>
+                  1手戻す
+                </Btn>
+
+                <Btn
+                  variant="secondary"
+                  disabled={editorBusy}
+                  onClick={() => {
+                    void loadEditorImage();
+                  }}
+                >
+                  元に戻す
+                </Btn>
+
+                <Btn
+                  variant="ghost"
+                  disabled={editorBusy || !editorReady}
+                  onClick={() => {
+                    const canvas = canvasRef.current;
+                    if (!canvas) return;
+
+                    const a = document.createElement("a");
+                    a.href = canvas.toDataURL("image/png");
+                    a.download = `cutout_preview_${Date.now()}.png`;
+                    a.click();
+                  }}
+                >
+                  PNGで確認保存
+                </Btn>
+
+                <Btn
+                  variant="primary"
+                  disabled={editorBusy || !editorReady || !uid}
+                  onClick={() => {
+                    void saveEditedBaseToDraft();
+                  }}
+                >
+                  修正結果を元画像として保存
+                </Btn>
+              </div>
+
+              <div className="mt-3">
+                <RangeControl
+                  label="ブラシ太さ"
+                  value={brushSize}
+                  min={4}
+                  max={80}
+                  step={1}
+                  format={(v) => `${v}px`}
+                  onChange={(v) => setBrushSize(v)}
+                />
+              </div>
+
+              <div className="mt-3 rounded-xl border border-white/10 p-2" style={checkerStyle}>
+                <canvas
+                  ref={canvasRef}
+                  className="w-full rounded-lg border border-white/10 bg-transparent touch-none"
+                  style={{
+                    display: "block",
+                    maxHeight: 420,
+                    objectFit: "contain",
+                    cursor: editMode === "erase" ? "crosshair" : "cell",
+                  }}
+                  onPointerDown={(e) => {
+                    if (!editorReady || editorBusy) return;
+                    (e.currentTarget as HTMLCanvasElement).setPointerCapture(e.pointerId);
+                    startDraw(e.clientX, e.clientY);
+                  }}
+                  onPointerMove={(e) => {
+                    if (!editorReady || editorBusy) return;
+                    moveDraw(e.clientX, e.clientY);
+                  }}
+                  onPointerUp={(e) => {
+                    (e.currentTarget as HTMLCanvasElement).releasePointerCapture(e.pointerId);
+                    endDraw();
+                  }}
+                  onPointerLeave={() => {
+                    endDraw();
+                  }}
+                />
+              </div>
+
+              <div className="mt-2 text-white/60" style={{ fontSize: 12, lineHeight: 1.6 }}>
+                {editorBusy
+                  ? "編集処理中..."
+                  : editorReady
+                    ? "画像上をなぞって修正します。背景の残りを消し、消しすぎた部分は戻してください。"
+                    : "編集画像を準備中です。"}
+              </div>
             </div>
           ) : null}
 
-          <div className="text-white/55 mt-2" style={{ fontSize: 12, lineHeight: 1.5 }}>
-            ※ 画像を選ぶとすぐアップロードが始まります（別のボタンは不要）
-          </div>
-        </div>
+          {baseCandidates.length > 1 ? (
+            <div className="mt-2">
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-white/70 font-bold" style={{ fontSize: 12 }}>
+                  元画像を選ぶ（タップで①に反映）
+                </div>
 
-        {editorOpen ? (
-          <div className="mt-3 rounded-2xl border border-white/10 bg-black/15 p-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="text-white/85 font-bold" style={{ fontSize: 12 }}>
-                手修正UI（AI切り抜きの最後の仕上げ）
+                <Btn
+                  variant="secondary"
+                  disabled={!uid || busy || editorBusy}
+                  onClick={() => {
+                    void onSyncBaseAndMaterialImagesFromStorage();
+                  }}
+                  title="Storage から元画像 / 素材画像を復活します"
+                >
+                  同期
+                </Btn>
               </div>
 
-              <div className="text-white/60" style={{ fontSize: 12 }}>
-                消す＝余計な背景を消す / 戻す＝消しすぎた所を戻す
-              </div>
-            </div>
+              <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {baseCandidates.map((u) => {
+                  const isActive = String(d.baseImageUrl || "").trim() === u;
 
-            <div className="mt-3 flex flex-wrap gap-2">
-              <Btn
-                variant={editMode === "erase" ? "primary" : "secondary"}
-                disabled={editorBusy}
-                onClick={() => setEditMode("erase")}
-              >
-                消す
-              </Btn>
-
-              <Btn
-                variant={editMode === "restore" ? "primary" : "secondary"}
-                disabled={editorBusy}
-                onClick={() => setEditMode("restore")}
-              >
-                戻す
-              </Btn>
-
-              <Btn
-                variant="secondary"
-                disabled={editorBusy}
-                onClick={undoOnce}
-              >
-                1手戻す
-              </Btn>
-
-              <Btn
-                variant="secondary"
-                disabled={editorBusy}
-                onClick={() => {
-                  void loadEditorImage();
-                }}
-              >
-                元に戻す
-              </Btn>
-
-              <Btn
-                variant="ghost"
-                disabled={editorBusy || !editorReady}
-                onClick={() => {
-                  const canvas = canvasRef.current;
-                  if (!canvas) return;
-
-                  const a = document.createElement("a");
-                  a.href = canvas.toDataURL("image/png");
-                  a.download = `cutout_preview_${Date.now()}.png`;
-                  a.click();
-                }}
-              >
-                PNGで確認保存
-              </Btn>
-
-              <Btn
-                variant="primary"
-                disabled={editorBusy || !editorReady || !uid}
-                onClick={() => {
-                  void saveEditedBaseToDraft();
-                }}
-              >
-                修正結果を元画像として保存
-              </Btn>
-            </div>
-
-            <div className="mt-3">
-              <RangeControl
-                label="ブラシ太さ"
-                value={brushSize}
-                min={4}
-                max={80}
-                step={1}
-                format={(v) => `${v}px`}
-                onChange={(v) => setBrushSize(v)}
-              />
-            </div>
-
-            <div className="mt-3 rounded-xl border border-white/10 p-2" style={checkerStyle}>
-              <canvas
-                ref={canvasRef}
-                className="w-full rounded-lg border border-white/10 bg-transparent touch-none"
-                style={{
-                  display: "block",
-                  maxHeight: 420,
-                  objectFit: "contain",
-                  cursor: editMode === "erase" ? "crosshair" : "cell",
-                }}
-                onPointerDown={(e) => {
-                  if (!editorReady || editorBusy) return;
-                  (e.currentTarget as HTMLCanvasElement).setPointerCapture(e.pointerId);
-                  startDraw(e.clientX, e.clientY);
-                }}
-                onPointerMove={(e) => {
-                  if (!editorReady || editorBusy) return;
-                  moveDraw(e.clientX, e.clientY);
-                }}
-                onPointerUp={(e) => {
-                  (e.currentTarget as HTMLCanvasElement).releasePointerCapture(e.pointerId);
-                  endDraw();
-                }}
-                onPointerLeave={() => {
-                  endDraw();
-                }}
-              />
-            </div>
-
-            <div className="mt-2 text-white/60" style={{ fontSize: 12, lineHeight: 1.6 }}>
-              {editorBusy
-                ? "編集処理中..."
-                : editorReady
-                  ? "画像上をなぞって修正します。背景の残りを消し、消しすぎた部分は戻してください。"
-                  : "編集画像を準備中です。"}
-            </div>
-          </div>
-        ) : null}
-
-        {baseCandidates.length > 1 ? (
-          <div className="mt-2">
-            <div className="flex items-center justify-between gap-2">
-              <div className="text-white/70 font-bold" style={{ fontSize: 12 }}>
-                元画像を選ぶ（タップで①に反映）
-              </div>
-
-              <Btn
-                variant="secondary"
-                disabled={!uid || busy || editorBusy}
-                onClick={() => {
-                  void onSyncBaseAndMaterialImagesFromStorage();
-                }}
-                title="Storage から元画像 / 素材画像を復活します"
-              >
-                同期
-              </Btn>
-            </div>
-
-            <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
-              {baseCandidates.map((u) => {
-                const isActive = String(d.baseImageUrl || "").trim() === u;
-
-                return (
-                  <div
-                    key={u}
-                    className={[
-                      "rounded-xl border p-1 transition",
-                      isActive
-                        ? "border-white/70 bg-white/10"
-                        : "border-white/15 bg-black/20",
-                    ].join(" ")}
-                  >
-                    <button
-                      type="button"
-                      disabled={!uid || busy}
-                      onClick={() => {
-                        void onPromoteMaterialToBase(u);
-                      }}
+                  return (
+                    <div
+                      key={u}
                       className={[
-                        "block w-full rounded-lg transition",
-                        !uid || busy ? "opacity-40" : "hover:bg-white/5",
+                        "rounded-xl border p-1 transition",
+                        isActive
+                          ? "border-white/70 bg-white/10"
+                          : "border-white/15 bg-black/20",
                       ].join(" ")}
-                      title={isActive ? "現在の元画像" : "この画像を元画像（①）にする"}
                     >
-                      <img
-                        src={u}
-                        alt="base-candidate"
-                        className="w-full rounded-lg"
-                        style={{ aspectRatio: "1 / 1", objectFit: "cover" }}
-                      />
-                    </button>
-
-                    <div className="mt-2 flex gap-2">
-                      <Btn
-                        variant="secondary"
+                      <button
+                        type="button"
                         disabled={!uid || busy}
                         onClick={() => {
                           void onPromoteMaterialToBase(u);
                         }}
+                        className={[
+                          "block w-full rounded-lg transition",
+                          !uid || busy ? "opacity-40" : "hover:bg-white/5",
+                        ].join(" ")}
+                        title={isActive ? "現在の元画像" : "この画像を元画像（①）にする"}
                       >
-                        使う
-                      </Btn>
+                        <img
+                          src={u}
+                          alt="base-candidate"
+                          className="w-full rounded-lg"
+                          style={{ aspectRatio: "1 / 1", objectFit: "cover" }}
+                        />
+                      </button>
 
-                      <Btn
-                        variant="danger"
-                        disabled={!uid || busy}
-                        onClick={() => {
-                          void onRemoveBaseOrMaterialImage(u);
-                        }}
-                        title="画面上と下書き上だけから外します。Storageの本体は消しません"
-                      >
-                        外す
-                      </Btn>
+                      <div className="mt-2 flex gap-2">
+                        <Btn
+                          variant="secondary"
+                          disabled={!uid || busy}
+                          onClick={() => {
+                            void onPromoteMaterialToBase(u);
+                          }}
+                        >
+                          使う
+                        </Btn>
+
+                        <Btn
+                          variant="danger"
+                          disabled={!uid || busy}
+                          onClick={() => {
+                            void onRemoveBaseOrMaterialImage(u);
+                          }}
+                          title="画面上と下書き上だけから外します。Storageの本体は消しません"
+                        >
+                          外す
+                        </Btn>
+                      </div>
                     </div>
-                  </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
+
+          <div className="mt-3 rounded-2xl border border-white/10 bg-black/15 p-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-white/80 font-bold" style={{ fontSize: 12 }}>
+                文字表示（投稿用）
+              </div>
+
+              {(() => {
+                const ov = d.textOverlayBySlot?.[currentSlot];
+                const isOn = !!ov && ((ov.lines?.join("\n").trim() ?? "").length > 0);
+
+                return (
+                  <label className="inline-flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={isOn}
+                      onChange={(e) => {
+                        const nextOn = e.target.checked;
+
+                        setD((p) => {
+                          const prev = p.textOverlayBySlot?.[currentSlot] ?? defaultTextOverlay;
+
+                          return {
+                            ...p,
+                            textOverlayBySlot: {
+                              ...(p.textOverlayBySlot ?? {}),
+                              [currentSlot]: nextOn
+                                ? { ...prev, lines: prev.lines?.length ? prev.lines : [""] }
+                                : { ...prev, lines: [] },
+                            },
+                          };
+                        });
+                      }}
+                    />
+
+                    <span className="text-white/85" style={{ fontSize: 12 }}>
+                      {isOn ? "ON" : "OFF"}
+                    </span>
+                  </label>
                 );
-              })}
-            </div>
-          </div>
-        ) : null}
-
-        <div className="mt-3 rounded-2xl border border-white/10 bg-black/15 p-3">
-          <div className="flex items-center justify-between gap-2">
-            <div className="text-white/80 font-bold" style={{ fontSize: 12 }}>
-              文字表示（投稿用）
+              })()}
             </div>
 
-            {(() => {
-              const ov = d.textOverlayBySlot?.[currentSlot];
-              const isOn = !!ov && ((ov.lines?.join("\n").trim() ?? "").length > 0);
+            <div className="text-white/70 mt-2" style={{ fontSize: 12, lineHeight: 1.6 }}>
+              ※ 文字は「現在表示中のスロット」にだけ乗ります（共有・自動コピーなし）。
+            </div>
 
-              return (
-                <label className="inline-flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={isOn}
+            <div className="mt-3">
+              <div className="text-white/70 mb-2" style={{ fontSize: 12 }}>
+                テキスト（直接編集）
+              </div>
+
+              {(() => {
+                const ov = d.textOverlayBySlot?.[currentSlot] ?? defaultTextOverlay;
+                const textValue = (ov.lines ?? []).join("\n");
+
+                return (
+                  <textarea
+                    value={textValue}
                     onChange={(e) => {
-                      const nextOn = e.target.checked;
+                      const v = e.target.value ?? "";
 
-                      setD((p) => {
-                        const prev = p.textOverlayBySlot?.[currentSlot] ?? defaultTextOverlay;
-
-                        return {
-                          ...p,
-                          textOverlayBySlot: {
-                            ...(p.textOverlayBySlot ?? {}),
-                            [currentSlot]: nextOn
-                              ? { ...prev, lines: prev.lines?.length ? prev.lines : [""] }
-                              : { ...prev, lines: [] },
+                      setD((p) => ({
+                        ...p,
+                        textOverlayBySlot: {
+                          ...(p.textOverlayBySlot ?? {}),
+                          [currentSlot]: {
+                            ...(p.textOverlayBySlot?.[currentSlot] ?? defaultTextOverlay),
+                            lines: v.length ? v.split("\n") : [],
                           },
-                        };
-                      });
+                        },
+                      }));
                     }}
+                    className="w-full rounded-xl border p-3 outline-none"
+                    style={{ ...formStyle, minHeight: UI.hOverlayText }}
+                    placeholder="例：静かな存在感を、あなたに。"
+                    disabled={busy}
                   />
+                );
+              })()}
 
-                  <span className="text-white/85" style={{ fontSize: 12 }}>
-                    {isOn ? "ON" : "OFF"}
-                  </span>
-                </label>
-              );
-            })()}
-          </div>
-
-          <div className="text-white/70 mt-2" style={{ fontSize: 12, lineHeight: 1.6 }}>
-            ※ 文字は「現在表示中のスロット」にだけ乗ります（共有・自動コピーなし）。
-          </div>
-
-          <div className="mt-3">
-            <div className="text-white/70 mb-2" style={{ fontSize: 12 }}>
-              テキスト（直接編集）
-            </div>
-
-            {(() => {
-              const ov = d.textOverlayBySlot?.[currentSlot] ?? defaultTextOverlay;
-              const textValue = (ov.lines ?? []).join("\n");
-
-              return (
-                <textarea
-                  value={textValue}
-                  onChange={(e) => {
-                    const v = e.target.value ?? "";
-
+              <div className="mt-2 flex flex-wrap gap-2">
+                <Btn
+                  variant="secondary"
+                  disabled={busy}
+                  onClick={() => {
                     setD((p) => ({
                       ...p,
                       textOverlayBySlot: {
                         ...(p.textOverlayBySlot ?? {}),
                         [currentSlot]: {
                           ...(p.textOverlayBySlot?.[currentSlot] ?? defaultTextOverlay),
-                          lines: v.length ? v.split("\n") : [],
+                          lines: [],
                         },
                       },
                     }));
+                    showMsg("文字をクリアしました（このスロットのみ）");
                   }}
-                  className="w-full rounded-xl border p-3 outline-none"
-                  style={{ ...formStyle, minHeight: UI.hOverlayText }}
-                  placeholder="例：静かな存在感を、あなたに。"
-                  disabled={busy}
-                />
-              );
-            })()}
+                >
+                  文字を消す
+                </Btn>
 
-            <div className="mt-2 flex flex-wrap gap-2">
-              <Btn
-                variant="secondary"
-                disabled={busy}
-                onClick={() => {
-                  setD((p) => ({
-                    ...p,
-                    textOverlayBySlot: {
-                      ...(p.textOverlayBySlot ?? {}),
-                      [currentSlot]: {
-                        ...(p.textOverlayBySlot?.[currentSlot] ?? defaultTextOverlay),
-                        lines: [],
-                      },
-                    },
-                  }));
-                  showMsg("文字をクリアしました（このスロットのみ）");
-                }}
-              >
-                文字を消す
-              </Btn>
+                <Btn
+                  variant="secondary"
+                  disabled={!uid || busy}
+                  onClick={onSaveCompositeAsImageUrl}
+                >
+                  文字入り画像を保存（PNG）
+                </Btn>
 
-              <Btn
-                variant="secondary"
-                disabled={!uid || busy}
-                onClick={onSaveCompositeAsImageUrl}
-              >
-                文字入り画像を保存（PNG）
-              </Btn>
-
-              <Btn
-                variant="ghost"
-                disabled={!uid || busy}
-                onClick={onSaveDraft}
-              >
-                保存
-              </Btn>
+                <Btn variant="ghost" disabled={!uid || busy} onClick={onSaveDraft}>
+                  保存
+                </Btn>
+              </div>
             </div>
-          </div>
 
-          <div className="mt-3 grid grid-cols-1 gap-3">
-            {(() => {
-              const ov = d.textOverlayBySlot?.[currentSlot] ?? defaultTextOverlay;
+            <div className="mt-3 grid grid-cols-1 gap-3">
+              {(() => {
+                const ov = d.textOverlayBySlot?.[currentSlot] ?? defaultTextOverlay;
 
-              return (
-                <>
-                  <RangeControl
-                    label="文字サイズ"
-                    value={ov.fontSize ?? defaultTextOverlay.fontSize}
-                    min={18}
-                    max={90}
-                    step={1}
-                    format={(v) => `${v}px`}
-                    onChange={(v) => {
-                      setD((p) => ({
-                        ...p,
-                        textOverlayBySlot: {
-                          ...(p.textOverlayBySlot ?? {}),
-                          [currentSlot]: {
-                            ...(p.textOverlayBySlot?.[currentSlot] ?? defaultTextOverlay),
-                            fontSize: v,
-                          },
-                        },
-                      }));
-                    }}
-                  />
-
-                  <RangeControl
-                    label="文字の上下位置"
-                    value={ov.y ?? defaultTextOverlay.y}
-                    min={0}
-                    max={100}
-                    step={1}
-                    format={(v) => `${v}%`}
-                    onChange={(v) => {
-                      setD((p) => ({
-                        ...p,
-                        textOverlayBySlot: {
-                          ...(p.textOverlayBySlot ?? {}),
-                          [currentSlot]: {
-                            ...(p.textOverlayBySlot?.[currentSlot] ?? defaultTextOverlay),
-                            y: v,
-                          },
-                        },
-                      }));
-                    }}
-                  />
-
-                  <RangeControl
-                    label="文字背景の濃さ"
-                    value={(() => {
-                      const c = ov.background?.color ?? defaultTextOverlay.background!.color;
-                      const m = /rgba\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*([0-9.]+)\s*\)/.exec(c);
-                      return m ? Number(m[1]) : 0.45;
-                    })()}
-                    min={0}
-                    max={0.85}
-                    step={0.05}
-                    format={(v) => `${Math.round(v * 100)}%`}
-                    onChange={(v) => {
-                      setD((p) => {
-                        const prev = p.textOverlayBySlot?.[currentSlot] ?? defaultTextOverlay;
-
-                        return {
+                return (
+                  <>
+                    <RangeControl
+                      label="文字サイズ"
+                      value={ov.fontSize ?? defaultTextOverlay.fontSize}
+                      min={18}
+                      max={90}
+                      step={1}
+                      format={(v) => `${v}px`}
+                      onChange={(v) => {
+                        setD((p) => ({
                           ...p,
                           textOverlayBySlot: {
                             ...(p.textOverlayBySlot ?? {}),
                             [currentSlot]: {
-                              ...prev,
-                              background: {
-                                ...(prev.background ?? defaultTextOverlay.background!),
-                                enabled: true,
-                                color: `rgba(0,0,0,${v})`,
-                              },
+                              ...(p.textOverlayBySlot?.[currentSlot] ?? defaultTextOverlay),
+                              fontSize: v,
                             },
                           },
-                        };
-                      });
-                    }}
-                  />
-                </>
-              );
-            })()}
+                        }));
+                      }}
+                    />
+
+                    <RangeControl
+                      label="文字の上下位置"
+                      value={ov.y ?? defaultTextOverlay.y}
+                      min={0}
+                      max={100}
+                      step={1}
+                      format={(v) => `${v}%`}
+                      onChange={(v) => {
+                        setD((p) => ({
+                          ...p,
+                          textOverlayBySlot: {
+                            ...(p.textOverlayBySlot ?? {}),
+                            [currentSlot]: {
+                              ...(p.textOverlayBySlot?.[currentSlot] ?? defaultTextOverlay),
+                              y: v,
+                            },
+                          },
+                        }));
+                      }}
+                    />
+
+                    <RangeControl
+                      label="文字背景の濃さ"
+                      value={(() => {
+                        const c = ov.background?.color ?? defaultTextOverlay.background!.color;
+                        const m = /rgba\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*([0-9.]+)\s*\)/.exec(c);
+                        return m ? Number(m[1]) : 0.45;
+                      })()}
+                      min={0}
+                      max={0.85}
+                      step={0.05}
+                      format={(v) => `${Math.round(v * 100)}%`}
+                      onChange={(v) => {
+                        setD((p) => {
+                          const prev = p.textOverlayBySlot?.[currentSlot] ?? defaultTextOverlay;
+
+                          return {
+                            ...p,
+                            textOverlayBySlot: {
+                              ...(p.textOverlayBySlot ?? {}),
+                              [currentSlot]: {
+                                ...prev,
+                                background: {
+                                  ...(prev.background ?? defaultTextOverlay.background!),
+                                  enabled: true,
+                                  color: `rgba(0,0,0,${v})`,
+                                },
+                              },
+                            },
+                          };
+                        });
+                      }}
+                    />
+                  </>
+                );
+              })()}
+            </div>
           </div>
         </div>
       </div>

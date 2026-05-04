@@ -6,36 +6,6 @@ import type { DraftDoc, ProductPhotoMode, TextOverlay } from "@/lib/types/draft"
 import { Btn } from "../ui";
 import ProductPlacementEditor from "./ProductPlacementEditor";
 
-/**
- * ② 背景のみ（合成・動画用）
- * ④ 合成画像（動画用・文字なし）
- *
- * このファイルの役割
- * - 背景生成
- * - 背景一覧
- * - テンプレ背景おすすめ取得
- * - 商品理解レイヤー設定
- * - 合成タブでは ProductPlacementEditor を呼び出す
- *
- * 今回の整理ポイント
- * - 既存機能は削除しない
- * - 表で見せる方向決定UIは「3ボタン」に寄せる
- * - 詳細調整は 1 か所だけにまとめる
- * - 3ボタン押下時に Vision / Keywords / 現在の商品状態から内部値を自動推定する
- * - ただし、あとから手動で選び直せるようにする
- *
- * 今回の追加
- * - ProductPlacementEditor に文字オーバーレイを橋渡しする
- * - このファイル単体では currentSlot を持っていないため、
- *   まずは親から来た textOverlay を優先して渡す
- * - 親から未受領なら composite スロット文字を fallback として使う
- * - 他の既存機能は削除しない
- */
-
-/* =========================
-   型
-========================= */
-
 type ProductCategory = "furniture" | "goods" | "apparel" | "small" | "other";
 type ProductSize = "large" | "medium" | "small";
 type GroundingType = "floor" | "table" | "hanging" | "wall";
@@ -43,13 +13,6 @@ type SellDirection = "sales" | "branding" | "trust" | "story";
 type BgScene = "studio" | "lifestyle" | "scale" | "detail";
 
 type InnerTab = "background" | "composite";
-
-/**
- * 画面に見せる用途プリセット
- * - ec    : EC販売用
- * - sns   : 広告・SNS用
- * - usage : 使用イメージ用
- */
 type ImageUsePreset = "ec" | "sns" | "usage";
 
 type TemplateRecommendItem = {
@@ -72,11 +35,6 @@ type TemplateRecommendResult = {
 };
 
 type Props = {
-  /**
-   * 重要
-   * - 再合成後にAPIが返した本番配置結果
-   * - ProductPlacementEditor へそのまま渡す
-   */
   serverPlacementMeta?: {
     canvas?: number;
     placementInput?: {
@@ -229,10 +187,6 @@ type Props = {
   ) => Promise<void> | void;
 };
 
-/* =========================
-   表示ラベル
-========================= */
-
 const PRODUCT_CATEGORY_LABEL: Record<ProductCategory, string> = {
   furniture: "家具",
   goods: "雑貨",
@@ -273,10 +227,6 @@ const PRESET_LABEL: Record<ImageUsePreset, string> = {
   sns: "広告・SNS用",
   usage: "使用イメージ用",
 };
-
-/* =========================
-   小部品
-========================= */
 
 function TopTabButton({
   active,
@@ -332,13 +282,7 @@ function SegButton({
   );
 }
 
-function SmallBadge({
-  active,
-  label,
-}: {
-  active: boolean;
-  label: string;
-}) {
+function SmallBadge({ active, label }: { active: boolean; label: string }) {
   return (
     <div
       className={[
@@ -379,14 +323,6 @@ function PresetButton({
   );
 }
 
-/* =========================
-   文字解析系 utility
-========================= */
-
-/**
- * Vision / Keywords / 既存の選択状態から判断しやすいように、
- * まず参照用テキストを1つにまとめます。
- */
 function buildReferenceText(d: DraftDoc, backgroundKeyword: string): string {
   const vision = String((d as any).selectedStaticPrompt ?? d.vision ?? "").trim();
   const keywordsText = String((d as any).keywordsText ?? d.keywords ?? "").trim();
@@ -399,19 +335,13 @@ function includesAny(text: string, words: string[]): boolean {
   return words.some((w) => text.includes(w));
 }
 
-/**
- * Vision / Keywords から商品カテゴリを軽く推定します。
- * 既存の category が other 以外なら、それを強めに尊重します。
- */
 function inferProductCategory(input: {
   text: string;
   current: ProductCategory;
 }): ProductCategory {
   const { text, current } = input;
 
-  if (current !== "other") {
-    return current;
-  }
+  if (current !== "other") return current;
 
   if (
     includesAny(text, [
@@ -497,9 +427,6 @@ function inferProductCategory(input: {
   return "other";
 }
 
-/**
- * カテゴリから自然な接地タイプを決めます。
- */
 function inferGroundingFromCategory(
   category: ProductCategory,
   current: GroundingType
@@ -511,9 +438,6 @@ function inferGroundingFromCategory(
   return current;
 }
 
-/**
- * カテゴリから自然なサイズ感を決めます。
- */
 function inferSizeFromCategory(
   category: ProductCategory,
   current: ProductSize
@@ -525,9 +449,6 @@ function inferSizeFromCategory(
   return current;
 }
 
-/**
- * 用途プリセット + テキストから背景方向を自動決定します。
- */
 function inferBgSceneFromPreset(input: {
   preset: ImageUsePreset;
   text: string;
@@ -548,6 +469,7 @@ function inferBgSceneFromPreset(input: {
     ) {
       return "scale";
     }
+
     return "studio";
   }
 
@@ -565,6 +487,7 @@ function inferBgSceneFromPreset(input: {
     ) {
       return "detail";
     }
+
     return "lifestyle";
   }
 
@@ -587,9 +510,6 @@ function inferBgSceneFromPreset(input: {
   return "scale";
 }
 
-/**
- * 用途プリセット + テキストから売り方向を自動決定します。
- */
 function inferSellDirectionFromPreset(input: {
   preset: ImageUsePreset;
   text: string;
@@ -615,17 +535,10 @@ function inferSellDirectionFromPreset(input: {
   return "trust";
 }
 
-/**
- * 用途プリセットから、どの背景モードを主役にするかを決めます。
- */
 function inferPhotoModeFromPreset(preset: ImageUsePreset): ProductPhotoMode {
   if (preset === "ec") return "template";
   return "ai_bg";
 }
-
-/* =========================
-   本体
-========================= */
 
 export default function BackgroundPanel({
   serverPlacementMeta,
@@ -712,42 +625,30 @@ export default function BackgroundPanel({
   onRedo,
   onSavePlacement,
 }: Props) {
-  /**
-   * 背景タブ / 合成タブ
-   */
   const [innerTab, setInnerTab] = useState<InnerTab>("background");
 
-  /**
-   * テンプレ背景おすすめの一時表示状態
-   */
   const [templateRecommendBusy, setTemplateRecommendBusy] = useState(false);
   const [templateRecommendTopReason, setTemplateRecommendTopReason] = useState("");
   const [templateRecommended, setTemplateRecommended] = useState<TemplateRecommendItem[]>([]);
 
-  /**
-   * 詳細調整は最初は閉じる
-   * 必要な人だけ開けばよい
-   */
   const [detailOpen, setDetailOpen] = useState(false);
 
-  /**
-   * テンプレ背景プレビュー
-   */
   const templatePreviewBackgroundUrl = useMemo(() => {
     return String(templateBgUrl || d.templateBgUrl || "").trim();
   }, [templateBgUrl, d.templateBgUrl]);
 
-  /**
-   * AI背景プレビュー
-   * d.bgImageUrl を優先
-   */
   const aiOnlyPreviewBackgroundUrl = useMemo(() => {
     return String(d.bgImageUrl || bgDisplayUrl || "").trim();
   }, [d.bgImageUrl, bgDisplayUrl]);
 
-  /**
-   * テンプレ背景一覧
-   */
+  const fixedBackgroundPreviewUrl = useMemo(() => {
+    if (activePhotoMode === "template") {
+      return templatePreviewBackgroundUrl || aiOnlyPreviewBackgroundUrl;
+    }
+
+    return aiOnlyPreviewBackgroundUrl || templatePreviewBackgroundUrl;
+  }, [activePhotoMode, aiOnlyPreviewBackgroundUrl, templatePreviewBackgroundUrl]);
+
   const templateBgUrls = useMemo(() => {
     const raw =
       Array.isArray(templateBgUrlsFromParent) && templateBgUrlsFromParent.length > 0
@@ -759,79 +660,37 @@ export default function BackgroundPanel({
     return Array.from(new Set(raw.map((u) => String(u || "").trim()).filter(Boolean)));
   }, [templateBgUrlsFromParent, d.templateBgUrls]);
 
-  /**
-   * AI背景履歴一覧
-   */
   const aiBgUrls = useMemo(() => {
     const raw = Array.isArray(d.bgImageUrls) ? d.bgImageUrls : [];
     return Array.from(new Set(raw.map((u) => String(u || "").trim()).filter(Boolean)));
   }, [d.bgImageUrls]);
 
-  /**
-   * ④ 合成プレビューに渡す文字
-   *
-   * 今回は親から来た textOverlay を最優先で使う。
-   * 親がまだ渡していない場合だけ composite スロットを使う。
-   */
   const compositeTextOverlay = useMemo<TextOverlay | null>(() => {
-    if (textOverlay) {
-      return textOverlay;
-    }
+    if (textOverlay) return textOverlay;
 
     const overlay = d.textOverlayBySlot?.composite;
     return overlay ?? null;
   }, [textOverlay, d.textOverlayBySlot]);
 
-  /**
-   * 現在の内部状態が、どの用途プリセットに近いかを表示用に判定
-   */
   const selectedPreset = useMemo<ImageUsePreset | null>(() => {
-    if (sellDirection === "sales" && activePhotoMode === "template") {
-      return "ec";
-    }
-
-    if (sellDirection === "branding") {
-      return "sns";
-    }
-
-    if (sellDirection === "trust" || sellDirection === "story") {
-      return "usage";
-    }
+    if (sellDirection === "sales" && activePhotoMode === "template") return "ec";
+    if (sellDirection === "branding") return "sns";
+    if (sellDirection === "trust" || sellDirection === "story") return "usage";
 
     return null;
   }, [sellDirection, activePhotoMode]);
 
-  /**
-   * 3ボタン押下時に、
-   * Vision / Keywords / 現在の商品状態から内部値を自動決定する関数
-   *
-   * ポイント
-   * - ユーザーには用途だけ選ばせる
-   * - 中では細かい項目へ変換する
-   * - ただし手動上書きできるよう、詳細設定は残す
-   */
   function applyPreset(preset: ImageUsePreset) {
     const referenceText = buildReferenceText(d, backgroundKeyword);
 
-    /**
-     * まずカテゴリを推定
-     * - current が other 以外ならなるべく維持
-     * - other なら Vision / Keywords から推定
-     */
     const nextCategory = inferProductCategory({
       text: referenceText,
       current: productCategory,
     });
 
-    /**
-     * カテゴリからサイズ感と接地を推定
-     */
     const nextGrounding = inferGroundingFromCategory(nextCategory, groundingType);
     const nextSize = inferSizeFromCategory(nextCategory, productSize);
 
-    /**
-     * 用途から売り方向 / 背景方向 / 背景モードを決定
-     */
     const nextSellDirection = inferSellDirectionFromPreset({
       preset,
       text: referenceText,
@@ -844,11 +703,6 @@ export default function BackgroundPanel({
 
     const nextPhotoMode = inferPhotoModeFromPreset(preset);
 
-    /**
-     * state 更新
-     * - category は推定値に寄せる
-     * - user があとから詳細調整で直せる前提
-     */
     setProductCategory?.(nextCategory);
     setGroundingType?.(nextGrounding);
     setProductSize?.(nextSize);
@@ -859,9 +713,6 @@ export default function BackgroundPanel({
     showMsg(`${PRESET_LABEL[preset]}に自動設定しました`);
   }
 
-  /**
-   * テンプレ背景選択
-   */
   async function handleSelectTemplateBackground(url: string) {
     const picked = String(url || "").trim();
     if (!picked) return;
@@ -891,9 +742,6 @@ export default function BackgroundPanel({
     }
   }
 
-  /**
-   * テンプレ背景おすすめ取得
-   */
   async function handleFetchTemplateRecommendations() {
     if (!uid || busy || templateBgUrls.length === 0) return;
 
@@ -944,9 +792,6 @@ export default function BackgroundPanel({
     }
   }
 
-  /**
-   * テンプレ背景生成
-   */
   async function handleGenerateTemplateBackground() {
     if (!uid || busy) return;
 
@@ -965,9 +810,6 @@ export default function BackgroundPanel({
     }
   }
 
-  /**
-   * AI背景選択
-   */
   async function handleSelectAiBackground(url: string) {
     const picked = String(url || "").trim();
     if (!picked) return;
@@ -991,6 +833,40 @@ export default function BackgroundPanel({
 
   return (
     <details className="area2 rounded-2xl border border-white/10 bg-black/20" open>
+      <style jsx>{`
+        .backgroundFixedPreview {
+          position: sticky;
+          top: 0;
+          z-index: 8;
+          border-radius: 16px;
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          background: rgba(0, 0, 0, 0.26);
+          backdrop-filter: blur(10px);
+          padding: 10px;
+        }
+
+        .backgroundControlScroll {
+          max-height: clamp(320px, 48vh, 680px);
+          overflow-y: auto;
+          overscroll-behavior: contain;
+          padding-right: 6px;
+        }
+
+        .backgroundControlScroll::-webkit-scrollbar {
+          width: 6px;
+        }
+
+        .backgroundControlScroll::-webkit-scrollbar-thumb {
+          background: rgba(255, 255, 255, 0.25);
+          border-radius: 9999px;
+        }
+
+        .backgroundControlScroll::-webkit-scrollbar-track {
+          background: rgba(255, 255, 255, 0.04);
+          border-radius: 9999px;
+        }
+      `}</style>
+
       <summary className="cursor-pointer select-none p-3">
         <div className="text-white/70" style={{ fontSize: 12 }}>
           【商品画像】静止画
@@ -998,9 +874,6 @@ export default function BackgroundPanel({
       </summary>
 
       <div className="flex flex-col gap-3 p-3 pt-0">
-        {/* =========================
-            上部タブ
-        ========================= */}
         <div className="flex flex-wrap items-center gap-2">
           <TopTabButton
             active={innerTab === "background"}
@@ -1014,421 +887,580 @@ export default function BackgroundPanel({
           />
         </div>
 
-        {/* =========================
-            背景タブ
-        ========================= */}
         {innerTab === "background" ? (
           <>
-            {/* =========================
-                用途プリセット
-            ========================= */}
-            <div className="rounded-2xl border border-white/10 bg-black/15 p-3">
-              <div className="text-white/85 font-bold" style={{ fontSize: 12 }}>
-                画像の目的
-              </div>
-
-              <div className="mt-2 text-white/55" style={{ fontSize: 12, lineHeight: 1.6 }}>
-                まず用途だけ選んでください。Vision・Keywords・現在の商品状態を見て、内部設定を自動で寄せます。
-              </div>
-
-              <div className="mt-3 flex flex-wrap gap-2">
-                <PresetButton
-                  label="EC販売用"
-                  active={selectedPreset === "ec"}
-                  onClick={() => applyPreset("ec")}
-                />
-
-                <PresetButton
-                  label="広告・SNS用"
-                  active={selectedPreset === "sns"}
-                  onClick={() => applyPreset("sns")}
-                />
-
-                <PresetButton
-                  label="使用イメージ用"
-                  active={selectedPreset === "usage"}
-                  onClick={() => applyPreset("usage")}
-                />
-              </div>
-
-              <div
-                className="mt-3 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-white/60"
-                style={{ fontSize: 12, lineHeight: 1.6 }}
-              >
-                自動設定中：
-                {" "}
-                {SELL_DIRECTION_LABEL[sellDirection]}
-                {" / "}
-                {BG_SCENE_LABEL[bgScene]}
-                {" / "}
-                {PRODUCT_CATEGORY_LABEL[productCategory]}
-                {" / "}
-                {GROUNDING_TYPE_LABEL[groundingType]}
-                {" / "}
-                {PRODUCT_SIZE_LABEL[productSize]}
-                {" / "}
-                {activePhotoMode === "template" ? "テンプレ背景" : "AI背景"}
-              </div>
-
-              <button
-                type="button"
-                onClick={() => setDetailOpen((prev) => !prev)}
-                className="mt-3 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-left text-white/70 transition hover:bg-white/5"
-                style={{ fontSize: 12 }}
-              >
-                {detailOpen ? "自動設定を調整する（閉じる）" : "自動設定を調整する"}
-              </button>
-            </div>
-
-            {/* =========================
-                詳細調整
-                1か所だけに集約
-            ========================= */}
-            {detailOpen ? (
-              <div className="rounded-2xl border border-white/10 bg-black/15 p-3">
-                <div className="text-white/85 font-bold" style={{ fontSize: 12 }}>
-                  詳細調整
-                </div>
-
-                <div className="mt-2 text-white/55" style={{ fontSize: 12, lineHeight: 1.6 }}>
-                  自動設定のあとに、必要な時だけ手で直してください。
-                </div>
-
-                <div className="mt-3">
-                  <div className="mb-2 text-white/70" style={{ fontSize: 12 }}>
-                    1. 商品カテゴリ
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {(Object.keys(PRODUCT_CATEGORY_LABEL) as ProductCategory[]).map((key) => (
-                      <SegButton
-                        key={key}
-                        active={productCategory === key}
-                        label={PRODUCT_CATEGORY_LABEL[key]}
-                        disabled={!setProductCategory || busy}
-                        onClick={() => {
-                          if (!setProductCategory) return;
-                          setProductCategory(key);
-                        }}
-                      />
-                    ))}
-                  </div>
-                </div>
-
-                <div className="mt-3">
-                  <div className="mb-2 text-white/70" style={{ fontSize: 12 }}>
-                    2. サイズ感
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {(Object.keys(PRODUCT_SIZE_LABEL) as ProductSize[]).map((key) => (
-                      <SegButton
-                        key={key}
-                        active={productSize === key}
-                        label={PRODUCT_SIZE_LABEL[key]}
-                        disabled={!setProductSize || busy}
-                        onClick={() => {
-                          if (!setProductSize) return;
-                          setProductSize(key);
-                        }}
-                      />
-                    ))}
-                  </div>
-                </div>
-
-                <div className="mt-3">
-                  <div className="mb-2 text-white/70" style={{ fontSize: 12 }}>
-                    3. 接地タイプ
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {(Object.keys(GROUNDING_TYPE_LABEL) as GroundingType[]).map((key) => (
-                      <SegButton
-                        key={key}
-                        active={groundingType === key}
-                        label={GROUNDING_TYPE_LABEL[key]}
-                        disabled={!setGroundingType || busy}
-                        onClick={() => {
-                          if (!setGroundingType) return;
-                          setGroundingType(key);
-                        }}
-                      />
-                    ))}
-                  </div>
-                </div>
-
-                <div className="mt-3">
-                  <div className="mb-2 text-white/70" style={{ fontSize: 12 }}>
-                    4. 売り方向
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {(Object.keys(SELL_DIRECTION_LABEL) as SellDirection[]).map((key) => (
-                      <SegButton
-                        key={key}
-                        active={sellDirection === key}
-                        label={SELL_DIRECTION_LABEL[key]}
-                        disabled={!setSellDirection || busy}
-                        onClick={() => {
-                          if (!setSellDirection) return;
-                          setSellDirection(key);
-                        }}
-                      />
-                    ))}
-                  </div>
-                </div>
-
-                <div className="mt-3">
-                  <div className="mb-2 text-white/70" style={{ fontSize: 12 }}>
-                    5. 背景方向
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {(Object.keys(BG_SCENE_LABEL) as BgScene[]).map((key) => (
-                      <SegButton
-                        key={key}
-                        active={bgScene === key}
-                        label={BG_SCENE_LABEL[key]}
-                        disabled={!setBgScene || busy}
-                        onClick={() => {
-                          if (!setBgScene) return;
-                          setBgScene(key);
-                        }}
-                      />
-                    ))}
-                  </div>
-                </div>
-
-                <div
-                  className="mt-3 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-white/65"
-                  style={{ fontSize: 12, lineHeight: 1.6 }}
-                >
-                  現在：
-                  {" "}
-                  {PRODUCT_CATEGORY_LABEL[productCategory]}
-                  {" / "}
-                  {PRODUCT_SIZE_LABEL[productSize]}
-                  {" / "}
-                  {GROUNDING_TYPE_LABEL[groundingType]}
-                  {" / "}
-                  {SELL_DIRECTION_LABEL[sellDirection]}
-                  {" / "}
-                  {BG_SCENE_LABEL[bgScene]}
-                </div>
-              </div>
-            ) : null}
-
-            {/* =========================
-                背景説明
-            ========================= */}
-            <div className="rounded-2xl border border-white/10 bg-black/15 p-3">
-              <div className="text-white/85 font-bold" style={{ fontSize: 12 }}>
-                背景選択
-              </div>
-
-              <div className="mt-2 text-white/55" style={{ fontSize: 12, lineHeight: 1.6 }}>
-                テンプレ背景とAI背景をここでまとめて管理します。選択した背景は合成タブの編集プレビューに反映されます。
-              </div>
-            </div>
-
-            {/* =========================
-                テンプレ背景
-            ========================= */}
-            <div className="rounded-2xl border border-white/10 bg-black/15 p-3">
-              <div className="flex items-center justify-between gap-3">
-                <div className="text-white/85 font-bold" style={{ fontSize: 12 }}>
-                  テンプレ背景
+            <div className="backgroundFixedPreview">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <div className="text-white/80 font-bold" style={{ fontSize: 12 }}>
+                  現在の背景プレビュー
                 </div>
 
                 <SmallBadge
-                  active={activePhotoMode === "template"}
-                  label={activePhotoMode === "template" ? "現在の編集対象" : "切替可能"}
+                  active={Boolean(fixedBackgroundPreviewUrl)}
+                  label={
+                    activePhotoMode === "template"
+                      ? "テンプレ背景"
+                      : "AI背景"
+                  }
                 />
               </div>
 
-              <div className="mt-2 text-white/55" style={{ fontSize: 12, lineHeight: 1.6 }}>
-                テンプレ背景は「売るための整った背景」です。
+              {fixedBackgroundPreviewUrl ? (
+                <img
+                  src={fixedBackgroundPreviewUrl}
+                  alt="selected background preview"
+                  className="w-full rounded-xl border border-white/10"
+                  style={{
+                    height: 240,
+                    objectFit: "contain",
+                    background: "rgba(0,0,0,0.25)",
+                  }}
+                  draggable={false}
+                />
+              ) : (
+                <div
+                  className="flex w-full items-center justify-center rounded-xl border border-white/10 bg-black/30 text-white/55"
+                  style={{ aspectRatio: "1 / 1", fontSize: 13 }}
+                >
+                  背景がありません
+                </div>
+              )}
+
+              <div className="mt-2 text-white/50" style={{ fontSize: 11, lineHeight: 1.5 }}>
+                下の操作エリアだけスクロールします。選択中の背景はここに固定表示されます。
+              </div>
+            </div>
+
+            <div className="backgroundControlScroll flex flex-col gap-3">
+              <div className="rounded-2xl border border-white/10 bg-black/15 p-3">
+                <div className="text-white/85 font-bold" style={{ fontSize: 12 }}>
+                  画像の目的
+                </div>
+
+                <div className="mt-2 text-white/55" style={{ fontSize: 12, lineHeight: 1.6 }}>
+                  まず用途だけ選んでください。Vision・Keywords・現在の商品状態を見て、内部設定を自動で寄せます。
+                </div>
+
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <PresetButton
+                    label="EC販売用"
+                    active={selectedPreset === "ec"}
+                    onClick={() => applyPreset("ec")}
+                  />
+
+                  <PresetButton
+                    label="広告・SNS用"
+                    active={selectedPreset === "sns"}
+                    onClick={() => applyPreset("sns")}
+                  />
+
+                  <PresetButton
+                    label="使用イメージ用"
+                    active={selectedPreset === "usage"}
+                    onClick={() => applyPreset("usage")}
+                  />
+                </div>
+
+                <div
+                  className="mt-3 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-white/60"
+                  style={{ fontSize: 12, lineHeight: 1.6 }}
+                >
+                  自動設定中：{" "}
+                  {SELL_DIRECTION_LABEL[sellDirection]}
+                  {" / "}
+                  {BG_SCENE_LABEL[bgScene]}
+                  {" / "}
+                  {PRODUCT_CATEGORY_LABEL[productCategory]}
+                  {" / "}
+                  {GROUNDING_TYPE_LABEL[groundingType]}
+                  {" / "}
+                  {PRODUCT_SIZE_LABEL[productSize]}
+                  {" / "}
+                  {activePhotoMode === "template" ? "テンプレ背景" : "AI背景"}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setDetailOpen((prev) => !prev)}
+                  className="mt-3 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-left text-white/70 transition hover:bg-white/5"
+                  style={{ fontSize: 12 }}
+                >
+                  {detailOpen ? "自動設定を調整する（閉じる）" : "自動設定を調整する"}
+                </button>
               </div>
 
-              <div className="mt-3">
-                {templatePreviewBackgroundUrl ? (
-                  <img
-                    src={templatePreviewBackgroundUrl}
-                    alt="template background"
-                    className="w-full rounded-xl border border-white/10"
-                    style={{
-                      height: 240,
-                      objectFit: "contain",
-                      background: "rgba(0,0,0,0.25)",
-                    }}
+              {detailOpen ? (
+                <div className="rounded-2xl border border-white/10 bg-black/15 p-3">
+                  <div className="text-white/85 font-bold" style={{ fontSize: 12 }}>
+                    詳細調整
+                  </div>
+
+                  <div className="mt-2 text-white/55" style={{ fontSize: 12, lineHeight: 1.6 }}>
+                    自動設定のあとに、必要な時だけ手で直してください。
+                  </div>
+
+                  <div className="mt-3">
+                    <div className="mb-2 text-white/70" style={{ fontSize: 12 }}>
+                      1. 商品カテゴリ
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {(Object.keys(PRODUCT_CATEGORY_LABEL) as ProductCategory[]).map((key) => (
+                        <SegButton
+                          key={key}
+                          active={productCategory === key}
+                          label={PRODUCT_CATEGORY_LABEL[key]}
+                          disabled={!setProductCategory || busy}
+                          onClick={() => {
+                            if (!setProductCategory) return;
+                            setProductCategory(key);
+                          }}
+                        />
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="mt-3">
+                    <div className="mb-2 text-white/70" style={{ fontSize: 12 }}>
+                      2. サイズ感
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {(Object.keys(PRODUCT_SIZE_LABEL) as ProductSize[]).map((key) => (
+                        <SegButton
+                          key={key}
+                          active={productSize === key}
+                          label={PRODUCT_SIZE_LABEL[key]}
+                          disabled={!setProductSize || busy}
+                          onClick={() => {
+                            if (!setProductSize) return;
+                            setProductSize(key);
+                          }}
+                        />
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="mt-3">
+                    <div className="mb-2 text-white/70" style={{ fontSize: 12 }}>
+                      3. 接地タイプ
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {(Object.keys(GROUNDING_TYPE_LABEL) as GroundingType[]).map((key) => (
+                        <SegButton
+                          key={key}
+                          active={groundingType === key}
+                          label={GROUNDING_TYPE_LABEL[key]}
+                          disabled={!setGroundingType || busy}
+                          onClick={() => {
+                            if (!setGroundingType) return;
+                            setGroundingType(key);
+                          }}
+                        />
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="mt-3">
+                    <div className="mb-2 text-white/70" style={{ fontSize: 12 }}>
+                      4. 売り方向
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {(Object.keys(SELL_DIRECTION_LABEL) as SellDirection[]).map((key) => (
+                        <SegButton
+                          key={key}
+                          active={sellDirection === key}
+                          label={SELL_DIRECTION_LABEL[key]}
+                          disabled={!setSellDirection || busy}
+                          onClick={() => {
+                            if (!setSellDirection) return;
+                            setSellDirection(key);
+                          }}
+                        />
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="mt-3">
+                    <div className="mb-2 text-white/70" style={{ fontSize: 12 }}>
+                      5. 背景方向
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {(Object.keys(BG_SCENE_LABEL) as BgScene[]).map((key) => (
+                        <SegButton
+                          key={key}
+                          active={bgScene === key}
+                          label={BG_SCENE_LABEL[key]}
+                          disabled={!setBgScene || busy}
+                          onClick={() => {
+                            if (!setBgScene) return;
+                            setBgScene(key);
+                          }}
+                        />
+                      ))}
+                    </div>
+                  </div>
+
+                  <div
+                    className="mt-3 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-white/65"
+                    style={{ fontSize: 12, lineHeight: 1.6 }}
+                  >
+                    現在：{" "}
+                    {PRODUCT_CATEGORY_LABEL[productCategory]}
+                    {" / "}
+                    {PRODUCT_SIZE_LABEL[productSize]}
+                    {" / "}
+                    {GROUNDING_TYPE_LABEL[groundingType]}
+                    {" / "}
+                    {SELL_DIRECTION_LABEL[sellDirection]}
+                    {" / "}
+                    {BG_SCENE_LABEL[bgScene]}
+                  </div>
+                </div>
+              ) : null}
+
+              <div className="rounded-2xl border border-white/10 bg-black/15 p-3">
+                <div className="text-white/85 font-bold" style={{ fontSize: 12 }}>
+                  背景選択
+                </div>
+
+                <div className="mt-2 text-white/55" style={{ fontSize: 12, lineHeight: 1.6 }}>
+                  テンプレ背景とAI背景をここでまとめて管理します。選択した背景は合成タブの編集プレビューに反映されます。
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-white/10 bg-black/15 p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-white/85 font-bold" style={{ fontSize: 12 }}>
+                    テンプレ背景
+                  </div>
+
+                  <SmallBadge
+                    active={activePhotoMode === "template"}
+                    label={activePhotoMode === "template" ? "現在の編集対象" : "切替可能"}
                   />
+                </div>
+
+                <div className="mt-2 text-white/55" style={{ fontSize: 12, lineHeight: 1.6 }}>
+                  テンプレ背景は「売るための整った背景」です。
+                </div>
+
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Btn
+                    variant="secondary"
+                    disabled={!uid || busy}
+                    onClick={handleGenerateTemplateBackground}
+                  >
+                    テンプレ背景を生成
+                  </Btn>
+
+                  <Btn
+                    variant="secondary"
+                    disabled={!uid || busy || typeof syncTemplateBgImagesFromStorage !== "function"}
+                    onClick={() => {
+                      void syncTemplateBgImagesFromStorage?.();
+                    }}
+                  >
+                    テンプレ背景を同期
+                  </Btn>
+
+                  <Btn
+                    variant="secondary"
+                    disabled={!uid || busy || templateBgUrls.length === 0 || templateRecommendBusy}
+                    onClick={handleFetchTemplateRecommendations}
+                  >
+                    {templateRecommendBusy ? "おすすめ取得中..." : "おすすめ取得"}
+                  </Btn>
+                </div>
+
+                <div className="mt-2 text-white/55" style={{ fontSize: 12, lineHeight: 1.5 }}>
+                  ※ テンプレ背景は、商品を主役に見せる販売向け背景です。
+                </div>
+
+                {templateRecommendTopReason || templateRecommended.length > 0 ? (
+                  <div className="mt-3 rounded-2xl border border-white/10 bg-black/15 p-3">
+                    <div className="text-white/85 font-bold" style={{ fontSize: 12 }}>
+                      おすすめテンプレ
+                    </div>
+
+                    {templateRecommendTopReason ? (
+                      <div
+                        className="mt-2 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-white/72"
+                        style={{ fontSize: 12, lineHeight: 1.6 }}
+                      >
+                        {templateRecommendTopReason}
+                      </div>
+                    ) : null}
+
+                    {templateRecommended.length > 0 ? (
+                      <div className="mt-3 flex flex-col gap-2">
+                        {templateRecommended.slice(0, 3).map((item, index) => {
+                          const isCurrent =
+                            String(templateBgUrl || d.templateBgUrl || "").trim() === item.url;
+
+                          return (
+                            <button
+                              key={`${item.url}-${index}`}
+                              type="button"
+                              onClick={() => void handleSelectTemplateBackground(item.url)}
+                              className="rounded-xl border px-3 py-3 text-left transition hover:bg-white/5"
+                              style={{
+                                borderColor: "rgba(255,255,255,0.10)",
+                                background: "rgba(0,0,0,0.15)",
+                                color: "rgba(255,255,255,0.82)",
+                              }}
+                            >
+                              <div className="flex items-center justify-between gap-3">
+                                <div className="font-semibold" style={{ fontSize: 12 }}>
+                                  おすすめ {index + 1}
+                                  {typeof item.score === "number" ? ` / score ${item.score}` : ""}
+                                </div>
+
+                                <SmallBadge
+                                  active={isCurrent}
+                                  label={isCurrent ? "選択中" : "候補"}
+                                />
+                              </div>
+
+                              <div
+                                className="mt-2 text-white/62"
+                                style={{ fontSize: 12, lineHeight: 1.6 }}
+                              >
+                                {item.reason || "商品との相性が高い背景です"}
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {templateBgUrls.length > 0 ? (
+                  <div className="mt-3">
+                    <div className="mb-2 flex items-center justify-between">
+                      <div className="text-white/70" style={{ fontSize: 12 }}>
+                        テンプレ背景一覧
+                      </div>
+                      <div className="text-white/45" style={{ fontSize: 11 }}>
+                        {templateBgUrls.length}件
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col gap-2">
+                      {templateBgUrls.slice(0, 8).map((u, index) => {
+                        const isCurrentTemplate =
+                          String(templateBgUrl || d.templateBgUrl || "").trim() === u;
+
+                        const recommendedItem = templateRecommended.find(
+                          (item) => item.url === u
+                        );
+
+                        return (
+                          <div
+                            key={`${u}-${index}`}
+                            className="rounded-xl border px-3 py-3 text-left"
+                            style={{
+                              borderColor: isCurrentTemplate
+                                ? "rgba(255,255,255,0.34)"
+                                : "rgba(255,255,255,0.10)",
+                              background: isCurrentTemplate
+                                ? "rgba(255,255,255,0.06)"
+                                : "rgba(0,0,0,0.15)",
+                              color: "rgba(255,255,255,0.82)",
+                            }}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setActivePhotoMode("template");
+                                void handleSelectTemplateBackground(u);
+                              }}
+                              className="block w-full text-left transition hover:bg-white/5"
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="font-semibold" style={{ fontSize: 12 }}>
+                                  テンプレ背景 {index + 1}
+                                </div>
+
+                                <div className="flex flex-wrap items-center gap-2">
+                                  {recommendedItem ? (
+                                    <SmallBadge active={false} label="おすすめ候補" />
+                                  ) : null}
+                                  <SmallBadge
+                                    active={isCurrentTemplate}
+                                    label={isCurrentTemplate ? "選択中" : "未選択"}
+                                  />
+                                </div>
+                              </div>
+
+                              <div className="mt-2 text-white/55" style={{ fontSize: 12 }}>
+                                {u.slice(0, 72)}
+                                {u.length > 72 ? "…" : ""}
+                              </div>
+
+                              {recommendedItem?.reason ? (
+                                <div
+                                  className="mt-2 rounded-lg border border-white/10 bg-black/20 px-2 py-2 text-white/60"
+                                  style={{ fontSize: 11, lineHeight: 1.5 }}
+                                >
+                                  理由：{recommendedItem.reason}
+                                </div>
+                              ) : null}
+                            </button>
+
+                            <div className="mt-2 flex gap-2">
+                              <Btn
+                                variant="secondary"
+                                disabled={!uid || busy}
+                                onClick={() => {
+                                  setActivePhotoMode("template");
+                                  void handleSelectTemplateBackground(u);
+                                }}
+                              >
+                                使う
+                              </Btn>
+
+                              <Btn
+                                variant="danger"
+                                disabled={!uid || busy || typeof onRemoveTemplateBgImage !== "function"}
+                                onClick={() => {
+                                  void onRemoveTemplateBgImage?.(u);
+                                }}
+                                title="画面上と下書き上だけから外します。Storageの本体は消しません"
+                              >
+                                外す
+                              </Btn>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
                 ) : (
                   <div
-                    className="flex w-full items-center justify-center rounded-xl border border-white/10 bg-black/30 text-white/55"
-                    style={{ aspectRatio: "1 / 1", fontSize: 13 }}
+                    className="mt-3 rounded-xl border border-white/10 bg-black/20 px-3 py-3 text-white/55"
+                    style={{ fontSize: 12, lineHeight: 1.6 }}
                   >
-                    テンプレ背景がありません
+                    まだテンプレ背景がありません。先に「テンプレ背景を生成」を押してください。
                   </div>
                 )}
               </div>
 
-              <div className="mt-3 flex flex-wrap gap-2">
-                <Btn
-                  variant="secondary"
-                  disabled={!uid || busy}
-                  onClick={handleGenerateTemplateBackground}
-                >
-                  テンプレ背景を生成
-                </Btn>
-
-                <Btn
-                  variant="secondary"
-                  disabled={!uid || busy || typeof syncTemplateBgImagesFromStorage !== "function"}
-                  onClick={() => {
-                    void syncTemplateBgImagesFromStorage?.();
-                  }}
-                >
-                  テンプレ背景を同期
-                </Btn>
-
-                <Btn
-                  variant="secondary"
-                  disabled={!uid || busy || templateBgUrls.length === 0 || templateRecommendBusy}
-                  onClick={handleFetchTemplateRecommendations}
-                >
-                  {templateRecommendBusy ? "おすすめ取得中..." : "おすすめ取得"}
-                </Btn>
-              </div>
-
-              <div className="mt-2 text-white/55" style={{ fontSize: 12, lineHeight: 1.5 }}>
-                ※ テンプレ背景は、商品を主役に見せる販売向け背景です。
-              </div>
-
-              {templateRecommendTopReason || templateRecommended.length > 0 ? (
-                <div className="mt-3 rounded-2xl border border-white/10 bg-black/15 p-3">
+              <div className="rounded-2xl border border-white/10 bg-black/15 p-3">
+                <div className="flex items-center justify-between gap-3">
                   <div className="text-white/85 font-bold" style={{ fontSize: 12 }}>
-                    おすすめテンプレ
+                    AI背景
                   </div>
 
-                  {templateRecommendTopReason ? (
-                    <div
-                      className="mt-2 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-white/72"
-                      style={{ fontSize: 12, lineHeight: 1.6 }}
-                    >
-                      {templateRecommendTopReason}
-                    </div>
-                  ) : null}
-
-                  {templateRecommended.length > 0 ? (
-                    <div className="mt-3 flex flex-col gap-2">
-                      {templateRecommended.slice(0, 3).map((item, index) => {
-                        const isCurrent =
-                          String(templateBgUrl || d.templateBgUrl || "").trim() === item.url;
-
-                        return (
-                          <button
-                            key={`${item.url}-${index}`}
-                            type="button"
-                            onClick={() => void handleSelectTemplateBackground(item.url)}
-                            className="rounded-xl border px-3 py-3 text-left transition hover:bg-white/5"
-                            style={{
-                              borderColor: "rgba(255,255,255,0.10)",
-                              background: "rgba(0,0,0,0.15)",
-                              color: "rgba(255,255,255,0.82)",
-                            }}
-                          >
-                            <div className="flex items-center justify-between gap-3">
-                              <div className="font-semibold" style={{ fontSize: 12 }}>
-                                おすすめ {index + 1}
-                                {typeof item.score === "number" ? ` / score ${item.score}` : ""}
-                              </div>
-
-                              <SmallBadge
-                                active={isCurrent}
-                                label={isCurrent ? "選択中" : "候補"}
-                              />
-                            </div>
-
-                            <div
-                              className="mt-2 text-white/62"
-                              style={{ fontSize: 12, lineHeight: 1.6 }}
-                            >
-                              {item.reason || "商品との相性が高い背景です"}
-                            </div>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  ) : null}
+                  <SmallBadge
+                    active={activePhotoMode === "ai_bg"}
+                    label={activePhotoMode === "ai_bg" ? "現在の編集対象" : "切替可能"}
+                  />
                 </div>
-              ) : null}
 
-              {templateBgUrls.length > 0 ? (
+                <div className="mt-2 text-white/55" style={{ fontSize: 12, lineHeight: 1.6 }}>
+                  AI背景は「キーワードから空間を作る背景」です。
+                </div>
+
                 <div className="mt-3">
-                  <div className="mb-2 flex items-center justify-between">
-                    <div className="text-white/70" style={{ fontSize: 12 }}>
-                      テンプレ背景一覧
-                    </div>
-                    <div className="text-white/45" style={{ fontSize: 11 }}>
-                      {templateBgUrls.length}件
-                    </div>
+                  <div className="mb-2 text-white/70" style={{ fontSize: 12 }}>
+                    背景キーワード
                   </div>
 
-                  <div className="flex flex-col gap-2">
-                    {templateBgUrls.slice(0, 8).map((u, index) => {
-                      const isCurrentTemplate =
-                        String(templateBgUrl || d.templateBgUrl || "").trim() === u;
+                  <input
+                    value={backgroundKeyword}
+                    onChange={(e) => setBackgroundKeyword(e.target.value)}
+                    placeholder="例：玄関 / 書斎 / 薬局受付"
+                    className="w-full rounded-xl border p-2 outline-none"
+                    style={formStyle}
+                    disabled={!uid || busy}
+                  />
 
-                      const recommendedItem = templateRecommended.find(
-                        (item) => item.url === u
-                      );
+                  <div className="mt-2 text-white/55" style={{ fontSize: 12, lineHeight: 1.5 }}>
+                    ※ キーワードは空間の方向づけです。商品そのものではなく、置かれる背景の文脈を入れてください。
+                  </div>
+                </div>
 
-                      return (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Btn
+                    variant="secondary"
+                    disabled={!uid || busy || !backgroundKeyword.trim()}
+                    onClick={async () => {
+                      try {
+                        await generateBackgroundImage(backgroundKeyword);
+                        showMsg("背景を生成しました");
+                      } catch (e: any) {
+                        console.error(e);
+                        showMsg(`背景生成に失敗：${e?.message || "不明"}`);
+                      }
+                    }}
+                  >
+                    背景を生成
+                  </Btn>
+
+                  <Btn
+                    variant="secondary"
+                    disabled={
+                      !uid ||
+                      busy ||
+                      (!aiOnlyPreviewBackgroundUrl && !String(backgroundKeyword || "").trim())
+                    }
+                    onClick={replaceBackgroundAndSaveToAiImage}
+                  >
+                    製品画像＋背景を合成（保存）
+                  </Btn>
+
+                  <Btn
+                    variant="secondary"
+                    disabled={!uid || busy}
+                    onClick={syncBgImagesFromStorage}
+                  >
+                    背景を同期（Storage→Firestore）
+                  </Btn>
+                </div>
+
+                <div className="mt-2 text-white/55" style={{ fontSize: 12, lineHeight: 1.5 }}>
+                  ※ この背景が「合成」と「動画」に使われます。
+                </div>
+
+                {aiBgUrls.length > 0 ? (
+                  <div className="mt-3">
+                    <div className="mb-2 flex items-center justify-between">
+                      <div className="text-white/70" style={{ fontSize: 12 }}>
+                        背景履歴（クリックで表示｜課金なし）
+                      </div>
+
+                      <Btn
+                        variant="danger"
+                        disabled={!uid || busy || aiBgUrls.length === 0}
+                        onClick={clearBgHistory}
+                        title="この下書きの候補リストだけ消します（Storageの画像は消えません）"
+                      >
+                        履歴クリア
+                      </Btn>
+                    </div>
+
+                    <div className="flex flex-col gap-2">
+                      {aiBgUrls.slice(0, 6).map((u: string) => (
                         <div
-                          key={`${u}-${index}`}
-                          className="rounded-xl border px-3 py-3 text-left"
+                          key={u}
+                          className="rounded-xl border px-3 py-2"
                           style={{
-                            borderColor: isCurrentTemplate
-                              ? "rgba(255,255,255,0.34)"
-                              : "rgba(255,255,255,0.10)",
-                            background: isCurrentTemplate
-                              ? "rgba(255,255,255,0.06)"
-                              : "rgba(0,0,0,0.15)",
-                            color: "rgba(255,255,255,0.82)",
+                            borderColor: "rgba(255,255,255,0.10)",
+                            background: "rgba(0,0,0,0.15)",
+                            color: "rgba(255,255,255,0.78)",
+                            fontSize: 12,
                           }}
                         >
                           <button
                             type="button"
                             onClick={() => {
-                              setActivePhotoMode("template");
-                              void handleSelectTemplateBackground(u);
+                              setActivePhotoMode("ai_bg");
+                              void handleSelectAiBackground(u);
                             }}
                             className="block w-full text-left transition hover:bg-white/5"
                           >
-                            <div className="flex items-center justify-between gap-2">
-                              <div className="font-semibold" style={{ fontSize: 12 }}>
-                                テンプレ背景 {index + 1}
-                              </div>
-
-                              <div className="flex flex-wrap items-center gap-2">
-                                {recommendedItem ? (
-                                  <SmallBadge active={false} label="おすすめ候補" />
-                                ) : null}
-                                <SmallBadge
-                                  active={isCurrentTemplate}
-                                  label={isCurrentTemplate ? "選択中" : "未選択"}
-                                />
-                              </div>
-                            </div>
-
-                            <div className="mt-2 text-white/55" style={{ fontSize: 12 }}>
-                              {u.slice(0, 72)}
-                              {u.length > 72 ? "…" : ""}
-                            </div>
-
-                            {recommendedItem?.reason ? (
-                              <div
-                                className="mt-2 rounded-lg border border-white/10 bg-black/20 px-2 py-2 text-white/60"
-                                style={{ fontSize: 11, lineHeight: 1.5 }}
-                              >
-                                理由：{recommendedItem.reason}
-                              </div>
-                            ) : null}
+                            {u.slice(0, 60)}
+                            {u.length > 60 ? "…" : ""}
                           </button>
 
                           <div className="mt-2 flex gap-2">
@@ -1436,8 +1468,8 @@ export default function BackgroundPanel({
                               variant="secondary"
                               disabled={!uid || busy}
                               onClick={() => {
-                                setActivePhotoMode("template");
-                                void handleSelectTemplateBackground(u);
+                                setActivePhotoMode("ai_bg");
+                                void handleSelectAiBackground(u);
                               }}
                             >
                               使う
@@ -1445,9 +1477,9 @@ export default function BackgroundPanel({
 
                             <Btn
                               variant="danger"
-                              disabled={!uid || busy || typeof onRemoveTemplateBgImage !== "function"}
+                              disabled={!uid || busy || typeof onRemoveAiBgImage !== "function"}
                               onClick={() => {
-                                void onRemoveTemplateBgImage?.(u);
+                                void onRemoveAiBgImage?.(u);
                               }}
                               title="画面上と下書き上だけから外します。Storageの本体は消しません"
                             >
@@ -1455,198 +1487,15 @@ export default function BackgroundPanel({
                             </Btn>
                           </div>
                         </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              ) : (
-                <div
-                  className="mt-3 rounded-xl border border-white/10 bg-black/20 px-3 py-3 text-white/55"
-                  style={{ fontSize: 12, lineHeight: 1.6 }}
-                >
-                  まだテンプレ背景がありません。先に「テンプレ背景を生成」を押してください。
-                </div>
-              )}
-            </div>
-
-            {/* =========================
-                AI背景
-            ========================= */}
-            <div className="rounded-2xl border border-white/10 bg-black/15 p-3">
-              <div className="flex items-center justify-between gap-3">
-                <div className="text-white/85 font-bold" style={{ fontSize: 12 }}>
-                  AI背景
-                </div>
-
-                <SmallBadge
-                  active={activePhotoMode === "ai_bg"}
-                  label={activePhotoMode === "ai_bg" ? "現在の編集対象" : "切替可能"}
-                />
-              </div>
-
-              <div className="mt-2 text-white/55" style={{ fontSize: 12, lineHeight: 1.6 }}>
-                AI背景は「キーワードから空間を作る背景」です。
-              </div>
-
-              <div className="mt-3">
-                {aiOnlyPreviewBackgroundUrl ? (
-                  <img
-                    src={aiOnlyPreviewBackgroundUrl}
-                    alt="ai bg"
-                    className="w-full rounded-xl border border-white/10"
-                    style={{
-                      height: 240,
-                      objectFit: "contain",
-                      background: "rgba(0,0,0,0.25)",
-                    }}
-                  />
-                ) : (
-                  <div
-                    className="flex w-full items-center justify-center rounded-xl border border-white/10 bg-black/30 text-white/55"
-                    style={{ aspectRatio: "1 / 1", fontSize: 13 }}
-                  >
-                    背景がありません（背景生成）
-                  </div>
-                )}
-              </div>
-
-              <div className="mt-3">
-                <div className="mb-2 text-white/70" style={{ fontSize: 12 }}>
-                  背景キーワード
-                </div>
-
-                <input
-                  value={backgroundKeyword}
-                  onChange={(e) => setBackgroundKeyword(e.target.value)}
-                  placeholder="例：玄関 / 書斎 / 薬局受付"
-                  className="w-full rounded-xl border p-2 outline-none"
-                  style={formStyle}
-                  disabled={!uid || busy}
-                />
-
-                <div className="mt-2 text-white/55" style={{ fontSize: 12, lineHeight: 1.5 }}>
-                  ※ キーワードは空間の方向づけです。商品そのものではなく、置かれる背景の文脈を入れてください。
-                </div>
-              </div>
-
-              <div className="mt-3 flex flex-wrap gap-2">
-                <Btn
-                  variant="secondary"
-                  disabled={!uid || busy || !backgroundKeyword.trim()}
-                  onClick={async () => {
-                    try {
-                      await generateBackgroundImage(backgroundKeyword);
-                      showMsg("背景を生成しました");
-                    } catch (e: any) {
-                      console.error(e);
-                      showMsg(`背景生成に失敗：${e?.message || "不明"}`);
-                    }
-                  }}
-                >
-                  背景を生成
-                </Btn>
-
-                <Btn
-                  variant="secondary"
-                  disabled={
-                    !uid ||
-                    busy ||
-                    (!aiOnlyPreviewBackgroundUrl && !String(backgroundKeyword || "").trim())
-                  }
-                  onClick={replaceBackgroundAndSaveToAiImage}
-                >
-                  製品画像＋背景を合成（保存）
-                </Btn>
-
-                <Btn
-                  variant="secondary"
-                  disabled={!uid || busy}
-                  onClick={syncBgImagesFromStorage}
-                >
-                  背景を同期（Storage→Firestore）
-                </Btn>
-              </div>
-
-              <div className="mt-2 text-white/55" style={{ fontSize: 12, lineHeight: 1.5 }}>
-                ※ この背景が「合成」と「動画」に使われます。
-              </div>
-
-              {aiBgUrls.length > 0 ? (
-                <div className="mt-3">
-                  <div className="mb-2 flex items-center justify-between">
-                    <div className="text-white/70" style={{ fontSize: 12 }}>
-                      背景履歴（クリックで表示｜課金なし）
+                      ))}
                     </div>
-
-                    <Btn
-                      variant="danger"
-                      disabled={!uid || busy || aiBgUrls.length === 0}
-                      onClick={clearBgHistory}
-                      title="この下書きの候補リストだけ消します（Storageの画像は消えません）"
-                    >
-                      履歴クリア
-                    </Btn>
                   </div>
-
-                  <div className="flex flex-col gap-2">
-                    {aiBgUrls.slice(0, 6).map((u: string) => (
-                      <div
-                        key={u}
-                        className="rounded-xl border px-3 py-2"
-                        style={{
-                          borderColor: "rgba(255,255,255,0.10)",
-                          background: "rgba(0,0,0,0.15)",
-                          color: "rgba(255,255,255,0.78)",
-                          fontSize: 12,
-                        }}
-                      >
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setActivePhotoMode("ai_bg");
-                            void handleSelectAiBackground(u);
-                          }}
-                          className="block w-full text-left transition hover:bg-white/5"
-                        >
-                          {u.slice(0, 60)}
-                          {u.length > 60 ? "…" : ""}
-                        </button>
-
-                        <div className="mt-2 flex gap-2">
-                          <Btn
-                            variant="secondary"
-                            disabled={!uid || busy}
-                            onClick={() => {
-                              setActivePhotoMode("ai_bg");
-                              void handleSelectAiBackground(u);
-                            }}
-                          >
-                            使う
-                          </Btn>
-
-                          <Btn
-                            variant="danger"
-                            disabled={!uid || busy || typeof onRemoveAiBgImage !== "function"}
-                            onClick={() => {
-                              void onRemoveAiBgImage?.(u);
-                            }}
-                            title="画面上と下書き上だけから外します。Storageの本体は消しません"
-                          >
-                            外す
-                          </Btn>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
+                ) : null}
+              </div>
             </div>
           </>
         ) : null}
 
-        {/* =========================
-            合成タブ
-        ========================= */}
         {innerTab === "composite" ? (
           <div className="flex flex-col gap-3">
             <ProductPlacementEditor
@@ -1655,7 +1504,9 @@ export default function BackgroundPanel({
               foregroundImageUrl={d.foregroundImageUrl}
               bgImageUrl={String(d.bgImageUrl || "").trim()}
               aiImageUrl={aiImageUrl}
-              compositeTextImageUrl={String(compositeTextImageUrl || (d as any).compositeTextImageUrl || "").trim()}
+              compositeTextImageUrl={String(
+                compositeTextImageUrl || (d as any).compositeTextImageUrl || ""
+              ).trim()}
               onSaveCompositeTextImageFromCompositeSlot={onSaveCompositeTextImageFromCompositeSlot}
               templateBgUrl={templateBgUrl}
               templateBgUrls={templateBgUrls}
@@ -1681,11 +1532,9 @@ export default function BackgroundPanel({
               shadowScale={shadowScale}
               shadowOffsetX={shadowOffsetX}
               shadowOffsetY={shadowOffsetY}
-
               backgroundScale={backgroundScale}
               backgroundX={backgroundX}
               backgroundY={backgroundY}
-
               setPlacementScale={setPlacementScale}
               setPlacementX={setPlacementX}
               setPlacementY={setPlacementY}
@@ -1694,18 +1543,15 @@ export default function BackgroundPanel({
               setShadowScale={setShadowScale}
               setShadowOffsetX={setShadowOffsetX}
               setShadowOffsetY={setShadowOffsetY}
-
               setBackgroundScale={setBackgroundScale}
               setBackgroundX={setBackgroundX}
               setBackgroundY={setBackgroundY}
-
               editingStep={editingStep}
               setEditingStep={setEditingStep}
               canUndo={canUndo}
               canRedo={canRedo}
               onUndo={onUndo}
               onRedo={onRedo}
-
               onSavePlacement={onSavePlacement}
               busy={busy}
               showMsg={showMsg}
@@ -1725,7 +1571,12 @@ export default function BackgroundPanel({
 
               <Btn
                 variant="danger"
-                disabled={!uid || busy || !String(aiImageUrl || "").trim() || typeof onRemoveCompositeImage !== "function"}
+                disabled={
+                  !uid ||
+                  busy ||
+                  !String(aiImageUrl || "").trim() ||
+                  typeof onRemoveCompositeImage !== "function"
+                }
                 onClick={() => {
                   void onRemoveCompositeImage?.(String(aiImageUrl || "").trim());
                 }}

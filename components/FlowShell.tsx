@@ -125,7 +125,6 @@ export default function FlowShell({ user, onLogout, children }: Props) {
 
   return (
     <div className="relative min-h-screen text-white">
-      {/* /flow 配下専用背景 */}
       <div className="pointer-events-none fixed inset-0 z-0">
         <img
           src="/flow-bg-tech1.png"
@@ -134,14 +133,9 @@ export default function FlowShell({ user, onLogout, children }: Props) {
           draggable={false}
         />
 
-        {/* 背景の上に暗めの膜をかけて、文字を読みやすくする */}
         <div className="absolute inset-0 bg-[#020814]/45" />
-
-        {/* 緑のサイバー発光を追加 */}
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_72%_28%,rgba(0,255,180,0.20),transparent_38%)]" />
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_72%,rgba(70,220,220,0.14),transparent_42%)]" />
-
-        {/* 下側を少し締める */}
         <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-black/15 to-black/58" />
       </div>
 
@@ -236,7 +230,6 @@ export default function FlowShell({ user, onLogout, children }: Props) {
                   <Tab href="/flow/sell-check/admin" label="学習データ管理" />
                 ) : null}
 
-                <Tab href="/flow/inbox" label="投稿待ち" />
                 <Tab href="/flow/posted" label="投稿済み" />
                 <Tab href="/flow/brands" label="設定" />
               </div>

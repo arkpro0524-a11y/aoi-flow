@@ -7,6 +7,12 @@ import type { PricingTable } from "./useDraftEditorState";
 
 /**
  * pricing取得専用hook
+ *
+ * 修正内容：
+ * - /api/config の連打を防ぐ
+ * - 複数回マウントされても同時通信しない
+ * - 一度取得した価格は一定時間キャッシュする
+ * - 既存の setPricing / error / busy / updatedAt は維持
  */
 
 type Params = {
@@ -16,50 +22,90 @@ type Params = {
   setPricingUpdatedAt: React.Dispatch<React.SetStateAction<number>>;
 };
 
+/**
+ * モジュール内キャッシュ
+ * React の再描画・再マウントが起きても、この値は保持されます。
+ */
+let cachedPricing: PricingTable | null = null;
+let cachedAt = 0;
+let inFlight: Promise<PricingTable> | null = null;
+
+/**
+ * 価格設定は頻繁に変わらないため、5分は再取得しない
+ */
+const CACHE_MS = 5 * 60 * 1000;
+
+async function fetchPricingOnce(): Promise<PricingTable> {
+  const now = Date.now();
+
+  if (cachedPricing && now - cachedAt < CACHE_MS) {
+    return cachedPricing;
+  }
+
+  if (inFlight) {
+    return inFlight;
+  }
+
+  inFlight = (async () => {
+    const r = await fetch("/api/config", {
+      method: "GET",
+      cache: "no-store",
+    });
+
+    const j = await r.json().catch(() => ({}));
+
+    if (!r.ok) {
+      throw new Error(j?.error || "config error");
+    }
+
+    const next = normalizePricing(j);
+
+    cachedPricing = next;
+    cachedAt = Date.now();
+
+    return next;
+  })();
+
+  try {
+    return await inFlight;
+  } finally {
+    inFlight = null;
+  }
+}
+
 export default function useDraftPricing(params: Params) {
   const { setPricing, setPricingBusy, setPricingError, setPricingUpdatedAt } = params;
 
   useEffect(() => {
-    async function fetchPricing() {
+    let alive = true;
+
+    async function run() {
       setPricingBusy(true);
       setPricingError(null);
 
       try {
-        const r = await fetch("/api/config", {
-          method: "GET",
-          headers: { "cache-control": "no-store" },
-        });
+        const next = await fetchPricingOnce();
 
-        const j = await r.json().catch(() => ({}));
-        if (!r.ok) throw new Error(j?.error || "config error");
+        if (!alive) return;
 
-        setPricing(normalizePricing(j));
+        setPricing(next);
         setPricingUpdatedAt(Date.now());
       } catch {
+        if (!alive) return;
+
         setPricingError("価格取得に失敗（暫定表示）");
         setPricingUpdatedAt(Date.now());
       } finally {
+        if (!alive) return;
+
         setPricingBusy(false);
       }
     }
 
-    void fetchPricing();
-
-    const t = setInterval(() => {
-      void fetchPricing();
-    }, 60_000);
-
-    const onVis = () => {
-      if (document.visibilityState === "visible") {
-        void fetchPricing();
-      }
-    };
-
-    document.addEventListener("visibilitychange", onVis);
+    void run();
 
     return () => {
-      clearInterval(t);
-      document.removeEventListener("visibilitychange", onVis);
+      alive = false;
     };
   }, [setPricing, setPricingBusy, setPricingError, setPricingUpdatedAt]);
 }

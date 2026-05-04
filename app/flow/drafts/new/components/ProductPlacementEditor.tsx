@@ -2027,6 +2027,32 @@ async function handleResetAdjustments() {
 }
 return (
   <div className="rounded-2xl border border-white/10 bg-black/15 p-3">
+    <style jsx>{`
+      .placementPreviewFixed {
+        position: sticky;
+        top: 0;
+        z-index: 8;
+        background: rgba(0, 0, 0, 0.22);
+        backdrop-filter: blur(10px);
+        padding-bottom: 10px;
+      }
+
+      .placementControlScroll {
+        max-height: clamp(320px, 46vh, 680px);
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        padding-right: 6px;
+      }
+
+      .placementControlScroll::-webkit-scrollbar {
+        width: 6px;
+      }
+
+      .placementControlScroll::-webkit-scrollbar-thumb {
+        background: rgba(255, 255, 255, 0.25);
+        border-radius: 9999px;
+      }
+    `}</style>
     <div>
       <div className="text-white/86 font-bold" style={{ fontSize: 13 }}>
         ④ 合成画像の調整
@@ -2039,255 +2065,6 @@ return (
 </div>
     </div>
 
-    <div className="mt-3 rounded-2xl border border-white/10 bg-black/15 p-3">
-        <div className="flex items-center justify-between gap-3">
-          <div className="text-white/72" style={{ fontSize: 12 }}>
-            背景選択
-          </div>
-
-          <div className="flex items-center gap-2">
-            <SmallBadge
-              active={activePhotoMode === TEMPLATE_MODE}
-              label={activePhotoMode === TEMPLATE_MODE ? "現在：テンプレ背景" : "テンプレ背景"}
-            />
-            <SmallBadge
-              active={activePhotoMode === AI_BG_MODE}
-              label={activePhotoMode === AI_BG_MODE ? "現在：AI背景" : "AI背景"}
-            />
-          </div>
-        </div>
-
-        <div className="mt-2 text-white/50" style={{ fontSize: 11, lineHeight: 1.6 }}>
-          背景をクリックすると、その背景が編集対象になり、編集プレビューへ即反映されます。
-        </div>
-
-        <div className="mt-3 flex flex-col gap-3">
-          <div>
-            <div className="mb-2 text-white/60" style={{ fontSize: 11 }}>
-              テンプレ背景
-            </div>
-
-            {(templateBgUrls || []).length > 0 ? (
-              <div className="flex max-h-[180px] flex-col gap-2 overflow-auto pr-1">
-                {(templateBgUrls || []).slice(0, 8).map((u, i) => {
-                  const isCurrent = String(templateBgUrl || "").trim() === String(u || "").trim();
-                  const recommendedItem = templateRecommended.find((item) => item.url === u);
-
-                  return (
-                    <button
-                      key={`${u}-${i}`}
-                      type="button"
-                      disabled={busy}
-onClick={async () => {
-  await onSelectTemplateBg?.(u);
-  await onChangePhotoMode(TEMPLATE_MODE);
-  setIsBackgroundLocked(false);
-  setEditingStep("background");
-  setActivePreviewTab("edit");
-}}
-                      className="rounded-xl border px-3 py-3 text-left transition hover:bg-white/5"
-                      style={{
-                        borderColor: isCurrent
-                          ? "rgba(255,255,255,0.34)"
-                          : "rgba(255,255,255,0.10)",
-                        background: isCurrent
-                          ? "rgba(255,255,255,0.06)"
-                          : "rgba(0,0,0,0.15)",
-                        color: "rgba(255,255,255,0.82)",
-                      }}
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="font-semibold" style={{ fontSize: 12 }}>
-                          テンプレ背景 {i + 1}
-                        </div>
-
-                        <div className="flex flex-wrap items-center gap-2">
-                          {recommendedItem ? (
-                            <SmallBadge active={false} label="おすすめ候補" />
-                          ) : null}
-                          <SmallBadge
-                            active={isCurrent}
-                            label={isCurrent ? "選択中" : "未選択"}
-                          />
-                        </div>
-                      </div>
-
-                      {recommendedItem?.reason ? (
-                        <div
-                          className="mt-2 rounded-lg border border-white/10 bg-black/20 px-2 py-2 text-white/60"
-                          style={{ fontSize: 11, lineHeight: 1.5 }}
-                        >
-                          理由：{recommendedItem.reason}
-                        </div>
-                      ) : null}
-                    </button>
-                  );
-                })}
-              </div>
-            ) : (
-              <div
-                className="rounded-xl border border-white/10 bg-black/20 px-3 py-3 text-white/55"
-                style={{ fontSize: 12, lineHeight: 1.6 }}
-              >
-                テンプレ背景がありません
-              </div>
-            )}
-          </div>
-
-          <div>
-            <div className="mb-2 text-white/60" style={{ fontSize: 11 }}>
-              AI背景
-            </div>
-
-            {(aiBgUrls || []).length > 0 ? (
-              <div className="flex max-h-[180px] flex-col gap-2 overflow-auto pr-1">
-                {(aiBgUrls || []).slice(0, 8).map((u, i) => {
-                  const isCurrent = currentAiBgUrl === String(u || "").trim();
-
-                  return (
-                    <button
-                      key={`${u}-${i}`}
-                      type="button"
-                      disabled={busy}
-onClick={async () => {
-  await onSelectAiBg?.(u);
-  await onChangePhotoMode(AI_BG_MODE);
-  setIsBackgroundLocked(false);
-  setEditingStep("background");
-  setActivePreviewTab("edit");
-}}
-                      className="rounded-xl border px-3 py-3 text-left transition hover:bg-white/5"
-                      style={{
-                        borderColor: isCurrent
-                          ? "rgba(255,255,255,0.34)"
-                          : "rgba(255,255,255,0.10)",
-                        background: isCurrent
-                          ? "rgba(255,255,255,0.06)"
-                          : "rgba(0,0,0,0.15)",
-                        color: "rgba(255,255,255,0.82)",
-                      }}
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="font-semibold" style={{ fontSize: 12 }}>
-                          AI背景 {i + 1}
-                        </div>
-
-                        <SmallBadge
-                          active={isCurrent}
-                          label={isCurrent ? "選択中" : "未選択"}
-                        />
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            ) : (
-              <div
-                className="rounded-xl border border-white/10 bg-black/20 px-3 py-3 text-white/55"
-                style={{ fontSize: 12, lineHeight: 1.6 }}
-              >
-                AI背景がありません
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {templateRecommendTopReason || templateRecommended.length > 0 ? (
-        <div className="mt-3 rounded-2xl border border-white/10 bg-black/15 p-3">
-          <div className="flex items-center justify-between gap-3">
-            <div className="text-white/85 font-bold" style={{ fontSize: 12 }}>
-              テンプレ背景おすすめ
-            </div>
-
-            {currentTemplateRecommendIndex >= 0 ? (
-              <SmallBadge
-                active
-                label={`おすすめ ${currentTemplateRecommendIndex + 1}位`}
-              />
-            ) : (
-              <SmallBadge active={false} label="候補比較中" />
-            )}
-          </div>
-
-          {templateRecommendTopReason ? (
-            <div
-              className="mt-2 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-white/72"
-              style={{ fontSize: 12, lineHeight: 1.6 }}
-            >
-              {templateRecommendTopReason}
-            </div>
-          ) : null}
-
-          {currentTemplateRecommendIndex >= 0 &&
-          templateRecommended[currentTemplateRecommendIndex] ? (
-            <div
-              className="mt-2 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-white/68"
-              style={{ fontSize: 12, lineHeight: 1.6 }}
-            >
-              現在の背景：
-              おすすめ {currentTemplateRecommendIndex + 1}
-              {typeof templateRecommended[currentTemplateRecommendIndex]?.score === "number"
-                ? ` / score ${templateRecommended[currentTemplateRecommendIndex]?.score}`
-                : ""}
-              {" / "}
-              {templateRecommended[currentTemplateRecommendIndex]?.reason || "相性が高い背景です"}
-            </div>
-          ) : null}
-
-          {templateRecommended.length > 0 ? (
-            <div className="mt-3 flex flex-col gap-2">
-              {templateRecommended.slice(0, 3).map((item, index) => {
-                const isCurrent = String(templateBgUrl || "").trim() === item.url;
-
-                return (
-                  <button
-                    key={`${item.url}-placement-${index}`}
-                    type="button"
-                    disabled={busy}
-onClick={async () => {
-  await onSelectTemplateBg?.(item.url);
-  await onChangePhotoMode(TEMPLATE_MODE);
-  setIsBackgroundLocked(false);
-  setEditingStep("background");
-  setActivePreviewTab("edit");
-}}
-                    className="rounded-xl border px-3 py-3 text-left transition hover:bg-white/5"
-                    style={{
-                      borderColor: isCurrent
-                        ? "rgba(255,255,255,0.34)"
-                        : "rgba(255,255,255,0.10)",
-                      background: isCurrent
-                        ? "rgba(255,255,255,0.06)"
-                        : "rgba(0,0,0,0.15)",
-                      color: "rgba(255,255,255,0.82)",
-                    }}
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="font-semibold" style={{ fontSize: 12 }}>
-                        候補 {index + 1}
-                        {typeof item.score === "number" ? ` / score ${item.score}` : ""}
-                      </div>
-
-                      <SmallBadge
-                        active={isCurrent}
-                        label={isCurrent ? "選択中" : "切替可能"}
-                      />
-                    </div>
-
-                    <div
-                      className="mt-2 text-white/62"
-                      style={{ fontSize: 12, lineHeight: 1.6 }}
-                    >
-                      {item.reason || "商品との相性が高い背景です"}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          ) : null}
-        </div>
-      ) : null}
 
 <div className="mt-3 flex flex-wrap gap-2">
   <Btn
@@ -2339,6 +2116,7 @@ onClick={async () => {
     onClick={() => setActivePreviewTab("final")}
   />
 </div>
+
 
 <div className="mt-3 flex gap-2 flex-wrap items-center">
   <ModeButton
@@ -2398,8 +2176,9 @@ onClick={async () => {
   </Btn>
 </div>
 
-      {activePreviewTab === "edit" && (
-        <div className="mt-3 overflow-hidden rounded-2xl border border-white/10 bg-black/25">
+      <div className="placementPreviewFixed">
+        {activePreviewTab === "edit" && (
+          <div className="mt-3 overflow-hidden rounded-2xl border border-white/10 bg-black/25">
           <div
             className="border-b border-white/10 px-3 py-2 text-white/72"
             style={{ fontSize: 12 }}
@@ -2554,9 +2333,11 @@ onClick={async () => {
             />
           </div>
         </div>
-      )}
+        )}
+      </div>
 
-      {activePreviewTab === "final" && (
+      <div className="placementControlScroll">
+        {activePreviewTab === "final" && (
         <div className="mt-3 rounded-2xl border border-white/10 bg-black/25 overflow-hidden">
           <div
             className="border-b border-white/10 px-3 py-2 text-white/72"
@@ -2643,6 +2424,162 @@ onClick={async () => {
           </div>
         </div>
       )}
+
+
+            <div className="mt-3 rounded-2xl border border-white/10 bg-black/15 p-3">
+        <div className="flex items-center justify-between gap-3">
+          <div className="text-white/72" style={{ fontSize: 12 }}>
+            背景選択
+          </div>
+
+          <div className="flex items-center gap-2">
+            <SmallBadge
+              active={activePhotoMode === TEMPLATE_MODE}
+              label={activePhotoMode === TEMPLATE_MODE ? "現在：テンプレ背景" : "テンプレ背景"}
+            />
+            <SmallBadge
+              active={activePhotoMode === AI_BG_MODE}
+              label={activePhotoMode === AI_BG_MODE ? "現在：AI背景" : "AI背景"}
+            />
+          </div>
+        </div>
+
+        <div className="mt-2 text-white/50" style={{ fontSize: 11, lineHeight: 1.6 }}>
+          背景をクリックすると、その背景が編集対象になり、編集プレビューへ即反映されます。
+        </div>
+
+        <div className="mt-3 flex flex-col gap-3">
+          <div>
+            <div className="mb-2 text-white/60" style={{ fontSize: 11 }}>
+              テンプレ背景
+            </div>
+
+            {(templateBgUrls || []).length > 0 ? (
+              <div className="flex max-h-[180px] flex-col gap-2 overflow-auto pr-1">
+                {(templateBgUrls || []).slice(0, 8).map((u, i) => {
+                  const isCurrent = String(templateBgUrl || "").trim() === String(u || "").trim();
+                  const recommendedItem = templateRecommended.find((item) => item.url === u);
+
+                  return (
+                    <button
+                      key={`${u}-${i}`}
+                      type="button"
+                      disabled={busy}
+                      onClick={async () => {
+                        await onSelectTemplateBg?.(u);
+                        await onChangePhotoMode(TEMPLATE_MODE);
+                        setIsBackgroundLocked(false);
+                        setEditingStep("background");
+                        setActivePreviewTab("edit");
+                      }}
+                      className="rounded-xl border px-3 py-3 text-left transition hover:bg-white/5"
+                      style={{
+                        borderColor: isCurrent
+                          ? "rgba(255,255,255,0.34)"
+                          : "rgba(255,255,255,0.10)",
+                        background: isCurrent
+                          ? "rgba(255,255,255,0.06)"
+                          : "rgba(0,0,0,0.15)",
+                        color: "rgba(255,255,255,0.82)",
+                      }}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="font-semibold" style={{ fontSize: 12 }}>
+                          テンプレ背景 {i + 1}
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2">
+                          {recommendedItem ? (
+                            <SmallBadge active={false} label="おすすめ候補" />
+                          ) : null}
+                          <SmallBadge
+                            active={isCurrent}
+                            label={isCurrent ? "選択中" : "未選択"}
+                          />
+                        </div>
+                      </div>
+
+                      {recommendedItem?.reason ? (
+                        <div
+                          className="mt-2 rounded-lg border border-white/10 bg-black/20 px-2 py-2 text-white/60"
+                          style={{ fontSize: 11, lineHeight: 1.5 }}
+                        >
+                          理由：{recommendedItem.reason}
+                        </div>
+                      ) : null}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div
+                className="rounded-xl border border-white/10 bg-black/20 px-3 py-3 text-white/55"
+                style={{ fontSize: 12, lineHeight: 1.6 }}
+              >
+                テンプレ背景がありません
+              </div>
+            )}
+          </div>
+
+          <div>
+            <div className="mb-2 text-white/60" style={{ fontSize: 11 }}>
+              AI背景
+            </div>
+
+            {(aiBgUrls || []).length > 0 ? (
+              <div className="flex max-h-[180px] flex-col gap-2 overflow-auto pr-1">
+                {(aiBgUrls || []).slice(0, 8).map((u, i) => {
+                  const isCurrent = currentAiBgUrl === String(u || "").trim();
+
+                  return (
+                    <button
+                      key={`${u}-${i}`}
+                      type="button"
+                      disabled={busy}
+                      onClick={async () => {
+                        await onSelectAiBg?.(u);
+                        await onChangePhotoMode(AI_BG_MODE);
+                        setIsBackgroundLocked(false);
+                        setEditingStep("background");
+                        setActivePreviewTab("edit");
+                      }}
+                      className="rounded-xl border px-3 py-3 text-left transition hover:bg-white/5"
+                      style={{
+                        borderColor: isCurrent
+                          ? "rgba(255,255,255,0.34)"
+                          : "rgba(255,255,255,0.10)",
+                        background: isCurrent
+                          ? "rgba(255,255,255,0.06)"
+                          : "rgba(0,0,0,0.15)",
+                        color: "rgba(255,255,255,0.82)",
+                      }}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="font-semibold" style={{ fontSize: 12 }}>
+                          AI背景 {i + 1}
+                        </div>
+
+                        <SmallBadge
+                          active={isCurrent}
+                          label={isCurrent ? "選択中" : "未選択"}
+                        />
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div
+                className="rounded-xl border border-white/10 bg-black/20 px-3 py-3 text-white/55"
+                style={{ fontSize: 12, lineHeight: 1.6 }}
+              >
+                AI背景がありません
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
 
       <div className="mt-3 rounded-2xl border border-white/10 bg-black/15 p-3">
         <div className="text-white/72 mb-2" style={{ fontSize: 12 }}>
@@ -3014,6 +2951,7 @@ disabled={busy || !canLiveEdit || !isBackgroundLocked || editingStep !== "shadow
 <div className="mt-1">
   まず①背景で位置を決めて「座標固定」を押してください。その後に②商品、③影を調整し、最後に「④合成」で更新します。
 </div>
+      </div>
       </div>
     </div>
   );

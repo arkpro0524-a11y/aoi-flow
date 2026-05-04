@@ -524,6 +524,7 @@ export default function NewDraftPage() {
                       draftId={c.draftId}
                       normalizeVideoSize={normalizeVideoSize}
                       splitKeywords={splitKeywords}
+                      onSaveSourceProductVideoToDraft={c.saveSourceProductVideoToDraft}
                       onSaveNonAiVideoToDraft={c.saveNonAiVideoToDraft}
                       onBurnVideo={c.burnVideo}
                       onSaveDraft={c.saveDraft}

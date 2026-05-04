@@ -257,6 +257,7 @@ export type CmVideo = {
 
 export type SellOutcomeStatus =
   | "unknown"
+  | "posted"
   | "listed"
   | "sold"
   | "unsold"

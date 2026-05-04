@@ -1500,9 +1500,11 @@ async function openSellCheckForCurrentDraft() {
     syncStoryImagesFromStorage:
       (imageActions as any).syncStoryImagesFromStorage,
 
-    syncVideosFromStorage: videoActions.syncVideosFromStorage,
-    saveNonAiVideoToDraft: videoActions.saveNonAiVideoToDraft,
-    burnVideo: videoActions.burnVideo,
+syncVideosFromStorage: videoActions.syncVideosFromStorage,
+saveSourceProductVideoToDraft: videoActions.saveSourceProductVideoToDraft,
+saveNonAiVideoToDraft: videoActions.saveNonAiVideoToDraft,
+extractProductVideoClip: videoActions.extractProductVideoClip,
+burnVideo: videoActions.burnVideo,
 
     setPhase,
     handleSelectVento,

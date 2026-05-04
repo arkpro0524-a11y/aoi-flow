@@ -20,9 +20,9 @@ type Props = {
 
   preset: {
     id: string;
-    major: string;
-    middle: string;
-    minor: string;
+    major?: string;
+    middle?: string;
+    minor?: string;
     tempo: MotionCharacter["tempo"];
     reveal: MotionCharacter["reveal"];
     intensity: MotionCharacter["intensity"];
@@ -30,27 +30,35 @@ type Props = {
     rhythm: MotionCharacter["rhythm"];
   } | null;
 
-  /**
-   * 今回追加
-   * - 現在どの画像を使うのか UI に明示する
-   */
   sourceImageUrl?: string;
   sourceLabel?: string;
-
   baseImageUrl?: string;
+
+  backgroundImageUrl?: string;
+  backgroundLabel?: string;
+
+  sourceVideoUrl?: string;
+  sourceVideoLabel?: string;
 
   seconds: 5 | 10;
   quality: "standard" | "high";
   size: string;
 
   onSave: (url: string) => void | Promise<void>;
+
+  onSaveSourceVideo?: (args: {
+    url: string;
+    path: string;
+  }) => void | Promise<void>;
 };
 
 function parseSize(size: string): { w: number; h: number } {
   const m = String(size || "").match(/^(\d+)\s*x\s*(\d+)$/i);
-  const w = m ? Math.max(1, Number(m[1])) : 1024;
-  const h = m ? Math.max(1, Number(m[2])) : 1792;
-  return { w, h };
+
+  return {
+    w: m ? Math.max(1, Number(m[1])) : 720,
+    h: m ? Math.max(1, Number(m[2])) : 1280,
+  };
 }
 
 function safeStringify(v: any) {
@@ -65,30 +73,88 @@ export default function NonAiVideoActions(props: Props) {
   const [localBusy, setLocalBusy] = useState(false);
   const [msg, setMsg] = useState("");
 
-  /**
-   * sourceImageUrl が優先
-   * 無ければ baseImageUrl へフォールバック
-   */
   const inputImageUrl = String(props.sourceImageUrl || props.baseImageUrl || "").trim();
+  const inputVideoUrl = String(props.sourceVideoUrl || "").trim();
+  const backgroundImageUrl = String(props.backgroundImageUrl || "").trim();
 
-  const canRun = useMemo(() => {
+  const canRunStaticVideo = useMemo(() => {
     if (props.busy) return false;
     if (localBusy) return false;
     if (!props.uid) return false;
     if (!props.draftId) return false;
     if (!props.preset?.id) return false;
     if (!inputImageUrl) return false;
-
-    /**
-     * 以前は vision 必須だったが、
-     * 商品確認動画では vision 未入力でも動けた方が自然
-     * そのため今回この制約は外す
-     */
     return true;
   }, [props.busy, localBusy, props.uid, props.draftId, props.preset?.id, inputImageUrl]);
 
-  async function run() {
-    if (!canRun) {
+  async function getToken() {
+    const token = await auth.currentUser?.getIdToken(true);
+
+    if (!token) {
+      throw new Error("認証トークン取得に失敗しました。再ログインしてください");
+    }
+
+    return token;
+  }
+
+  async function uploadProductVideo(file: File) {
+    props.setReason("");
+    setMsg("");
+
+    if (!props.uid) {
+      props.setReason("ログイン確認中です");
+      return;
+    }
+
+    if (!props.draftId) {
+      props.setReason("draftId がありません。先に保存してください");
+      return;
+    }
+
+    setLocalBusy(true);
+
+    try {
+      const token = await getToken();
+
+      const fd = new FormData();
+      fd.append("draftId", props.draftId);
+      fd.append("kind", "source");
+      fd.append("file", file, file.name || `source_${Date.now()}.mp4`);
+
+      const res = await fetch("/api/upload-video-webm", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        body: fd,
+      });
+
+      const j: any = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        const detail = j?.detail ? ` / detail: ${safeStringify(j.detail)}` : "";
+        throw new Error((j?.error || "商品動画アップロードに失敗しました") + detail);
+      }
+
+      const url = String(j?.url || j?.videoUrl || "").trim();
+      const path = String(j?.path || "").trim();
+
+      if (!url || !path) {
+        throw new Error("アップロードは成功しましたが url/path が空です");
+      }
+
+      await props.onSaveSourceVideo?.({ url, path });
+
+      setMsg("✅ 商品撮影動画を保存しました");
+    } catch (e: any) {
+      props.setReason(e?.message || "商品撮影動画の保存に失敗しました");
+    } finally {
+      setLocalBusy(false);
+    }
+  }
+
+  async function runStaticVideo() {
+    if (!canRunStaticVideo) {
       if (!props.uid) {
         props.setReason("ログイン確認中です");
       } else if (!props.draftId) {
@@ -100,6 +166,7 @@ export default function NonAiVideoActions(props: Props) {
       } else {
         props.setReason("実行できません。状態を確認してください");
       }
+
       return;
     }
 
@@ -108,11 +175,7 @@ export default function NonAiVideoActions(props: Props) {
     setLocalBusy(true);
 
     try {
-      const token = await auth.currentUser?.getIdToken(true);
-      if (!token) {
-        props.setReason("認証トークン取得に失敗しました。再ログインしてください");
-        return;
-      }
+      const token = await getToken();
 
       const motion: MotionCharacter = {
         tempo: props.preset!.tempo,
@@ -124,11 +187,6 @@ export default function NonAiVideoActions(props: Props) {
 
       const { w, h } = parseSize(props.size);
 
-      /**
-       * 1) クライアントで non-ai WEBM を生成
-       * - ここでは「壊れない制御動画」を作る
-       * - 派手な変形や生成はしない
-       */
       const blob = await generateNonAiVideoWebm({
         primary: inputImageUrl,
         materials: [],
@@ -142,11 +200,9 @@ export default function NonAiVideoActions(props: Props) {
         return;
       }
 
-      /**
-       * 2) 一旦アップロード
-       */
       const fd = new FormData();
       fd.append("draftId", props.draftId!);
+      fd.append("kind", "generated");
       fd.append("seconds", String(props.seconds));
       fd.append("buttonId", String(props.preset!.id));
       fd.append("engine", "non-ai");
@@ -167,14 +223,12 @@ export default function NonAiVideoActions(props: Props) {
       }
 
       const webmPath = String(upj?.path || "").trim();
+
       if (!webmPath) {
         props.setReason("アップロードは成功しましたが path が空です");
         return;
       }
 
-      /**
-       * 3) サーバで mp4 化
-       */
       const fin = await fetch("/api/finalize-nonai-mp4", {
         method: "POST",
         headers: {
@@ -205,12 +259,9 @@ export default function NonAiVideoActions(props: Props) {
         return;
       }
 
-      /**
-       * 4) draft 保存
-       */
       await props.onSave(mp4Url);
 
-      setMsg(`✅ 非AI動画(mp4)が完成しました（${props.seconds}秒）`);
+      setMsg(`✅ 静止画ベース動画(mp4)が完成しました（${props.seconds}秒）`);
     } catch (e: any) {
       props.setReason(e?.message || "非AI動画の生成に失敗しました");
     } finally {
@@ -219,32 +270,75 @@ export default function NonAiVideoActions(props: Props) {
   }
 
   return (
-    <div className="rounded-2xl border border-white/10 bg-black/20 p-3 mt-2">
-      <div className="text-white/85 font-black text-xs">非AI動画（商品確認向け）</div>
+    <div className="mt-2 rounded-2xl border border-white/10 bg-black/20 p-3">
+      <div className="text-white/85 font-black text-xs">商品動画制作</div>
 
       <div className="mt-2 text-white/60 text-xs" style={{ lineHeight: 1.6 }}>
         尺：{props.seconds === 10 ? "10秒" : "5秒"} / 品質：
         {props.quality === "high" ? "高品質" : "標準"} / サイズ：{props.size}
       </div>
 
-      <div className="mt-2 text-white/60 text-xs" style={{ lineHeight: 1.6 }}>
-        使用画像：{props.sourceLabel || "自動選択"}
+      <div className="mt-3 rounded-xl border border-cyan-400/20 bg-black/20 p-3">
+        <div className="text-cyan-200 text-xs font-black">新方式：商品を撮った動画から作る</div>
+
+        <div className="mt-2 text-white/60 text-xs" style={{ lineHeight: 1.6 }}>
+          商品対象物の動画をアップロードします。背景合成は上部の「動画切り抜き（背景合成）」ボタンから実行します。
+        </div>
+
+        <div className="mt-3">
+          <input
+            type="file"
+            accept="video/mp4,video/webm,video/quicktime,video/*"
+            disabled={props.busy || localBusy}
+            onChange={(e) => {
+              const file = e.currentTarget.files?.[0];
+              e.currentTarget.value = "";
+              if (!file) return;
+              void uploadProductVideo(file);
+            }}
+            className="block w-full text-xs text-white/70 file:mr-3 file:rounded-full file:border-0 file:bg-white file:px-4 file:py-2 file:text-xs file:font-black file:text-black disabled:opacity-40"
+          />
+        </div>
+
+        <div className="mt-3 text-white/60 text-xs" style={{ lineHeight: 1.6 }}>
+          商品撮影動画：{inputVideoUrl ? "選択済み" : "未選択"}
+        </div>
+
+        <div className="mt-1 text-white/45 text-[11px]">
+          {inputVideoUrl ? "保存済みの商品撮影動画を使用します" : "まだ商品撮影動画がありません"}
+        </div>
+
+        <div className="mt-3 text-white/60 text-xs" style={{ lineHeight: 1.6 }}>
+          合成背景：{backgroundImageUrl ? props.backgroundLabel || "選択済み" : "未選択"}
+        </div>
+
+        <div className="mt-1 text-white/45 text-[11px]">
+          {backgroundImageUrl ? "選択中の背景画像を使用します" : "まだ背景画像がありません"}
+        </div>
       </div>
 
-      <div className="mt-1 text-white/45 text-[11px] break-all">
-        {inputImageUrl || "まだ画像がありません"}
-      </div>
+      <div className="mt-3 rounded-xl border border-white/10 bg-black/15 p-3">
+        <div className="text-white/75 text-xs font-black">従来方式：静止画から安全に動画化</div>
 
-      <div className="mt-3 flex gap-2">
-        <button
-          type="button"
-          disabled={!canRun}
-          onClick={run}
-          className="rounded-full px-5 py-2 text-xs font-black bg-white text-black disabled:opacity-40"
-          title="現在の尺・品質・サイズ設定で非AI商品動画を生成します"
-        >
-          ▶ 非AIで生成（{props.seconds === 10 ? "10秒" : "5秒"} / mp4）
-        </button>
+        <div className="mt-2 text-white/60 text-xs" style={{ lineHeight: 1.6 }}>
+          使用画像：{inputImageUrl ? props.sourceLabel || "選択済み" : "未選択"}
+        </div>
+
+        <div className="mt-1 text-white/45 text-[11px]">
+          {inputImageUrl ? "選択中の静止画を使用します" : "まだ画像がありません"}
+        </div>
+
+        <div className="mt-3">
+          <button
+            type="button"
+            disabled={!canRunStaticVideo}
+            onClick={() => void runStaticVideo()}
+            className="rounded-full bg-white px-5 py-2 text-xs font-black text-black disabled:opacity-40"
+            title="現在の尺・品質・サイズ設定で静止画ベースの商品動画を生成します"
+          >
+            ▶ 静止画から生成（{props.seconds === 10 ? "10秒" : "5秒"} / mp4）
+          </button>
+        </div>
       </div>
 
       {props.reason ? <div className="mt-2 text-xs text-white/70">{props.reason}</div> : null}

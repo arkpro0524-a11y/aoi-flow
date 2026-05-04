@@ -118,6 +118,7 @@ function normalizeStringUrlArray(input: unknown, limit = 10): string[] {
 
 function normalizeOutcomeStatus(v: unknown): SellOutcomeStatus {
   if (v === "listed") return "listed";
+  if (v === "posted") return "posted";
   if (v === "sold") return "sold";
   if (v === "unsold") return "unsold";
   if (v === "stopped") return "stopped";

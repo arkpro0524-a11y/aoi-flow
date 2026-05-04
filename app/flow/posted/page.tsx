@@ -48,21 +48,19 @@ const UI = {
 function resolveListImageUrl(data: DocumentData): string | undefined {
   const compositeImageUrl =
     typeof data.compositeImageUrl === "string" ? data.compositeImageUrl.trim() : "";
-
   if (compositeImageUrl) return compositeImageUrl;
 
   const aiImageUrl = typeof data.aiImageUrl === "string" ? data.aiImageUrl.trim() : "";
-
   if (aiImageUrl) return aiImageUrl;
 
   const imageUrl = typeof data.imageUrl === "string" ? data.imageUrl.trim() : "";
-
   if (imageUrl) return imageUrl;
 
   return undefined;
 }
 
 function normalizeOutcomeStatus(v: unknown): SellOutcomeStatus {
+  if (v === "posted") return "posted";
   if (v === "listed") return "listed";
   if (v === "sold") return "sold";
   if (v === "unsold") return "unsold";
@@ -127,6 +125,7 @@ function num(v?: number) {
 }
 
 function statusLabel(status: SellOutcomeStatus) {
+  if (status === "posted") return "投稿";
   if (status === "listed") return "出品中";
   if (status === "sold") return "売却済み";
   if (status === "unsold") return "未売却";
@@ -145,7 +144,6 @@ function OutcomeEditor(props: {
   onError: (message: string) => void;
 }) {
   const { draft, uid, onSaved, onError } = props;
-
   const current = draft.outcome;
 
   const [open, setOpen] = useState(false);
@@ -265,6 +263,7 @@ function OutcomeEditor(props: {
                 className="mt-1 w-full rounded-xl border border-white/10 bg-black/45 px-3 py-2 text-white outline-none"
               >
                 <option value="unknown">未入力</option>
+                <option value="posted">投稿</option>
                 <option value="listed">出品中</option>
                 <option value="sold">売却済み</option>
                 <option value="unsold">未売却</option>
@@ -463,11 +462,16 @@ export default function PostedPage() {
           border: 1px solid rgba(255, 255, 255, 0.1);
           background: rgba(0, 0, 0, 0.25);
           padding: ${UI.cardPad}px;
+          transition: 0.15s ease;
+        }
+
+        .postedCard:hover {
+          background: rgba(0, 0, 0, 0.3);
         }
 
         .postedGrid {
           display: grid;
-          grid-template-columns: ${UI.brandW}px ${UI.thumbBox}px 1fr;
+          grid-template-columns: ${UI.brandW}px ${UI.thumbBox}px 1fr 24px;
           gap: ${UI.colGap}px;
           align-items: center;
         }
@@ -476,6 +480,10 @@ export default function PostedPage() {
           .postedGrid {
             grid-template-columns: 1fr;
             align-items: stretch;
+          }
+
+          .postedArrow {
+            display: none;
           }
         }
       `}</style>
@@ -510,80 +518,79 @@ export default function PostedPage() {
             <div className="space-y-3">
               {posted.map((d) => (
                 <div key={d.id} className="postedCard">
-                  <div className="postedGrid">
-                    <div
-                      className="flex items-center justify-center rounded-xl border border-black/25 bg-gradient-to-b from-[#f2f2f2] via-[#cfcfcf] to-[#9b9b9b] shadow-[inset_0_1px_0_rgba(255,255,255,0.7),inset_0_-10px_22px_rgba(0,0,0,0.25),0_8px_18px_rgba(0,0,0,0.25)]"
-                      style={{ height: UI.plateH }}
-                    >
-                      <span
-                        style={{
-                          fontSize: UI.brandPx,
-                          fontWeight: 900,
-                          letterSpacing: "0.30em",
-                          color: "#000",
-                        }}
-                      >
-                        {(d.brand || "vento").toUpperCase()}
-                      </span>
-                    </div>
-
-                    <div
-                      className="flex items-center justify-center overflow-hidden rounded-xl bg-white/6 ring-1 ring-white/10"
-                      style={{
-                        width: "100%",
-                        maxWidth: UI.thumbBox,
-                        height: UI.thumbBox,
-                        position: "relative",
-                      }}
-                    >
-                      {d.imageUrl ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={d.imageUrl}
-                          alt="thumb"
-                          draggable={false}
-                          style={{
-                            width: "100%",
-                            height: "100%",
-                            objectFit: "contain",
-                            display: "block",
-                          }}
-                        />
-                      ) : (
-                        <div className="text-xs text-white/40">NO IMAGE</div>
-                      )}
-                    </div>
-
-                    <div style={{ minWidth: 0 }}>
+                  <Link
+                    href={`/flow/drafts/new?id=${encodeURIComponent(d.id)}`}
+                    className="block no-underline text-white/90 visited:text-white/90 hover:text-white"
+                  >
+                    <div className="postedGrid">
                       <div
+                        className="flex items-center justify-center rounded-xl border border-black/25 bg-gradient-to-b from-[#f2f2f2] via-[#cfcfcf] to-[#9b9b9b] shadow-[inset_0_1px_0_rgba(255,255,255,0.7),inset_0_-10px_22px_rgba(0,0,0,0.25),0_8px_18px_rgba(0,0,0,0.25)]"
+                        style={{ height: UI.plateH }}
+                      >
+                        <span
+                          style={{
+                            fontSize: UI.brandPx,
+                            fontWeight: 900,
+                            letterSpacing: "0.30em",
+                            color: "#000",
+                          }}
+                        >
+                          {(d.brand || "vento").toUpperCase()}
+                        </span>
+                      </div>
+
+                      <div
+                        className="flex items-center justify-center overflow-hidden rounded-xl bg-white/6 ring-1 ring-white/10"
                         style={{
-                          fontSize: UI.titlePx,
-                          fontWeight: 900,
-                          lineHeight: 1.15,
-                          color: "rgba(255,255,255,0.95)",
-                          whiteSpace: "nowrap",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
+                          width: "100%",
+                          maxWidth: UI.thumbBox,
+                          height: UI.thumbBox,
+                          position: "relative",
                         }}
                       >
-                        {safeTitle(d)}
+                        {d.imageUrl ? (
+                          <img
+                            src={d.imageUrl}
+                            alt="thumb"
+                            draggable={false}
+                            style={{
+                              width: "100%",
+                              height: "100%",
+                              objectFit: "contain",
+                              display: "block",
+                            }}
+                          />
+                        ) : (
+                          <div className="text-xs text-white/40">NO IMAGE</div>
+                        )}
                       </div>
 
-                      <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-white/55">
-                        <span>投稿済み（POSTED）</span>
-                        <span>状態：{statusLabel(d.outcome?.status ?? "unknown")}</span>
-                      </div>
-
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        <Link
-                          href={`/flow/drafts/new?id=${encodeURIComponent(d.id)}`}
-                          className="rounded-full border border-white/15 bg-white/10 px-4 py-2 text-xs font-black text-white"
+                      <div style={{ minWidth: 0 }}>
+                        <div
+                          style={{
+                            fontSize: UI.titlePx,
+                            fontWeight: 900,
+                            lineHeight: 1.15,
+                            color: "rgba(255,255,255,0.95)",
+                            whiteSpace: "nowrap",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                          }}
                         >
-                          編集画面へ
-                        </Link>
+                          {safeTitle(d)}
+                        </div>
+
+                        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-white/55">
+                          <span>投稿済み（POSTED）</span>
+                          <span>状態：{statusLabel(d.outcome?.status ?? "unknown")}</span>
+                        </div>
+                      </div>
+
+                      <div className="postedArrow text-xl text-white/35 transition group-hover:text-white/80">
+                        →
                       </div>
                     </div>
-                  </div>
+                  </Link>
 
                   <div className="mt-3">
                     <OutcomeEditor
