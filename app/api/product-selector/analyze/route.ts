@@ -123,15 +123,42 @@ export async function POST(req: Request) {
 
     try {
       const db = getAdminDb();
+      const createdAt = new Date().toISOString();
       const ref = await db.collection("product_selector_logs").add({
         uid,
         input,
         result,
         usedAi: true,
         theoryVersion: result.theoryVersion,
-        createdAt: new Date().toISOString(),
+        createdAt,
       });
       savedLogId = ref.id;
+
+      // PRODUCT SELECTOR専用の観測データです。
+      // SELL CHECKの売却済み学習データとは分けて保存し、
+      // 「スクショから見えた市場の空気」「今見る候補」「理論メモ」を後から育てられる形にします。
+      await db.collection("product_selector_market_observations").add({
+        uid,
+        sourceLogId: ref.id,
+        input,
+        observationFacts: result.observationFacts || [],
+        buyCandidates: result.buyCandidates || [],
+        learningSignals: result.learningSignals || [],
+        searchKeywords: result.searchKeywords || [],
+        createdAt,
+      });
+
+      await db.collection("product_selector_theory_notes").add({
+        uid,
+        sourceLogId: ref.id,
+        theoryVersion: result.theoryVersion,
+        observationSummary: result.observationSummary,
+        whyNow: result.whyNow,
+        notYetReason: result.notYetReason,
+        evidence: result.evidence || [],
+        aiWarnings: result.aiWarnings || [],
+        createdAt,
+      });
     } catch (logError) {
       console.warn("[PRODUCT_SELECTOR] log save failed", logError);
     }

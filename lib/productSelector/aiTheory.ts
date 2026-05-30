@@ -18,6 +18,8 @@ import type {
   ProductSelectorAxis,
   ProductSelectorDecision,
   ProductSelectorGenreCandidate,
+  ProductSelectorBuyCandidate,
+  ProductSelectorObservationFact,
   ProductSelectorInput,
   ProductSelectorResult,
 } from "@/lib/productSelector/scoring";
@@ -154,6 +156,20 @@ decision は touch_now / research_first / watch_only / avoid_now のいずれか
   "nextActions": [],
   "sellCheckBridge": [],
   "searchKeywords": [],
+  "buyCandidates": [
+    {
+      "name": "",
+      "score": 0,
+      "action": "research_first",
+      "reason": "",
+      "evidence": [],
+      "sellCheckKeywords": []
+    }
+  ],
+  "observationFacts": [
+    { "label": "", "value": "", "confidence": 0 }
+  ],
+  "learningSignals": [],
   "evidence": [
     { "label": "", "evidence": "", "confidence": 0 }
   ],
@@ -238,6 +254,68 @@ function normalizeCandidates(v: unknown, fallback: ProductSelectorGenreCandidate
   return out.length > 0 ? out : fallback;
 }
 
+function normalizeBuyCandidates(v: unknown, fallback: ProductSelectorBuyCandidate[]): ProductSelectorBuyCandidate[] {
+  const rows = Array.isArray(v) ? v : [];
+
+  const out = rows
+    .map((x) => {
+      if (!x || typeof x !== "object") return null;
+      const row = x as {
+        name?: unknown;
+        score?: unknown;
+        action?: unknown;
+        reason?: unknown;
+        evidence?: unknown;
+        sellCheckKeywords?: unknown;
+      };
+
+      const name = safeString(row.name);
+      if (!name) return null;
+
+      const actionText = safeString(row.action);
+      const action: ProductSelectorBuyCandidate["action"] =
+        actionText === "buy_candidate" || actionText === "research_first" || actionText === "watch_only"
+          ? actionText
+          : "research_first";
+
+      return {
+        name,
+        score: safeNumber(row.score, 45),
+        action,
+        reason: safeString(row.reason) || "スクショ/観測情報から候補として抽出しました。",
+        evidence: safeStringArray(row.evidence),
+        sellCheckKeywords: safeStringArray(row.sellCheckKeywords),
+      };
+    })
+    .filter((x): x is ProductSelectorBuyCandidate => Boolean(x))
+    .slice(0, 6);
+
+  return out.length > 0 ? out : fallback;
+}
+
+function normalizeObservationFacts(v: unknown, fallback: ProductSelectorObservationFact[]): ProductSelectorObservationFact[] {
+  const rows = Array.isArray(v) ? v : [];
+
+  const out = rows
+    .map((x) => {
+      if (!x || typeof x !== "object") return null;
+      const row = x as { label?: unknown; value?: unknown; confidence?: unknown };
+      const label = safeString(row.label);
+      const value = safeString(row.value);
+      if (!label && !value) return null;
+
+      return {
+        label: label || "観測情報",
+        value: value || "未確定",
+        confidence: safeNumber(row.confidence, 50),
+      };
+    })
+    .filter((x): x is ProductSelectorObservationFact => Boolean(x))
+    .slice(0, 8);
+
+  return out.length > 0 ? out : fallback;
+}
+
 function normalizeEvidence(v: unknown): ProductSelectorAiFinding[] {
   if (!Array.isArray(v)) return [];
 
@@ -298,6 +376,12 @@ export function normalizeProductSelectorAiResult(
       safeStringArray(obj.searchKeywords).length > 0
         ? safeStringArray(obj.searchKeywords)
         : fallback.searchKeywords,
+    buyCandidates: normalizeBuyCandidates(obj.buyCandidates, fallback.buyCandidates),
+    observationFacts: normalizeObservationFacts(obj.observationFacts, fallback.observationFacts),
+    learningSignals:
+      safeStringArray(obj.learningSignals).length > 0
+        ? safeStringArray(obj.learningSignals)
+        : fallback.learningSignals,
     evidence: normalizeEvidence(obj.evidence),
     aiWarnings: safeStringArray(obj.aiWarnings),
   };

@@ -8,6 +8,7 @@ import {
   evaluateProductCandidate,
   type ProductSelectorAxis,
   type ProductSelectorGenreCandidate,
+  type ProductSelectorBuyCandidate,
   type ProductSelectorInput,
   type ProductSelectorResult,
 } from "@/lib/productSelector/scoring";
@@ -38,6 +39,49 @@ function scoreTone(score: number): string {
   if (score >= 60) return "border-sky-300/35 bg-sky-300/10 text-sky-50";
   if (score >= 45) return "border-amber-300/35 bg-amber-300/10 text-amber-50";
   return "border-rose-300/35 bg-rose-300/10 text-rose-50";
+}
+
+function buyActionTone(action: ProductSelectorBuyCandidate["action"]): string {
+  if (action === "buy_candidate") return "border-emerald-300/35 bg-emerald-300/10 text-emerald-50";
+  if (action === "research_first") return "border-sky-300/35 bg-sky-300/10 text-sky-50";
+  return "border-amber-300/35 bg-amber-300/10 text-amber-50";
+}
+
+function buyActionLabel(action: ProductSelectorBuyCandidate["action"]): string {
+  if (action === "buy_candidate") return "今買う候補";
+  if (action === "research_first") return "先に確認";
+  return "観測のみ";
+}
+
+function buildSellCheckHrefFromBuyCandidate(args: {
+  input: ProductSelectorInput;
+  candidate: ProductSelectorBuyCandidate;
+  searchKeywords?: string[];
+}): string {
+  const { input, candidate, searchKeywords = [] } = args;
+  const keywords = uniqKeepOrder([
+    ...candidate.sellCheckKeywords,
+    ...searchKeywords,
+    input.keywords || "",
+    candidate.name,
+  ]).join(" ");
+
+  const memoParts = [
+    `PRODUCT SELECTOR即判定：${buyActionLabel(candidate.action)} / ${candidate.score}点`,
+    candidate.reason ? `理由：${candidate.reason}` : "",
+    candidate.evidence.length > 0 ? `根拠：${candidate.evidence.join(" / ")}` : "",
+    input.sourceText ? `観測テキスト：${input.sourceText}` : "",
+    input.visualNotes ? `視覚メモ：${input.visualNotes}` : "",
+  ].filter(Boolean);
+
+  const params = new URLSearchParams();
+  params.set("source", "product-selector-buy-candidate");
+  params.set("title", candidate.name);
+  if (keywords) params.set("keywords", keywords);
+  if (memoParts.length > 0) params.set("memo", memoParts.join("\n"));
+  params.set("category", input.category || guessSellCheckCategory([candidate.name, keywords, input.sourceText, input.visualNotes].join(" ")));
+
+  return `/flow/sell-check?${params.toString()}`;
 }
 
 function decisionTone(decision: ProductSelectorResult["decision"]): string {
@@ -455,6 +499,81 @@ function ResultPanel({ result, input, hasInput }: { result: ProductSelectorResul
         </div>
       </div>
 
+      <div className="rounded-3xl border border-emerald-200/15 bg-emerald-200/[0.055] p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="text-lg font-black text-white">今このスクショから見るなら</h3>
+            <p className="mt-2 text-sm font-bold leading-7 text-white/58">
+              ここは最終購入確定ではありません。スクショ/観測情報から、今見るべき候補を即時に出し、最終価格判断はSELL CHECKへ渡します。
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-4 grid gap-4 lg:grid-cols-2">
+          {result.buyCandidates.map((candidate) => (
+            <div key={`${candidate.name}-${candidate.score}`} className="rounded-3xl border border-white/10 bg-black/25 p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className={`inline-flex rounded-full border px-3 py-1 text-xs font-black ${buyActionTone(candidate.action)}`}>
+                    {buyActionLabel(candidate.action)}
+                  </div>
+                  <h4 className="mt-3 text-lg font-black text-white">{candidate.name}</h4>
+                </div>
+                <div className={`rounded-full border px-3 py-1 text-xs font-black ${scoreTone(candidate.score)}`}>
+                  {candidate.score}
+                </div>
+              </div>
+
+              <p className="mt-3 text-sm font-bold leading-7 text-white/68">{candidate.reason}</p>
+
+              {candidate.evidence.length > 0 ? (
+                <ul className="mt-3 space-y-1 text-xs font-bold leading-6 text-white/55">
+                  {candidate.evidence.map((evidence) => (
+                    <li key={evidence}>・{evidence}</li>
+                  ))}
+                </ul>
+              ) : null}
+
+              <Link
+                href={buildSellCheckHrefFromBuyCandidate({ input, candidate, searchKeywords: result.searchKeywords })}
+                className="mt-4 inline-flex rounded-full border border-cyan-200/25 bg-cyan-200/10 px-4 py-2 text-xs font-black text-cyan-50 no-underline transition hover:bg-cyan-200/15"
+              >
+                この候補をSELL CHECKへ渡す
+              </Link>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <div className="rounded-3xl border border-white/10 bg-white/[0.05] p-5">
+          <h3 className="text-lg font-black text-white">観測データ化</h3>
+          <p className="mt-2 text-xs font-bold leading-6 text-white/48">
+            スクショから取れた市場観測を、通常のSELL CHECK学習データとは別に扱います。
+          </p>
+          <div className="mt-4 space-y-2">
+            {result.observationFacts.map((fact) => (
+              <div key={`${fact.label}-${fact.value}`} className="rounded-2xl border border-white/10 bg-black/20 p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-xs font-black text-white/50">{fact.label}</span>
+                  <span className="text-xs font-black text-white/50">信頼 {fact.confidence}/100</span>
+                </div>
+                <p className="mt-1 text-sm font-bold leading-6 text-white/72">{fact.value}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="rounded-3xl border border-white/10 bg-white/[0.05] p-5">
+          <h3 className="text-lg font-black text-white">理論学習メモ</h3>
+          <ul className="mt-4 space-y-2 text-sm font-bold leading-7 text-white/72">
+            {result.learningSignals.map((signal) => (
+              <li key={signal}>・{signal}</li>
+            ))}
+          </ul>
+        </div>
+      </div>
+
       {isAiResult(result) ? (
         <div className="rounded-3xl border border-cyan-200/20 bg-cyan-200/[0.06] p-5">
           <div className="flex flex-wrap items-start justify-between gap-3">
@@ -733,17 +852,20 @@ export default function ProductSelectorPage() {
 
       const extracted = data.result;
 
-      setInput((prev) => ({
-        ...prev,
-        name: prev.name.trim() || extracted.observationTheme || prev.name,
-        sourceTypes: mergeWords(prev.sourceTypes, ["スクショ画像", imageFileName]),
-        sourceText: appendLine(prev.sourceText, extracted.sourceText),
-        visualNotes: appendLine(prev.visualNotes, extracted.visualNotes),
-        candidateHint: appendLine(prev.candidateHint, extracted.candidateHint),
-        category: prev.category || extracted.category || prev.category,
-        keywords: mergeWords(prev.keywords, extracted.keywords),
-        memo: appendLine(prev.memo, extracted.memo),
-      }));
+      const nextInput: ProductSelectorInput = {
+        ...input,
+        name: input.name.trim() || extracted.observationTheme || input.name,
+        sourceTypes: mergeWords(input.sourceTypes, ["スクショ画像", imageFileName]),
+        sourceText: appendLine(input.sourceText, extracted.sourceText),
+        visualNotes: appendLine(input.visualNotes, extracted.visualNotes),
+        candidateHint: appendLine(input.candidateHint, extracted.candidateHint),
+        category: input.category || extracted.category || input.category,
+        keywords: mergeWords(input.keywords, extracted.keywords),
+        memo: appendLine(input.memo, extracted.memo),
+      };
+
+      setInput(nextInput);
+      await runAiAnalyzeWithInput(nextInput);
     } catch (error) {
       setImageExtractError(error instanceof Error ? error.message : "スクショ画像の読み取りに失敗しました。");
     } finally {
@@ -751,7 +873,7 @@ export default function ProductSelectorPage() {
     }
   }
 
-  async function runAiAnalyze() {
+  async function runAiAnalyzeWithInput(nextInput: ProductSelectorInput) {
     setAiLoading(true);
     setAiError("");
     setSavedLogId("");
@@ -771,7 +893,7 @@ export default function ProductSelectorPage() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ input }),
+        body: JSON.stringify({ input: nextInput }),
       });
 
       const data = (await res.json()) as ProductSelectorAnalyzeResponse;
@@ -790,6 +912,10 @@ export default function ProductSelectorPage() {
     } finally {
       setAiLoading(false);
     }
+  }
+
+  async function runAiAnalyze() {
+    await runAiAnalyzeWithInput(input);
   }
 
   return (
@@ -850,7 +976,7 @@ export default function ProductSelectorPage() {
                   <div>
                     <div className="text-sm font-black text-white/85">スクショ画像を投入</div>
                     <p className="mt-1 text-xs font-bold leading-6 text-white/50">
-                      SNS・ニュース・メルカリ画面・Google画像などのスクショを入れて、文字と見た目のメモを自動で入力欄へ反映します。
+                      SNS・ニュース・メルカリ画面・Google画像などのスクショを入れて、文字と見た目を抽出し、その場で「今見る候補」を返します。
                     </p>
                   </div>
                   {imageFileName ? (
@@ -897,7 +1023,7 @@ export default function ProductSelectorPage() {
                     disabled={!imageDataUrl || imageExtractLoading}
                     className="rounded-2xl border border-cyan-200/25 bg-cyan-200/12 px-4 py-3 text-sm font-black text-cyan-50 transition hover:bg-cyan-200/18 disabled:cursor-not-allowed disabled:opacity-55"
                   >
-                    {imageExtractLoading ? "スクショ解析中..." : "スクショから入力欄へ反映"}
+                    {imageExtractLoading || aiLoading ? "スクショ即判定中..." : "スクショから即判定"}
                   </button>
 
                   {imageExtractError ? (

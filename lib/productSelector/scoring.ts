@@ -54,6 +54,21 @@ export type ProductSelectorGenreCandidate = {
   searchWords: string[];
 };
 
+export type ProductSelectorBuyCandidate = {
+  name: string;
+  score: number;
+  action: "buy_candidate" | "research_first" | "watch_only";
+  reason: string;
+  evidence: string[];
+  sellCheckKeywords: string[];
+};
+
+export type ProductSelectorObservationFact = {
+  label: string;
+  value: string;
+  confidence: number;
+};
+
 export type ProductSelectorResult = {
   totalScore: number;
   decision: ProductSelectorDecision;
@@ -68,6 +83,9 @@ export type ProductSelectorResult = {
   nextActions: string[];
   sellCheckBridge: string[];
   searchKeywords: string[];
+  buyCandidates: ProductSelectorBuyCandidate[];
+  observationFacts: ProductSelectorObservationFact[];
+  learningSignals: string[];
 };
 
 function clampScore(n: number): number {
@@ -652,6 +670,127 @@ function buildSearchKeywords(input: ProductSelectorInput, text: string): string[
   return uniqKeepOrder([...rawWords, ...extra].filter((word): word is string => typeof word === "string" && word.trim().length > 0)).slice(0, 14);
 }
 
+function actionFromCandidateScore(score: number): ProductSelectorBuyCandidate["action"] {
+  if (score >= 76) return "buy_candidate";
+  if (score >= 58) return "research_first";
+  return "watch_only";
+}
+
+function actionLabel(action: ProductSelectorBuyCandidate["action"]): string {
+  if (action === "buy_candidate") return "今買う候補";
+  if (action === "research_first") return "先に確認";
+  return "観測のみ";
+}
+
+function buildObservationFacts(input: ProductSelectorInput, text: string, axes: ProductSelectorAxis[]): ProductSelectorObservationFact[] {
+  const source = input.sourceTypes || "観測元未指定";
+  const visualScore = axes.find((axis) => axis.key === "visual")?.score ?? 0;
+  const marketScore = axes.find((axis) => axis.key === "marketSignal")?.score ?? 0;
+  const contextScore = axes.find((axis) => axis.key === "context")?.score ?? 0;
+
+  return [
+    {
+      label: "観測元",
+      value: source,
+      confidence: source === "観測元未指定" ? 35 : 75,
+    },
+    {
+      label: "抽出文脈",
+      value: input.name || input.candidateHint || "未確定",
+      confidence: contextScore,
+    },
+    {
+      label: "視覚素材",
+      value: visualScore >= 50 ? "画像・スクショから見た目の特徴あり" : "視覚根拠はまだ弱い",
+      confidence: visualScore,
+    },
+    {
+      label: "市場兆候",
+      value: marketScore >= 50 ? "売買・投稿・検索の兆候あり" : "価格や売れ行きの直接根拠は不足",
+      confidence: marketScore,
+    },
+    {
+      label: "検出キーワード",
+      value: uniqKeepOrder(text.split(/[\s,、。\n]+/).slice(0, 18)).slice(0, 8).join(" / ") || "未検出",
+      confidence: 55,
+    },
+  ];
+}
+
+function buildLearningSignals(input: ProductSelectorInput, text: string): string[] {
+  const signals = [
+    "このスクショ/観測はPRODUCT SELECTOR用の市場観測データとして保存対象",
+    "個別商品の価格判断はSELL CHECK側の売却済み学習データで補強",
+    "同じ候補が複数回出るほど、次回以降の候補優先度を上げる",
+  ];
+
+  if (includesAny(text, ["スクショ", "画像", "写真"])) {
+    signals.push("画像由来の視覚特徴を理論DB候補として蓄積");
+  }
+
+  if (input.budget > 0) {
+    signals.push(`予算${yen(input.budget)}に対して小型・軽量・壊れにくい候補を優先`);
+  }
+
+  return signals;
+}
+
+function buildBuyCandidates(args: {
+  input: ProductSelectorInput;
+  text: string;
+  axes: ProductSelectorAxis[];
+  genreCandidates: ProductSelectorGenreCandidate[];
+}): ProductSelectorBuyCandidate[] {
+  const { input, text, axes, genreCandidates } = args;
+  const marketScore = axes.find((axis) => axis.key === "marketSignal")?.score ?? 0;
+  const visualScore = axes.find((axis) => axis.key === "visual")?.score ?? 0;
+  const smallCapitalScore = axes.find((axis) => axis.key === "smallCapital")?.score ?? 0;
+  const budgetBoost = input.budget > 0 && input.budget <= 5000 ? 8 : 0;
+
+  const baseEvidence = [
+    marketScore >= 55 ? "市場兆候スコアが一定以上" : "市場兆候は弱めなので追加確認が必要",
+    visualScore >= 55 ? "スクショ/画像から視覚的な売り場感を確認" : "画像特徴はまだ弱め",
+    smallCapitalScore >= 55 ? "小資本で試しやすい可能性あり" : "送料・破損・保管リスクの確認が必要",
+  ];
+
+  const fromGenre = genreCandidates
+    .filter((candidate) => candidate.name !== "観測候補未確定")
+    .map((candidate) => {
+      const score = clampScore(candidate.score * 0.58 + marketScore * 0.18 + visualScore * 0.12 + smallCapitalScore * 0.12 + budgetBoost);
+      const action = actionFromCandidateScore(score);
+
+      return {
+        name: candidate.name,
+        score,
+        action,
+        reason:
+          action === "buy_candidate"
+            ? "スクショ/観測文脈・市場兆候・小資本適性のバランスが高く、まず候補として見る価値があります。最終購入前にSELL CHECKで個別価格を確認してください。"
+            : action === "research_first"
+              ? "候補としては有望ですが、売却済み件数・送料・状態リスクを確認してから判断してください。"
+              : "現時点では観測優先です。候補名を保存し、似た商品データを増やしてください。",
+        evidence: uniqKeepOrder([candidate.reason, ...baseEvidence]),
+        sellCheckKeywords: uniqKeepOrder(candidate.searchWords),
+      };
+    });
+
+  if (fromGenre.length > 0) return fromGenre.slice(0, 5);
+
+  const fallbackName = input.candidateHint || input.name || "スクショ内で目立つ小型商品";
+  const fallbackScore = clampScore((marketScore + visualScore + smallCapitalScore) / 3);
+
+  return [
+    {
+      name: fallbackName,
+      score: fallbackScore,
+      action: actionFromCandidateScore(fallbackScore),
+      reason: "候補はまだ弱いですが、スクショから気になる対象として一時保存できます。まず同一/類似商品の売却済みを3件確認してください。",
+      evidence: baseEvidence,
+      sellCheckKeywords: buildSearchKeywords(input, text).slice(0, 6),
+    },
+  ];
+}
+
 export function evaluateProductCandidate(input: ProductSelectorInput): ProductSelectorResult {
   const mergedText = mergedInputText(input);
 
@@ -690,6 +829,9 @@ export function evaluateProductCandidate(input: ProductSelectorInput): ProductSe
   ];
 
   const genreCandidates = buildGenreCandidates(mergedText);
+  const buyCandidates = buildBuyCandidates({ input, text: mergedText, axes, genreCandidates });
+  const observationFacts = buildObservationFacts(input, mergedText, axes);
+  const learningSignals = buildLearningSignals(input, mergedText);
 
   const nextActions = [
     "気になった空気・文脈を3〜5件の画像/投稿/記事で追加観測する",
@@ -725,5 +867,8 @@ export function evaluateProductCandidate(input: ProductSelectorInput): ProductSe
     nextActions,
     sellCheckBridge,
     searchKeywords: buildSearchKeywords(input, mergedText),
+    buyCandidates,
+    observationFacts,
+    learningSignals,
   };
 }
