@@ -1,0 +1,50 @@
+// /firebaseAdmin.ts
+import "server-only";
+import admin from "firebase-admin";
+
+function getServiceAccount() {
+  const raw = process.env.FIREBASE_ADMIN_SERVICE_ACCOUNT_JSON;
+  if (!raw) {
+    throw new Error("FIREBASE_ADMIN_SERVICE_ACCOUNT_JSON missing");
+  }
+
+  const json = JSON.parse(raw);
+
+  if (typeof json.private_key === "string") {
+    json.private_key = json.private_key.replace(/\\n/g, "\n");
+  }
+
+  return json;
+}
+
+function getStorageBucketName() {
+  const b = process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET;
+  if (!b) {
+    throw new Error("NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET missing");
+  }
+
+  return b;
+}
+
+export function getAdminApp() {
+  if (admin.apps.length > 0) return admin.app();
+
+  const sa = getServiceAccount();
+
+  return admin.initializeApp({
+    credential: admin.credential.cert(sa),
+    storageBucket: getStorageBucketName(),
+  });
+}
+
+export function getAdminAuth() {
+  return getAdminApp().auth();
+}
+
+export function getAdminDb() {
+  return getAdminApp().firestore();
+}
+
+export function getAdminBucket() {
+  return getAdminApp().storage().bucket();
+}

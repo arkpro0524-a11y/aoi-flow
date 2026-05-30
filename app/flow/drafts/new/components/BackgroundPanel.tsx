@@ -1,0 +1,1777 @@
+//app/flow/drafts/new/components/BackgroundPanel.tsx
+"use client";
+
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import type {
+  DraftDoc,
+  ProductPhotoMode,
+  TextOverlay,
+  SizeTemplateType,
+} from "@/lib/types/draft";
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { storage } from "@/firebase";
+import { Btn } from "../ui";
+import ProductPlacementEditor from "./ProductPlacementEditor";
+
+type ProductCategory = "furniture" | "goods" | "apparel" | "small" | "other";
+type ProductSize = "large" | "medium" | "small";
+type GroundingType = "floor" | "table" | "hanging" | "wall";
+type SellDirection = "sales" | "branding" | "trust" | "story";
+type BgScene = "studio" | "lifestyle" | "scale" | "detail";
+
+type InnerTab = "background" | "composite";
+type ImageUsePreset = "ec" | "sns" | "usage";
+
+type TemplateRecommendItem = {
+  url: string;
+  reason: string;
+  score?: number;
+};
+
+type TemplateRecommendResult = {
+  topReason?: string;
+  recommended?: Array<{
+    url?: string;
+    imageUrl?: string;
+    reason?: string;
+    score?: number;
+  }>;
+  picked?: {
+    reason?: string;
+  } | null;
+};
+
+type Props = {
+  serverPlacementMeta?: {
+    canvas?: number;
+    placementInput?: {
+      scale?: number;
+      x?: number;
+      y?: number;
+      shadow?: {
+        opacity?: number;
+        blur?: number;
+        scale?: number;
+        offsetX?: number;
+        offsetY?: number;
+      };
+      background?: {
+        scale?: number;
+        x?: number;
+        y?: number;
+      };
+    } | null;
+    placement?: {
+      left?: number;
+      top?: number;
+      width?: number;
+      height?: number;
+      centerX?: number;
+      centerY?: number;
+      contactY?: number;
+      bottomMarginBase?: number;
+      usedDefaultLeft?: boolean;
+      usedDefaultTop?: boolean;
+    } | null;
+    updatedAt?: number;
+  } | null;
+
+  bgDisplayUrl: string;
+  backgroundKeyword: string;
+  setBackgroundKeyword: React.Dispatch<React.SetStateAction<string>>;
+  uid: string | null;
+  busy: boolean;
+  d: DraftDoc;
+  textOverlay?: TextOverlay | null;
+  compositeTextImageUrl?: string;
+  onSaveCompositeTextImageFromCompositeSlot?: () => Promise<void> | void;
+
+  generateBackgroundImage: (keyword: string, referenceImageUrl?: string) => Promise<string>;
+  replaceBackgroundAndSaveToAiImage: () => Promise<void>;
+  syncBgImagesFromStorage: () => Promise<void>;
+  syncTemplateBgImagesFromStorage?: () => Promise<void> | void;
+  syncCompositeImagesFromStorage?: () => Promise<void> | void;
+  syncCompositeTextImagesFromStorage?: () => Promise<void> | void;
+  clearBgHistory: () => Promise<void>;
+  onRemoveTemplateBgImage?: (url: string) => Promise<void> | void;
+  onRemoveAiBgImage?: (url: string) => Promise<void> | void;
+  onRemoveCompositeImage?: (url?: string) => Promise<void> | void;
+  onRemoveCompositeTextImage?: (url: string) => Promise<void> | void;
+
+  templateBgUrl?: string;
+  templateBgUrls?: string[];
+  generateTemplateBackground?: () => Promise<string | void>;
+  fetchTemplateRecommendations?: () => Promise<TemplateRecommendResult | void>;
+  selectTemplateBackground?: (url: string) => Promise<void> | void;
+
+  setBgImageUrl: React.Dispatch<React.SetStateAction<string | null>>;
+  setD: React.Dispatch<React.SetStateAction<DraftDoc>>;
+  saveDraft: (partial?: Partial<DraftDoc>) => Promise<string | null>;
+
+  formStyle: React.CSSProperties;
+  showMsg: (msg: string) => void;
+
+  productCategory?: ProductCategory;
+  setProductCategory?: React.Dispatch<React.SetStateAction<ProductCategory>>;
+
+  productSize?: ProductSize;
+  setProductSize?: React.Dispatch<React.SetStateAction<ProductSize>>;
+
+  groundingType?: GroundingType;
+  setGroundingType?: React.Dispatch<React.SetStateAction<GroundingType>>;
+
+  sellDirection?: SellDirection;
+  setSellDirection?: React.Dispatch<React.SetStateAction<SellDirection>>;
+
+  bgScene?: BgScene;
+  setBgScene?: React.Dispatch<React.SetStateAction<BgScene>>;
+
+  aiImageUrl?: string;
+  isCompositeFresh?: boolean;
+
+  activePhotoMode: ProductPhotoMode;
+  setActivePhotoMode: React.Dispatch<React.SetStateAction<ProductPhotoMode>>;
+
+  /**
+   * サイズテンプレ種別
+   * - simple
+   * - measure
+   * - human
+   * など
+   */
+  sizeTemplateType: SizeTemplateType;
+
+  /**
+   * サイズテンプレ変更
+   */
+  setSizeTemplateType: React.Dispatch<
+    React.SetStateAction<SizeTemplateType>
+  >;
+
+  placementScale: number;
+  setPlacementScale: React.Dispatch<React.SetStateAction<number>>;
+
+  placementX: number;
+  setPlacementX: React.Dispatch<React.SetStateAction<number>>;
+
+  placementY: number;
+  setPlacementY: React.Dispatch<React.SetStateAction<number>>;
+
+  shadowOpacity: number;
+  setShadowOpacity: React.Dispatch<React.SetStateAction<number>>;
+
+  shadowBlur: number;
+  setShadowBlur: React.Dispatch<React.SetStateAction<number>>;
+
+  shadowScale: number;
+  setShadowScale: React.Dispatch<React.SetStateAction<number>>;
+
+  shadowOffsetX: number;
+  setShadowOffsetX: React.Dispatch<React.SetStateAction<number>>;
+
+  shadowOffsetY: number;
+  setShadowOffsetY: React.Dispatch<React.SetStateAction<number>>;
+
+  backgroundScale: number;
+  setBackgroundScale: React.Dispatch<React.SetStateAction<number>>;
+
+  backgroundX: number;
+  setBackgroundX: React.Dispatch<React.SetStateAction<number>>;
+
+  backgroundY: number;
+  setBackgroundY: React.Dispatch<React.SetStateAction<number>>;
+
+  editingStep: "background" | "product" | "shadow";
+  setEditingStep: React.Dispatch<
+    React.SetStateAction<"background" | "product" | "shadow">
+  >;
+
+  canUndo: boolean;
+  canRedo: boolean;
+  onUndo: () => Promise<void> | void;
+  onRedo: () => Promise<void> | void;
+
+  onSavePlacement: (
+    step: "background" | "product" | "shadow",
+    partial?: {
+      scale?: number;
+      x?: number;
+      y?: number;
+      shadowOpacity?: number;
+      shadowBlur?: number;
+      shadowScale?: number;
+      shadowOffsetX?: number;
+      shadowOffsetY?: number;
+      backgroundScale?: number;
+      backgroundX?: number;
+      backgroundY?: number;
+      activePhotoMode?: ProductPhotoMode;
+    }
+  ) => Promise<void> | void;
+};
+
+const PRODUCT_CATEGORY_LABEL: Record<ProductCategory, string> = {
+  furniture: "家具",
+  goods: "雑貨",
+  apparel: "アパレル",
+  small: "小型商品",
+  other: "その他",
+};
+
+const PRODUCT_SIZE_LABEL: Record<ProductSize, string> = {
+  large: "大",
+  medium: "中",
+  small: "小",
+};
+
+const GROUNDING_TYPE_LABEL: Record<GroundingType, string> = {
+  floor: "床置き",
+  table: "卓上",
+  hanging: "吊り下げ",
+  wall: "壁寄せ",
+};
+
+const SELL_DIRECTION_LABEL: Record<SellDirection, string> = {
+  sales: "売上重視",
+  branding: "世界観重視",
+  trust: "信頼重視",
+  story: "ストーリー重視",
+};
+
+const BG_SCENE_LABEL: Record<BgScene, string> = {
+  studio: "スタジオ",
+  lifestyle: "ライフスタイル",
+  scale: "スケール訴求",
+  detail: "ディテール訴求",
+};
+
+const PRESET_LABEL: Record<ImageUsePreset, string> = {
+  ec: "EC販売用",
+  sns: "広告・SNS用",
+  usage: "使用イメージ用",
+};
+
+function TopTabButton({
+  active,
+  label,
+  onClick,
+}: {
+  active: boolean;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={[
+        "rounded-xl border px-3 py-2 text-xs transition",
+        active
+          ? "border-white/60 bg-white/10 text-white"
+          : "border-white/10 bg-black/20 text-white/65 hover:bg-white/5",
+      ].join(" ")}
+    >
+      {label}
+    </button>
+  );
+}
+
+function SegButton({
+  active,
+  label,
+  onClick,
+  disabled,
+}: {
+  active: boolean;
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className={[
+        "rounded-xl border px-3 py-2 text-xs transition",
+        active
+          ? "border-white/60 bg-white/10 text-white"
+          : "border-white/10 bg-black/20 text-white/70 hover:bg-white/5",
+        disabled ? "cursor-not-allowed opacity-50" : "",
+      ].join(" ")}
+    >
+      {label}
+    </button>
+  );
+}
+
+function SmallBadge({ active, label }: { active: boolean; label: string }) {
+  return (
+    <div
+      className={[
+        "inline-flex items-center rounded-full border px-2 py-1",
+        active
+          ? "border-emerald-400/40 bg-emerald-400/10 text-emerald-200"
+          : "border-white/10 bg-black/20 text-white/55",
+      ].join(" ")}
+      style={{ fontSize: 11 }}
+    >
+      {label}
+    </div>
+  );
+}
+
+function PresetButton({
+  active,
+  label,
+  onClick,
+}: {
+  active: boolean;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={[
+        "rounded-xl border px-4 py-2 text-sm font-semibold transition",
+        active
+          ? "border-white/60 bg-white/10 text-white"
+          : "border-white/10 bg-black/20 text-white/70 hover:bg-white/5",
+      ].join(" ")}
+    >
+      {label}
+    </button>
+  );
+}
+
+function buildReferenceText(d: DraftDoc, backgroundKeyword: string): string {
+  const vision = String((d as any).selectedStaticPrompt ?? d.vision ?? "").trim();
+  const keywordsText = String((d as any).keywordsText ?? d.keywords ?? "").trim();
+  const extra = String(backgroundKeyword || "").trim();
+
+  return [vision, keywordsText, extra].filter(Boolean).join("\n").toLowerCase();
+}
+
+function includesAny(text: string, words: string[]): boolean {
+  return words.some((w) => text.includes(w));
+}
+
+function inferProductCategory(input: {
+  text: string;
+  current: ProductCategory;
+}): ProductCategory {
+  const { text, current } = input;
+
+  if (current !== "other") return current;
+
+  if (
+    includesAny(text, [
+      "chair",
+      "table",
+      "desk",
+      "sofa",
+      "shelf",
+      "cabinet",
+      "stool",
+      "家具",
+      "椅子",
+      "机",
+      "テーブル",
+      "棚",
+      "チェスト",
+      "ソファ",
+      "ラック",
+    ])
+  ) {
+    return "furniture";
+  }
+
+  if (
+    includesAny(text, [
+      "shirt",
+      "jacket",
+      "coat",
+      "pants",
+      "bag",
+      "shoes",
+      "apparel",
+      "fashion",
+      "服",
+      "シャツ",
+      "ジャケット",
+      "コート",
+      "パンツ",
+      "バッグ",
+      "靴",
+      "アパレル",
+    ])
+  ) {
+    return "apparel";
+  }
+
+  if (
+    includesAny(text, [
+      "watch",
+      "vase",
+      "cup",
+      "plate",
+      "wallet",
+      "accessory",
+      "時計",
+      "花瓶",
+      "マグ",
+      "カップ",
+      "皿",
+      "財布",
+      "アクセサリー",
+      "雑貨",
+    ])
+  ) {
+    return "goods";
+  }
+
+  if (
+    includesAny(text, [
+      "small",
+      "mini",
+      "tiny",
+      "compact",
+      "小型",
+      "ミニ",
+      "コンパクト",
+      "小物",
+    ])
+  ) {
+    return "small";
+  }
+
+  return "other";
+}
+
+function inferGroundingFromCategory(
+  category: ProductCategory,
+  current: GroundingType
+): GroundingType {
+  if (category === "furniture") return "floor";
+  if (category === "goods") return "table";
+  if (category === "small") return "table";
+  if (category === "apparel") return "hanging";
+  return current;
+}
+
+function inferSizeFromCategory(
+  category: ProductCategory,
+  current: ProductSize
+): ProductSize {
+  if (category === "furniture") return "large";
+  if (category === "small") return "small";
+  if (category === "goods") return "medium";
+  if (category === "apparel") return "medium";
+  return current;
+}
+
+function inferBgSceneFromPreset(input: {
+  preset: ImageUsePreset;
+  text: string;
+}): BgScene {
+  const { preset, text } = input;
+
+  if (preset === "ec") {
+    if (
+      includesAny(text, [
+        "size",
+        "scale",
+        "比較",
+        "サイズ",
+        "大きさ",
+        "寸法",
+        "設置感",
+      ])
+    ) {
+      return "scale";
+    }
+
+    return "studio";
+  }
+
+  if (preset === "sns") {
+    if (
+      includesAny(text, [
+        "texture",
+        "detail",
+        "質感",
+        "素材感",
+        "ディテール",
+        "手仕事",
+        "craft",
+      ])
+    ) {
+      return "detail";
+    }
+
+    return "lifestyle";
+  }
+
+  if (
+    includesAny(text, [
+      "room",
+      "living",
+      "interior",
+      "玄関",
+      "リビング",
+      "部屋",
+      "室内",
+      "暮らし",
+      "使用シーン",
+    ])
+  ) {
+    return "lifestyle";
+  }
+
+  return "scale";
+}
+
+function inferSellDirectionFromPreset(input: {
+  preset: ImageUsePreset;
+  text: string;
+}): SellDirection {
+  const { preset, text } = input;
+
+  if (preset === "ec") return "sales";
+  if (preset === "sns") return "branding";
+
+  if (
+    includesAny(text, [
+      "story",
+      "物語",
+      "ストーリー",
+      "history",
+      "背景",
+      "想い",
+    ])
+  ) {
+    return "story";
+  }
+
+  return "trust";
+}
+
+function inferPhotoModeFromPreset(preset: ImageUsePreset): ProductPhotoMode {
+  if (preset === "ec") return "template";
+  return "ai_bg";
+}
+
+export default function BackgroundPanel({
+  serverPlacementMeta,
+  bgDisplayUrl,
+  backgroundKeyword,
+  setBackgroundKeyword,
+  uid,
+  busy,
+  d,
+  textOverlay = null,
+  compositeTextImageUrl = "",
+  onSaveCompositeTextImageFromCompositeSlot,
+
+  generateBackgroundImage,
+  replaceBackgroundAndSaveToAiImage,
+  syncBgImagesFromStorage,
+  syncTemplateBgImagesFromStorage,
+  syncCompositeImagesFromStorage,
+  syncCompositeTextImagesFromStorage,
+  clearBgHistory,
+  onRemoveTemplateBgImage,
+  onRemoveAiBgImage,
+  onRemoveCompositeImage,
+  onRemoveCompositeTextImage,
+
+  templateBgUrl = "",
+  templateBgUrls: templateBgUrlsFromParent = [],
+  generateTemplateBackground,
+  fetchTemplateRecommendations,
+  selectTemplateBackground,
+
+  setBgImageUrl,
+  setD,
+  saveDraft,
+
+  formStyle,
+  showMsg,
+
+  productCategory = "other",
+  setProductCategory,
+  productSize = "medium",
+  setProductSize,
+  groundingType = "floor",
+  setGroundingType,
+  sellDirection = "sales",
+  setSellDirection,
+  bgScene = "studio",
+  setBgScene,
+
+  aiImageUrl = "",
+  isCompositeFresh = false,
+
+  activePhotoMode,
+  setActivePhotoMode,
+
+  /**
+   * サイズテンプレ
+   */
+  sizeTemplateType,
+  setSizeTemplateType,
+
+  placementScale,
+  setPlacementScale,
+  placementX,
+  setPlacementX,
+  placementY,
+  setPlacementY,
+  shadowOpacity,
+  setShadowOpacity,
+  shadowBlur,
+  setShadowBlur,
+  shadowScale,
+  setShadowScale,
+  shadowOffsetX,
+  setShadowOffsetX,
+  shadowOffsetY,
+  setShadowOffsetY,
+
+  backgroundScale,
+  setBackgroundScale,
+  backgroundX,
+  setBackgroundX,
+  backgroundY,
+  setBackgroundY,
+
+  editingStep,
+  setEditingStep,
+  canUndo,
+  canRedo,
+  onUndo,
+  onRedo,
+  onSavePlacement,
+}: Props) {
+  const [innerTab, setInnerTab] = useState<InnerTab>("background");
+
+  const [templateRecommendBusy, setTemplateRecommendBusy] = useState(false);
+  const [templateRecommendTopReason, setTemplateRecommendTopReason] = useState("");
+  const [templateRecommended, setTemplateRecommended] = useState<TemplateRecommendItem[]>([]);
+
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [aiBgReferenceUrl, setAiBgReferenceUrl] = useState("");
+  const [aiBgReferenceBusy, setAiBgReferenceBusy] = useState(false);
+
+  async function uploadAiBackgroundReference(file: File | null) {
+    if (!file || !uid) return;
+    setAiBgReferenceBusy(true);
+    try {
+      const safeName = file.name.replace(/[^a-zA-Z0-9_.-]/g, "_");
+      const path = `users/${uid}/bg-reference/${Date.now()}_${safeName}`;
+      const sref = ref(storage, path);
+      await uploadBytes(sref, file, { contentType: file.type || "image/png" });
+      const url = await getDownloadURL(sref);
+      setAiBgReferenceUrl(url);
+      showMsg("参考画像を読み込みました");
+    } catch (e: any) {
+      console.error(e);
+      showMsg(`参考画像の読み込みに失敗：${e?.message || "不明"}`);
+    } finally {
+      setAiBgReferenceBusy(false);
+    }
+  }
+
+  /**
+   * AI背景履歴の自動復旧
+   *
+   * 目的:
+   * - Firestore の bgImageUrls が古い/少ない状態でも、画面を開いた時点で
+   *   Storage 側の背景履歴を自動で読み直す
+   * - これまで必要だった「背景を同期」ボタンの手押しを減らす
+   *
+   * 注意:
+   * - 1下書きにつき1回だけ実行する
+   * - Storage の実ファイルは消さない
+   */
+  const autoSyncBgKeyRef = useRef("");
+
+  const templatePreviewBackgroundUrl = useMemo(() => {
+    return String(templateBgUrl || d.templateBgUrl || "").trim();
+  }, [templateBgUrl, d.templateBgUrl]);
+
+  const aiOnlyPreviewBackgroundUrl = useMemo(() => {
+    return String(d.bgImageUrl || bgDisplayUrl || "").trim();
+  }, [d.bgImageUrl, bgDisplayUrl]);
+
+  const fixedBackgroundPreviewUrl = useMemo(() => {
+    if (activePhotoMode === "template") {
+      return templatePreviewBackgroundUrl || aiOnlyPreviewBackgroundUrl;
+    }
+
+    return aiOnlyPreviewBackgroundUrl || templatePreviewBackgroundUrl;
+  }, [activePhotoMode, aiOnlyPreviewBackgroundUrl, templatePreviewBackgroundUrl]);
+
+  const templateBgUrls = useMemo(() => {
+    const raw =
+      Array.isArray(templateBgUrlsFromParent) && templateBgUrlsFromParent.length > 0
+        ? templateBgUrlsFromParent
+        : Array.isArray(d.templateBgUrls)
+          ? d.templateBgUrls
+          : [];
+
+    return Array.from(new Set(raw.map((u) => String(u || "").trim()).filter(Boolean)));
+  }, [templateBgUrlsFromParent, d.templateBgUrls]);
+
+  const aiBgUrls = useMemo(() => {
+    const raw = Array.isArray(d.bgImageUrls) ? d.bgImageUrls : [];
+    return Array.from(new Set(raw.map((u) => String(u || "").trim()).filter(Boolean)));
+  }, [d.bgImageUrls]);
+
+  useEffect(() => {
+    if (!uid) return;
+    if (busy) return;
+    if (typeof syncBgImagesFromStorage !== "function") return;
+
+    const key = String((d as any).id || d.userId || d.baseImageUrl || "new-draft").trim();
+    if (!key) return;
+    if (autoSyncBgKeyRef.current === key) return;
+
+    autoSyncBgKeyRef.current = key;
+    void syncBgImagesFromStorage();
+  }, [uid, busy, d, syncBgImagesFromStorage]);
+
+  const compositeTextOverlay = useMemo<TextOverlay | null>(() => {
+    if (textOverlay) return textOverlay;
+
+    const overlay = d.textOverlayBySlot?.composite;
+    return overlay ?? null;
+  }, [textOverlay, d.textOverlayBySlot]);
+
+  const selectedPreset = useMemo<ImageUsePreset | null>(() => {
+    if (sellDirection === "sales" && activePhotoMode === "template") return "ec";
+    if (sellDirection === "branding") return "sns";
+    if (sellDirection === "trust" || sellDirection === "story") return "usage";
+
+    return null;
+  }, [sellDirection, activePhotoMode]);
+
+  function applyPreset(preset: ImageUsePreset) {
+    const referenceText = buildReferenceText(d, backgroundKeyword);
+
+    const nextCategory = inferProductCategory({
+      text: referenceText,
+      current: productCategory,
+    });
+
+    const nextGrounding = inferGroundingFromCategory(nextCategory, groundingType);
+    const nextSize = inferSizeFromCategory(nextCategory, productSize);
+
+    const nextSellDirection = inferSellDirectionFromPreset({
+      preset,
+      text: referenceText,
+    });
+
+    const nextBgScene = inferBgSceneFromPreset({
+      preset,
+      text: referenceText,
+    });
+
+    const nextPhotoMode = inferPhotoModeFromPreset(preset);
+
+    setProductCategory?.(nextCategory);
+    setGroundingType?.(nextGrounding);
+    setProductSize?.(nextSize);
+    setSellDirection?.(nextSellDirection);
+    setBgScene?.(nextBgScene);
+    setActivePhotoMode(nextPhotoMode);
+
+    showMsg(`${PRESET_LABEL[preset]}に自動設定しました`);
+  }
+
+  async function handleSelectTemplateBackground(url: string) {
+    const picked = String(url || "").trim();
+    if (!picked) return;
+
+    try {
+      if (typeof selectTemplateBackground === "function") {
+        await selectTemplateBackground(picked);
+        setActivePhotoMode("template");
+      } else {
+        setD((prev) => ({
+          ...prev,
+          templateBgUrl: picked,
+          activePhotoMode: "template",
+        }));
+
+await saveDraft({
+  templateBgUrl: picked,
+  activePhotoMode: "template",
+
+  // 動画合成でも同じ背景を使うため、動画用背景として明示保存します
+  videoBackgroundImageUrl: picked,
+  videoBackgroundLabel: "テンプレ背景",
+} as any);
+      }
+
+      setActivePhotoMode("template");
+      showMsg("テンプレ背景を選択しました");
+    } catch (e: any) {
+      console.error(e);
+      showMsg(`テンプレ背景の選択に失敗：${e?.message || "不明"}`);
+    }
+  }
+
+  async function handleFetchTemplateRecommendations() {
+    if (!uid || busy || templateBgUrls.length === 0) return;
+
+    if (typeof fetchTemplateRecommendations !== "function") {
+      showMsg("テンプレ背景おすすめ取得がまだ配線されていません");
+      return;
+    }
+
+    try {
+      setTemplateRecommendBusy(true);
+
+      const result = await fetchTemplateRecommendations();
+
+      const topReason = String(result?.topReason || result?.picked?.reason || "").trim();
+
+      const recommended = Array.isArray(result?.recommended)
+        ? result.recommended
+            .map((item) => {
+              const url = String(item?.url || item?.imageUrl || "").trim();
+              const reason = String(item?.reason || "").trim();
+              const score =
+                typeof item?.score === "number" && Number.isFinite(item.score)
+                  ? item.score
+                  : undefined;
+
+              return {
+                url,
+                reason,
+                score,
+              };
+            })
+            .filter((item) => item.url)
+        : [];
+
+      setTemplateRecommendTopReason(topReason);
+      setTemplateRecommended(recommended);
+
+      if (recommended.length > 0) {
+        showMsg("テンプレ背景のおすすめを取得しました");
+      } else {
+        showMsg("おすすめ候補は取得できましたが、表示対象がありませんでした");
+      }
+    } catch (e: any) {
+      console.error(e);
+      showMsg(`おすすめ取得に失敗：${e?.message || "不明"}`);
+    } finally {
+      setTemplateRecommendBusy(false);
+    }
+  }
+
+  async function handleGenerateTemplateBackground() {
+    if (!uid || busy) return;
+
+    if (typeof generateTemplateBackground !== "function") {
+      showMsg("テンプレ背景生成がまだ配線されていません");
+      return;
+    }
+
+    try {
+      await generateTemplateBackground();
+      setActivePhotoMode("template");
+      showMsg("テンプレ背景を生成しました");
+    } catch (e: any) {
+      console.error(e);
+      showMsg(`テンプレ背景生成に失敗：${e?.message || "不明"}`);
+    }
+  }
+
+  async function handleSelectAiBackground(url: string) {
+    const picked = String(url || "").trim();
+    if (!picked) return;
+
+    setBgImageUrl(picked);
+
+    setD((p) => ({
+      ...p,
+      bgImageUrl: picked,
+      activePhotoMode: "ai_bg",
+    }));
+
+await saveDraft({
+  bgImageUrl: picked,
+  activePhotoMode: "ai_bg",
+
+  // 動画合成でも同じ背景を使うため、動画用背景として明示保存します
+  videoBackgroundImageUrl: picked,
+  videoBackgroundLabel: "AI背景",
+} as any);
+
+    setActivePhotoMode("ai_bg");
+    showMsg("AI背景を選択しました");
+  }
+
+  return (
+    <details className="area2 rounded-2xl border border-white/10 bg-black/20" open>
+      <style jsx>{`
+        .backgroundFixedPreview {
+          position: sticky;
+          top: 0;
+          z-index: 8;
+          border-radius: 16px;
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          background: rgba(0, 0, 0, 0.26);
+          backdrop-filter: blur(10px);
+          padding: 10px;
+        }
+
+.backgroundControlScroll {
+  display: flex;
+  flex-direction: column;
+
+  /*
+    gap は既存UIの余白維持
+  */
+  gap: 12px;
+
+  /*
+    現在の背景プレビューは上に固定し、
+    画像の目的 / 背景選択 / テンプレ背景 / AI背景だけを
+    この枠の中で独立スクロールさせます。
+
+    重要:
+    - 大外の画面スクロールとは分離
+    - プレビュー画像はスクロールに巻き込まない
+    - Safariでも動くように overflow-y を明示
+  */
+  max-height: min(58vh, 620px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+
+  /*
+    スクロールバー分の右余白を確保します。
+  */
+  padding-right: 8px;
+  padding-bottom: 12px;
+}
+
+.backgroundControlScroll::-webkit-scrollbar {
+  width: 8px;
+}
+
+.backgroundControlScroll::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.24);
+}
+
+.backgroundControlScroll::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.12);
+}
+
+
+      `}</style>
+
+      <summary className="cursor-pointer select-none p-3">
+        <div className="text-white/70" style={{ fontSize: 12 }}>
+          【商品画像】静止画
+        </div>
+      </summary>
+
+      <div className="flex flex-col gap-3 p-3 pt-0">
+        <div className="flex flex-wrap items-center gap-2">
+          <TopTabButton
+            active={innerTab === "background"}
+            label="背景選択"
+            onClick={() => setInnerTab("background")}
+          />
+          <TopTabButton
+            active={innerTab === "composite"}
+            label="商品/背景合成"
+            onClick={() => setInnerTab("composite")}
+          />
+        </div>
+
+        {innerTab === "background" ? (
+          <>
+            <div className="backgroundFixedPreview">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <div className="text-white/80 font-bold" style={{ fontSize: 12 }}>
+                  現在の背景プレビュー
+                </div>
+
+                <SmallBadge
+                  active={Boolean(fixedBackgroundPreviewUrl)}
+                  label={
+                    activePhotoMode === "template"
+                      ? "テンプレ背景"
+                      : "AI背景"
+                  }
+                />
+              </div>
+
+              {fixedBackgroundPreviewUrl ? (
+                <img
+                  src={fixedBackgroundPreviewUrl}
+                  alt="selected background preview"
+                  className="w-full rounded-xl border border-white/10"
+                  style={{
+                    height: 240,
+                    objectFit: "contain",
+                    background: "rgba(0,0,0,0.25)",
+                  }}
+                  draggable={false}
+                />
+              ) : (
+                <div
+                  className="flex w-full items-center justify-center rounded-xl border border-white/10 bg-black/30 text-white/55"
+                  style={{ aspectRatio: "1 / 1", fontSize: 13 }}
+                >
+                  背景がありません
+                </div>
+              )}
+
+              <div className="mt-2 text-white/50" style={{ fontSize: 11, lineHeight: 1.5 }}>
+                下の操作エリアだけスクロールします。選択中の背景はここに固定表示されます。
+              </div>
+            </div>
+
+            <div className="backgroundControlScroll flex flex-col gap-3">
+              <div className="rounded-2xl border border-white/10 bg-black/15 p-3">
+                <div className="text-white/85 font-bold" style={{ fontSize: 12 }}>
+                  画像の目的
+                </div>
+
+                <div className="mt-2 text-white/55" style={{ fontSize: 12, lineHeight: 1.6 }}>
+                  まず用途だけ選んでください。Vision・Keywords・現在の商品状態を見て、内部設定を自動で寄せます。
+                </div>
+
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <PresetButton
+                    label="EC販売用"
+                    active={selectedPreset === "ec"}
+                    onClick={() => applyPreset("ec")}
+                  />
+
+                  <PresetButton
+                    label="広告・SNS用"
+                    active={selectedPreset === "sns"}
+                    onClick={() => applyPreset("sns")}
+                  />
+
+                  <PresetButton
+                    label="使用イメージ用"
+                    active={selectedPreset === "usage"}
+                    onClick={() => applyPreset("usage")}
+                  />
+                </div>
+
+                <div
+                  className="mt-3 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-white/60"
+                  style={{ fontSize: 12, lineHeight: 1.6 }}
+                >
+                  自動設定中：{" "}
+                  {SELL_DIRECTION_LABEL[sellDirection]}
+                  {" / "}
+                  {BG_SCENE_LABEL[bgScene]}
+                  {" / "}
+                  {PRODUCT_CATEGORY_LABEL[productCategory]}
+                  {" / "}
+                  {GROUNDING_TYPE_LABEL[groundingType]}
+                  {" / "}
+                  {PRODUCT_SIZE_LABEL[productSize]}
+                  {" / "}
+                  {activePhotoMode === "template" ? "テンプレ背景" : "AI背景"}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setDetailOpen((prev) => !prev)}
+                  className="mt-3 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-left text-white/70 transition hover:bg-white/5"
+                  style={{ fontSize: 12 }}
+                >
+                  {detailOpen ? "自動設定を調整する（閉じる）" : "自動設定を調整する"}
+                </button>
+              </div>
+
+              {detailOpen ? (
+                <div className="rounded-2xl border border-white/10 bg-black/15 p-3">
+                  <div className="text-white/85 font-bold" style={{ fontSize: 12 }}>
+                    詳細調整
+                  </div>
+
+                  <div className="mt-2 text-white/55" style={{ fontSize: 12, lineHeight: 1.6 }}>
+                    自動設定のあとに、必要な時だけ手で直してください。
+                  </div>
+
+                  <div className="mt-3">
+                    <div className="mb-2 text-white/70" style={{ fontSize: 12 }}>
+                      1. 商品カテゴリ
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {(Object.keys(PRODUCT_CATEGORY_LABEL) as ProductCategory[]).map((key) => (
+                        <SegButton
+                          key={key}
+                          active={productCategory === key}
+                          label={PRODUCT_CATEGORY_LABEL[key]}
+                          disabled={!setProductCategory || busy}
+                          onClick={() => {
+                            if (!setProductCategory) return;
+                            setProductCategory(key);
+                          }}
+                        />
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="mt-3">
+                    <div className="mb-2 text-white/70" style={{ fontSize: 12 }}>
+                      2. サイズ感
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {(Object.keys(PRODUCT_SIZE_LABEL) as ProductSize[]).map((key) => (
+                        <SegButton
+                          key={key}
+                          active={productSize === key}
+                          label={PRODUCT_SIZE_LABEL[key]}
+                          disabled={!setProductSize || busy}
+                          onClick={() => {
+                            if (!setProductSize) return;
+                            setProductSize(key);
+                          }}
+                        />
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="mt-3">
+                    <div className="mb-2 text-white/70" style={{ fontSize: 12 }}>
+                      3. 接地タイプ
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {(Object.keys(GROUNDING_TYPE_LABEL) as GroundingType[]).map((key) => (
+                        <SegButton
+                          key={key}
+                          active={groundingType === key}
+                          label={GROUNDING_TYPE_LABEL[key]}
+                          disabled={!setGroundingType || busy}
+                          onClick={() => {
+                            if (!setGroundingType) return;
+                            setGroundingType(key);
+                          }}
+                        />
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="mt-3">
+                    <div className="mb-2 text-white/70" style={{ fontSize: 12 }}>
+                      4. 売り方向
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {(Object.keys(SELL_DIRECTION_LABEL) as SellDirection[]).map((key) => (
+                        <SegButton
+                          key={key}
+                          active={sellDirection === key}
+                          label={SELL_DIRECTION_LABEL[key]}
+                          disabled={!setSellDirection || busy}
+                          onClick={() => {
+                            if (!setSellDirection) return;
+                            setSellDirection(key);
+                          }}
+                        />
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="mt-3">
+                    <div className="mb-2 text-white/70" style={{ fontSize: 12 }}>
+                      5. 背景方向
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {(Object.keys(BG_SCENE_LABEL) as BgScene[]).map((key) => (
+                        <SegButton
+                          key={key}
+                          active={bgScene === key}
+                          label={BG_SCENE_LABEL[key]}
+                          disabled={!setBgScene || busy}
+                          onClick={() => {
+                            if (!setBgScene) return;
+                            setBgScene(key);
+                          }}
+                        />
+                      ))}
+                    </div>
+                  </div>
+
+                  <div
+                    className="mt-3 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-white/65"
+                    style={{ fontSize: 12, lineHeight: 1.6 }}
+                  >
+                    現在：{" "}
+                    {PRODUCT_CATEGORY_LABEL[productCategory]}
+                    {" / "}
+                    {PRODUCT_SIZE_LABEL[productSize]}
+                    {" / "}
+                    {GROUNDING_TYPE_LABEL[groundingType]}
+                    {" / "}
+                    {SELL_DIRECTION_LABEL[sellDirection]}
+                    {" / "}
+                    {BG_SCENE_LABEL[bgScene]}
+                  </div>
+                </div>
+              ) : null}
+
+              <div className="rounded-2xl border border-white/10 bg-black/15 p-3">
+                <div className="text-white/85 font-bold" style={{ fontSize: 12 }}>
+                  背景選択
+                </div>
+
+                <div className="mt-2 text-white/55" style={{ fontSize: 12, lineHeight: 1.6 }}>
+                  テンプレ背景とAI背景をここでまとめて管理します。選択した背景は合成タブの編集プレビューに反映されます。
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-white/10 bg-black/15 p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-white/85 font-bold" style={{ fontSize: 12 }}>
+                    テンプレ背景
+                  </div>
+
+                  <SmallBadge
+                    active={activePhotoMode === "template"}
+                    label={activePhotoMode === "template" ? "現在の編集対象" : "切替可能"}
+                  />
+                </div>
+
+                <div className="mt-2 text-white/55" style={{ fontSize: 12, lineHeight: 1.6 }}>
+                  テンプレ背景は「売るための整った背景」です。
+                </div>
+
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Btn
+                    variant="secondary"
+                    disabled={!uid || busy}
+                    onClick={handleGenerateTemplateBackground}
+                  >
+                    テンプレ背景を生成
+                  </Btn>
+
+                  <Btn
+                    variant="secondary"
+                    disabled={!uid || busy || typeof syncTemplateBgImagesFromStorage !== "function"}
+                    onClick={() => {
+                      void syncTemplateBgImagesFromStorage?.();
+                    }}
+                  >
+                    テンプレ背景を同期
+                  </Btn>
+
+                  <Btn
+                    variant="secondary"
+                    disabled={!uid || busy || templateBgUrls.length === 0 || templateRecommendBusy}
+                    onClick={handleFetchTemplateRecommendations}
+                  >
+                    {templateRecommendBusy ? "おすすめ取得中..." : "おすすめ取得"}
+                  </Btn>
+                </div>
+
+                <div className="mt-2 text-white/55" style={{ fontSize: 12, lineHeight: 1.5 }}>
+                  ※ テンプレ背景は、商品を主役に見せる販売向け背景です。
+                </div>
+
+                {templateRecommendTopReason || templateRecommended.length > 0 ? (
+                  <div className="mt-3 rounded-2xl border border-white/10 bg-black/15 p-3">
+                    <div className="text-white/85 font-bold" style={{ fontSize: 12 }}>
+                      おすすめテンプレ
+                    </div>
+
+                    {templateRecommendTopReason ? (
+                      <div
+                        className="mt-2 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-white/72"
+                        style={{ fontSize: 12, lineHeight: 1.6 }}
+                      >
+                        {templateRecommendTopReason}
+                      </div>
+                    ) : null}
+
+                    {templateRecommended.length > 0 ? (
+                      <div className="mt-3 flex flex-col gap-2">
+                        {templateRecommended.slice(0, 3).map((item, index) => {
+                          const isCurrent =
+                            String(templateBgUrl || d.templateBgUrl || "").trim() === item.url;
+
+                          return (
+                            <button
+                              key={`${item.url}-${index}`}
+                              type="button"
+                              onClick={() => void handleSelectTemplateBackground(item.url)}
+                              className="rounded-xl border px-3 py-3 text-left transition hover:bg-white/5"
+                              style={{
+                                borderColor: "rgba(255,255,255,0.10)",
+                                background: "rgba(0,0,0,0.15)",
+                                color: "rgba(255,255,255,0.82)",
+                              }}
+                            >
+                              <div className="flex items-center justify-between gap-3">
+                                <div className="font-semibold" style={{ fontSize: 12 }}>
+                                  おすすめ {index + 1}
+                                  {typeof item.score === "number" ? ` / score ${item.score}` : ""}
+                                </div>
+
+                                <SmallBadge
+                                  active={isCurrent}
+                                  label={isCurrent ? "選択中" : "候補"}
+                                />
+                              </div>
+
+                              <div
+                                className="mt-2 text-white/62"
+                                style={{ fontSize: 12, lineHeight: 1.6 }}
+                              >
+                                {item.reason || "商品との相性が高い背景です"}
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {templateBgUrls.length > 0 ? (
+                  <div className="mt-3">
+                    <div className="mb-2 flex items-center justify-between">
+                      <div className="text-white/70" style={{ fontSize: 12 }}>
+                        テンプレ背景一覧
+                      </div>
+                      <div className="text-white/45" style={{ fontSize: 11 }}>
+                        {templateBgUrls.length}件
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col gap-2">
+                      {templateBgUrls.slice(0, 8).map((u, index) => {
+                        const isCurrentTemplate =
+                          String(templateBgUrl || d.templateBgUrl || "").trim() === u;
+
+                        const recommendedItem = templateRecommended.find(
+                          (item) => item.url === u
+                        );
+
+                        return (
+                          <div
+                            key={`${u}-${index}`}
+                            className="rounded-xl border px-3 py-3 text-left"
+                            style={{
+                              borderColor: isCurrentTemplate
+                                ? "rgba(255,255,255,0.34)"
+                                : "rgba(255,255,255,0.10)",
+                              background: isCurrentTemplate
+                                ? "rgba(255,255,255,0.06)"
+                                : "rgba(0,0,0,0.15)",
+                              color: "rgba(255,255,255,0.82)",
+                            }}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setActivePhotoMode("template");
+                                void handleSelectTemplateBackground(u);
+                              }}
+                              className="block w-full text-left transition hover:bg-white/5"
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="font-semibold" style={{ fontSize: 12 }}>
+                                  テンプレ背景 {index + 1}
+                                </div>
+
+                                <div className="flex flex-wrap items-center gap-2">
+                                  {recommendedItem ? (
+                                    <SmallBadge active={false} label="おすすめ候補" />
+                                  ) : null}
+                                  <SmallBadge
+                                    active={isCurrentTemplate}
+                                    label={isCurrentTemplate ? "選択中" : "未選択"}
+                                  />
+                                </div>
+                              </div>
+
+                              <div className="mt-2 text-white/55" style={{ fontSize: 12 }}>
+                                {u.slice(0, 72)}
+                                {u.length > 72 ? "…" : ""}
+                              </div>
+
+                              {recommendedItem?.reason ? (
+                                <div
+                                  className="mt-2 rounded-lg border border-white/10 bg-black/20 px-2 py-2 text-white/60"
+                                  style={{ fontSize: 11, lineHeight: 1.5 }}
+                                >
+                                  理由：{recommendedItem.reason}
+                                </div>
+                              ) : null}
+                            </button>
+
+                            <div className="mt-2 flex gap-2">
+                              <Btn
+                                variant="secondary"
+                                disabled={!uid || busy}
+                                onClick={() => {
+                                  setActivePhotoMode("template");
+                                  void handleSelectTemplateBackground(u);
+                                }}
+                              >
+                                使う
+                              </Btn>
+
+                              <Btn
+                                variant="danger"
+                                disabled={!uid || busy || typeof onRemoveTemplateBgImage !== "function"}
+                                onClick={() => {
+                                  void onRemoveTemplateBgImage?.(u);
+                                }}
+                                title="画面上と下書き上だけから外します。Storageの本体は消しません"
+                              >
+                                外す
+                              </Btn>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : (
+                  <div
+                    className="mt-3 rounded-xl border border-white/10 bg-black/20 px-3 py-3 text-white/55"
+                    style={{ fontSize: 12, lineHeight: 1.6 }}
+                  >
+                    まだテンプレ背景がありません。先に「テンプレ背景を生成」を押してください。
+                  </div>
+                )}
+              </div>
+
+              <div className="rounded-2xl border border-white/10 bg-black/15 p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-white/85 font-bold" style={{ fontSize: 12 }}>
+                    AI背景
+                  </div>
+
+                  <SmallBadge
+                    active={activePhotoMode === "ai_bg"}
+                    label={activePhotoMode === "ai_bg" ? "現在の編集対象" : "切替可能"}
+                  />
+                </div>
+
+                <div className="mt-2 text-white/55" style={{ fontSize: 12, lineHeight: 1.6 }}>
+                  AI背景は「希望背景の文章どおりに空間を作る背景」です。
+                </div>
+
+                <div className="mt-3">
+                  <div className="mb-2 text-white/70" style={{ fontSize: 12 }}>
+                    希望背景を入力
+                  </div>
+
+                  <input
+                    value={backgroundKeyword}
+                    onChange={(e) => setBackgroundKeyword(e.target.value)}
+                    placeholder="例：コレクションケース / レトロな棚 / 木製の飾り棚 / 白飛びしないグレー背景"
+                    className="w-full rounded-xl border p-2 outline-none"
+                    style={formStyle}
+                    disabled={!uid || busy}
+                  />
+
+                  <div className="mt-2 text-white/55" style={{ fontSize: 12, lineHeight: 1.5 }}>
+                    ※ ここに入力した希望背景を優先して生成します。商品そのものではなく、置かれる背景だけを書いてください。
+                  </div>
+                </div>
+
+                <div className="mt-3 rounded-xl border border-white/10 bg-black/15 p-3">
+                  <div className="text-white/70" style={{ fontSize: 12 }}>
+                    参考画像・スクショ（任意）
+                  </div>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    disabled={!uid || busy || aiBgReferenceBusy}
+                    className="mt-2 w-full rounded-xl border p-2 outline-none"
+                    style={formStyle}
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0] ?? null;
+                      await uploadAiBackgroundReference(file);
+                      e.currentTarget.value = "";
+                    }}
+                  />
+                  {aiBgReferenceUrl ? (
+                    <div className="mt-2 flex items-center gap-2">
+                      <img
+                        src={aiBgReferenceUrl}
+                        alt="AI背景参考画像"
+                        className="h-16 w-16 rounded-lg border border-white/10 object-cover"
+                      />
+                      <button
+                        type="button"
+                        className="rounded-full bg-white/80 px-3 py-1 text-xs font-bold text-slate-900"
+                        onClick={() => setAiBgReferenceUrl("")}
+                      >
+                        参考画像を外す
+                      </button>
+                    </div>
+                  ) : null}
+                  <div className="mt-2 text-white/55" style={{ fontSize: 12, lineHeight: 1.5 }}>
+                    ※ 参考画像がある場合は、色味・明るさ・余白・棚/ケース感などを読み取って、希望背景の文章と組み合わせます。文章だけ/画像だけでも生成できます。
+                  </div>
+                </div>
+
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Btn
+                    variant="secondary"
+                    disabled={!uid || busy || (!backgroundKeyword.trim() && !aiBgReferenceUrl)}
+                    onClick={async () => {
+                      try {
+                        await generateBackgroundImage(backgroundKeyword || "参考画像に近い販売背景", aiBgReferenceUrl);
+                        showMsg("背景を生成しました");
+                      } catch (e: any) {
+                        console.error(e);
+                        showMsg(`背景生成に失敗：${e?.message || "不明"}`);
+                      }
+                    }}
+                  >
+                    背景を生成
+                  </Btn>
+
+                  <Btn
+                    variant="secondary"
+                    disabled={
+                      !uid ||
+                      busy ||
+                      (!aiOnlyPreviewBackgroundUrl && !String(backgroundKeyword || "").trim() && !aiBgReferenceUrl)
+                    }
+                    onClick={replaceBackgroundAndSaveToAiImage}
+                  >
+                    製品画像＋背景を合成（保存）
+                  </Btn>
+
+                  <Btn
+                    variant="secondary"
+                    disabled={!uid || busy}
+                    onClick={syncBgImagesFromStorage}
+                  >
+                    背景を同期（Storage→Firestore）
+                  </Btn>
+                </div>
+
+                <div className="mt-2 text-white/55" style={{ fontSize: 12, lineHeight: 1.5 }}>
+                  ※ この背景が「合成」と「動画」に使われます。
+                </div>
+
+                {aiBgUrls.length > 0 ? (
+                  <div className="mt-3">
+                    <div className="mb-2 flex items-center justify-between">
+                      <div className="text-white/70" style={{ fontSize: 12 }}>
+                        背景履歴（クリックで表示｜課金なし）
+                      </div>
+
+                      <Btn
+                        variant="danger"
+                        disabled={!uid || busy || aiBgUrls.length === 0}
+                        onClick={clearBgHistory}
+                        title="この下書きの候補リストだけ消します（Storageの画像は消えません）"
+                      >
+                        履歴クリア
+                      </Btn>
+                    </div>
+
+                    <div className="flex flex-col gap-2">
+                      {aiBgUrls.slice(0, 6).map((u: string) => (
+                        <div
+                          key={u}
+                          className="rounded-xl border px-3 py-2"
+                          style={{
+                            borderColor: "rgba(255,255,255,0.10)",
+                            background: "rgba(0,0,0,0.15)",
+                            color: "rgba(255,255,255,0.78)",
+                            fontSize: 12,
+                          }}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setActivePhotoMode("ai_bg");
+                              void handleSelectAiBackground(u);
+                            }}
+                            className="block w-full text-left transition hover:bg-white/5"
+                          >
+                            {u.slice(0, 60)}
+                            {u.length > 60 ? "…" : ""}
+                          </button>
+
+                          <div className="mt-2 flex gap-2">
+                            <Btn
+                              variant="secondary"
+                              disabled={!uid || busy}
+                              onClick={() => {
+                                setActivePhotoMode("ai_bg");
+                                void handleSelectAiBackground(u);
+                              }}
+                            >
+                              使う
+                            </Btn>
+
+                            <Btn
+                              variant="danger"
+                              disabled={!uid || busy || typeof onRemoveAiBgImage !== "function"}
+                              onClick={() => {
+                                void onRemoveAiBgImage?.(u);
+                              }}
+                              title="画面上と下書き上だけから外します。Storageの本体は消しません"
+                            >
+                              外す
+                            </Btn>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </>
+        ) : null}
+
+        {innerTab === "composite" ? (
+          <div className="flex flex-col gap-3">
+            <ProductPlacementEditor
+              serverPlacementMeta={serverPlacementMeta}
+              baseImageUrl={d.baseImageUrl}
+              foregroundImageUrl={d.foregroundImageUrl}
+              bgImageUrl={String(d.bgImageUrl || "").trim()}
+              aiImageUrl={aiImageUrl}
+              compositeTextImageUrl={String(
+                compositeTextImageUrl || (d as any).compositeTextImageUrl || ""
+              ).trim()}
+              onSaveCompositeTextImageFromCompositeSlot={onSaveCompositeTextImageFromCompositeSlot}
+              templateBgUrl={templateBgUrl}
+              templateBgUrls={templateBgUrls}
+              aiBgUrls={aiBgUrls}
+              templateRecommended={templateRecommended}
+              templateRecommendTopReason={templateRecommendTopReason}
+              isCompositeFresh={isCompositeFresh}
+              productCategory={productCategory}
+              productSize={productSize}
+              groundingType={groundingType}
+              bgScene={bgScene}
+              textOverlay={compositeTextOverlay}
+              activePhotoMode={activePhotoMode}
+              onChangePhotoMode={setActivePhotoMode}
+
+              /**
+               * サイズテンプレ
+               */
+              sizeTemplateType={sizeTemplateType}
+              setSizeTemplateType={setSizeTemplateType}
+
+              onSelectTemplateBg={handleSelectTemplateBackground}
+              onSelectAiBg={handleSelectAiBackground}
+              onRecompose={replaceBackgroundAndSaveToAiImage}
+              placementScale={placementScale}
+              placementX={placementX}
+              placementY={placementY}
+              shadowOpacity={shadowOpacity}
+              shadowBlur={shadowBlur}
+              shadowScale={shadowScale}
+              shadowOffsetX={shadowOffsetX}
+              shadowOffsetY={shadowOffsetY}
+              backgroundScale={backgroundScale}
+              backgroundX={backgroundX}
+              backgroundY={backgroundY}
+              setPlacementScale={setPlacementScale}
+              setPlacementX={setPlacementX}
+              setPlacementY={setPlacementY}
+              setShadowOpacity={setShadowOpacity}
+              setShadowBlur={setShadowBlur}
+              setShadowScale={setShadowScale}
+              setShadowOffsetX={setShadowOffsetX}
+              setShadowOffsetY={setShadowOffsetY}
+              setBackgroundScale={setBackgroundScale}
+              setBackgroundX={setBackgroundX}
+              setBackgroundY={setBackgroundY}
+              editingStep={editingStep}
+              setEditingStep={setEditingStep}
+              canUndo={canUndo}
+              canRedo={canRedo}
+              onUndo={onUndo}
+              onRedo={onRedo}
+              onSavePlacement={onSavePlacement}
+              busy={busy}
+              showMsg={showMsg}
+            />
+
+            <div className="flex flex-wrap gap-2">
+              <Btn
+                variant="secondary"
+                disabled={!uid || busy || typeof syncCompositeImagesFromStorage !== "function"}
+                onClick={() => {
+                  void syncCompositeImagesFromStorage?.();
+                }}
+                title="Storage から合成画像を復活します"
+              >
+                合成画像を同期
+              </Btn>
+
+              <Btn
+                variant="danger"
+                disabled={
+                  !uid ||
+                  busy ||
+                  !String(aiImageUrl || "").trim() ||
+                  typeof onRemoveCompositeImage !== "function"
+                }
+                onClick={() => {
+                  void onRemoveCompositeImage?.(String(aiImageUrl || "").trim());
+                }}
+                title="画面上と下書き上だけから外します。Storageの本体は消しません"
+              >
+                合成画像を外す
+              </Btn>
+
+              <Btn
+                variant="secondary"
+                disabled={!uid || busy || typeof syncCompositeTextImagesFromStorage !== "function"}
+                onClick={() => {
+                  void syncCompositeTextImagesFromStorage?.();
+                }}
+                title="Storage から文字入り保存画像を復活します"
+              >
+                文字入り保存画像を同期
+              </Btn>
+
+              <Btn
+                variant="danger"
+                disabled={
+                  !uid ||
+                  busy ||
+                  !String(compositeTextImageUrl || (d as any).compositeTextImageUrl || "").trim() ||
+                  typeof onRemoveCompositeTextImage !== "function"
+                }
+                onClick={() => {
+                  void onRemoveCompositeTextImage?.(
+                    String(compositeTextImageUrl || (d as any).compositeTextImageUrl || "").trim()
+                  );
+                }}
+                title="画面上と下書き上だけから外します。Storageの本体は消しません"
+              >
+                文字入り保存画像を外す
+              </Btn>
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </details>
+  );
+}

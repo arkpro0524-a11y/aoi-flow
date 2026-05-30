@@ -1,0 +1,300 @@
+// /app/api/check-video-task/route.ts
+import { NextResponse } from "next/server";
+import { getDb } from "@/lib/server/firebaseAdmin";
+import { checkVideoTaskWithRunway } from "@/lib/server/runway";
+import admin from "firebase-admin";
+import crypto from "crypto";
+
+// ✅ firebase-admin / Buffer / crypto を使うので Node 固定（Edge 回避）
+export const runtime = "nodejs";
+
+async function requireUser(req: Request) {
+  const authz = req.headers.get("authorization") || "";
+  const m = authz.match(/^Bearer (.+)$/i);
+  const token = m?.[1];
+  if (!token) throw new Error("Missing Authorization Bearer token");
+  const decoded = await admin.auth().verifyIdToken(token);
+  return { uid: decoded.uid };
+}
+
+function toUiStatus(runwayStatus: string): "queued" | "running" | "done" | "error" {
+  // runway: queued/running/succeeded/failed/...
+  if (runwayStatus === "queued") return "queued";
+  if (runwayStatus === "running") return "running";
+  if (runwayStatus === "succeeded") return "done";
+  if (runwayStatus === "failed") return "error";
+  // 予期しない値は running 扱い（課金事故防止：勝手に失敗扱いしない）
+  return "running";
+}
+
+// ✅ Runwayの戻り値が揺れても拾えるように「動画URL候補」を吸収
+function pickVideoUrl(res: any): string | null {
+  const cands: any[] = [
+    res?.videoUrl,
+    res?.url,
+    res?.outputUrl,
+    res?.output_url,
+    res?.result?.url,
+    res?.result?.videoUrl,
+    res?.data?.url,
+    res?.data?.videoUrl,
+    // よくある配列パターンも拾う（存在すれば）
+    ...(Array.isArray(res?.assets) ? res.assets.map((a: any) => a?.url) : []),
+    ...(Array.isArray(res?.outputs) ? res.outputs.map((o: any) => o?.url) : []),
+  ];
+
+  for (const v of cands) {
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return null;
+}
+
+async function fetchAsBuffer(url: string): Promise<Buffer> {
+  // ✅ タイムアウト（無限待ち防止）
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 60_000);
+
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    if (!res.ok) throw new Error(`failed to download video: ${res.status}`);
+    const ab = await res.arrayBuffer();
+    return Buffer.from(ab);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function storageDownloadUrl(bucketName: string, filePath: string, token: string) {
+  const encoded = encodeURIComponent(filePath);
+  return `https://firebasestorage.googleapis.com/v0/b/${bucketName}/o/${encoded}?alt=media&token=${token}`;
+}
+
+export async function POST(req: Request) {
+  try {
+    const payload = await req.json();
+
+    const draftId = String(payload?.draftId || "");
+    const taskId = String(payload?.taskId || "");
+
+    if (!draftId) return NextResponse.json({ error: "draftId is required" }, { status: 400 });
+    if (!taskId) return NextResponse.json({ error: "taskId is required" }, { status: 400 });
+
+    // ✅ 未認証は不可
+    const user = await requireUser(req);
+
+    const db = getDb();
+    const ref = db.collection("drafts").doc(draftId);
+
+    // ✅ 所有者チェック
+    const snap = await ref.get();
+    if (!snap.exists) return NextResponse.json({ error: "draft not found" }, { status: 404 });
+    const data = snap.data() as any;
+
+    if (String(data?.userId || "") !== user.uid) {
+      return NextResponse.json({ error: "forbidden" }, { status: 403 });
+    }
+
+    // ✅ task確認
+    const res = await checkVideoTaskWithRunway(taskId);
+
+    // status は checkVideoTaskWithRunway が整形してる想定だが、念のため raw も拾う
+    const uiStatus = toUiStatus(String(res?.status || res?.rawStatus || ""));
+
+    // ✅ Runwayの動画URL揺れを吸収
+    const runwayVideoUrl = pickVideoUrl(res);
+
+    // ✅ 返すURL（UIが拾うキーは url / videoUrl / outputUrl を吸収するが、UI側は url が最も確実）
+    let finalUrl: string | null = null;
+
+    // =========================
+    // ✅ succeeded → Firebase Storage に mp4 を保存してURLを確定
+    // =========================
+    if (uiStatus === "done" && runwayVideoUrl) {
+      // すでに Storage URL が入っているなら再アップロードしない（無限増殖防止）
+      const already = String(data?.videoUrl || "");
+      if (already.includes("firebasestorage.googleapis.com")) {
+        finalUrl = already;
+      } else {
+        // ✅ admin.app().options 前提を捨てる：bucket() の default を使い、name から bucketName を取る
+        // （これで admin.app 未初期化由来のクラッシュを避ける）
+        const bucket = admin.storage().bucket(); // default bucket
+        const bucketName = String(bucket?.name || "").trim();
+        if (!bucketName) throw new Error("Firebase Storage bucket is not configured (bucket name empty)");
+
+        const filePath = `users/${user.uid}/drafts/${draftId}/videos/${Date.now()}_${taskId}.mp4`;
+        const buf = await fetchAsBuffer(runwayVideoUrl);
+
+        const token = crypto.randomUUID();
+        const file = bucket.file(filePath);
+
+        // ✅ token をメタに入れると「downloadURL形式」で配れる
+        await file.save(buf, {
+          contentType: "video/mp4",
+          resumable: false,
+          metadata: {
+            metadata: {
+              firebaseStorageDownloadTokens: token,
+            },
+            cacheControl: "public,max-age=31536000",
+          },
+        });
+
+        finalUrl = storageDownloadUrl(bucketName, filePath, token);
+      }
+
+      // ✅ Firestoreへ確定保存（UI語彙に統一）
+      // videoUrls 履歴も更新（最大10）
+      const prev: string[] = Array.isArray(data?.videoUrls)
+        ? data.videoUrls.filter((x: any) => typeof x === "string")
+        : [];
+
+      const nextUrls = finalUrl
+        ? [finalUrl, ...prev.filter((x) => x !== finalUrl)].slice(0, 10)
+        : prev.slice(0, 10);
+
+      await ref.set(
+        {
+          videoTaskId: taskId,
+          videoUrl: finalUrl,
+          videoUrls: nextUrls,
+          videoStatus: "done",
+          videoCompletedAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+
+      return NextResponse.json({
+        ok: true,
+        taskId: res?.taskId || taskId,
+        status: "done",
+        url: finalUrl, // ✅ UIが最も確実に拾う
+        videoUrl: finalUrl, // 互換
+        rawStatus: res?.rawStatus || null,
+      });
+    }
+
+    // =========================
+    // ✅ failed → error
+    // =========================
+    if (uiStatus === "error") {
+      await ref.set(
+        {
+          videoTaskId: taskId,
+          videoStatus: "error",
+          videoFailedAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+
+      return NextResponse.json({
+        ok: true,
+        taskId: res?.taskId || taskId,
+        status: "error",
+        url: null,
+        videoUrl: null,
+        rawStatus: res?.rawStatus || null,
+      });
+    }
+
+    // =========================
+    // ✅ queued/running
+    // =========================
+    await ref.set(
+      {
+        videoTaskId: taskId,
+        videoStatus: uiStatus, // queued or running
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+
+    return NextResponse.json({
+      ok: true,
+      taskId: res?.taskId || taskId,
+      status: uiStatus, // queued | running
+      url: null,
+      videoUrl: null,
+      rawStatus: res?.rawStatus || null,
+    });
+  } catch (e: any) {
+    return NextResponse.json(
+      { error: e?.message || "check-video-task failed" },
+      { status: 500 }
+    );
+  }
+}
+/**
+ * app/api/_pricing/pricing.ts
+ * ==========================
+ * ✅ 注意：このプロジェクトでは「唯一の定義」は /lib/server/pricing.ts
+ * このファイルは二重定義を防ぐための “再公開ラッパー” のみ。
+ */
+
+export {
+  PRICING,
+  PRICING_VERSION,
+  CURRENCY,
+  MAX_PROMPT_CHARS,
+} from "@/lib/server/pricing";
+
+export type { VideoSeconds, VideoQuality } from "@/lib/server/pricing";
+
+import { PRICING } from "@/lib/server/pricing";
+
+export function estimateVideoCostJPY(
+  uiSeconds: number,
+  quality: "standard" | "high" = "standard"
+) {
+  const seconds = PRICING.normalizeVideoSeconds(uiSeconds);
+  const q = PRICING.normalizeVideoQuality(quality);
+
+  const pub = PRICING.public();
+
+  return {
+    uiSeconds: seconds,
+    estimatedJPY: PRICING.calcVideoCostYen(seconds, q),
+    currency: pub.currency,
+    version: pub.version,
+  };
+}
+
+// 互換：名前だけ残す（中身は同じ。Runway動画は calcVideoCostYen が唯一の定義）
+export function estimateRunwayVideoCostJPY(
+  uiSeconds: number,
+  quality: "standard" | "high" = "standard"
+) {
+  return estimateVideoCostJPY(uiSeconds, quality);
+}
+/**
+ * app/api/migrate-video/route.ts
+ * ─────────────────────────────────────────────
+ * 役割：
+ * - 既存の動画URL（外部/旧生成物）を Runway 管理下へ移行
+ * - 仕様：mock → 実API を ENV で切替
+ *
+ * 切替：
+ * - USE_MIGRATE_VIDEO_MOCK=true  → mock JSON
+ * - USE_MIGRATE_VIDEO_MOCK=false → （現時点では未実装なので 501）
+ *
+ * 注意：
+ * - lib/server/runway.ts は「動画生成専用」なので、ここから import しない
+ */
+
+import { NextResponse } from "next/server";
+import { getIdempotencyKey } from "@/lib/server/idempotency";
+
+/* =========================================================
+   型（このAPI内だけで完結 / UIは一切触らない）
+========================================================= */
+
+export type MigrateVideoParams = {
+  sourceVideoUrl: string;
+  model?: string; // e.g. "gen4_turbo"
+};
+
+/* =========================================================
+   ENV 切替
+========================================================= */
+

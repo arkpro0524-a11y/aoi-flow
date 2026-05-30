@@ -1,0 +1,119 @@
+/* /app/globals.css */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ---------------------------------------------
+   0) 絶対防御：リンク色（visited紫）を完全に殺す
+--------------------------------------------- */
+a,
+a:visited {
+  color: inherit !important;
+  text-decoration: none !important;
+}
+a:hover,
+a:active,
+a:focus {
+  color: inherit !important;
+}
+
+/* ---------------------------------------------
+   1) リセット（基準固定）
+--------------------------------------------- */
+html,
+body {
+  height: 100%;
+}
+
+html {
+  font-size: 16px;
+}
+
+body {
+  -webkit-text-size-adjust: none;
+  text-size-adjust: none;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* ---------------------------------------------
+   2) カラートーン
+--------------------------------------------- */
+:root {
+  --bg-0: #020814;
+  --bg-1: #071827;
+
+  --text-0: 248, 250, 252;
+  --text-1: 231, 236, 241;
+}
+
+/* ---------------------------------------------
+   3) 全体背景
+   - 既存の宇宙グラデーションをやめる
+   - public/flow-bg-tech1.png を背景として使う
+--------------------------------------------- */
+body {
+  margin: 0;
+  color: rgba(var(--text-0), 0.92);
+  background:
+    linear-gradient(
+      180deg,
+      rgba(2, 8, 20, 0.28),
+      rgba(2, 8, 20, 0.68)
+    ),
+    url("/flow-bg-tech1.png");
+  background-size: cover;
+  background-position: center;
+  background-attachment: fixed;
+  overflow-x: hidden;
+}
+
+/* ---------------------------------------------
+   4) 旧 body::before は無効化
+   - ここが群青背景の主原因だった
+--------------------------------------------- */
+body::before {
+  content: none;
+}
+
+/* ---------------------------------------------
+   5) 粒だけ残す
+--------------------------------------------- */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.78' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)' opacity='.18'/%3E%3C/svg%3E");
+  opacity: 0.08;
+  mix-blend-mode: overlay;
+}
+
+/* ---------------------------------------------
+   6) ビネット
+--------------------------------------------- */
+#_vignette {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background: radial-gradient(
+    1200px 900px at 50% 45%,
+    rgba(0, 0, 0, 0) 40%,
+    rgba(0, 0, 0, 0.35) 82%,
+    rgba(0, 0, 0, 0.62) 100%
+  );
+}
+
+/* ---------------------------------------------
+   7) UI本体を前面に固定
+--------------------------------------------- */
+#_appRoot {
+  position: relative;
+  z-index: 1;
+  transform: none;
+}
