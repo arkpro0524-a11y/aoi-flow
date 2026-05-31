@@ -877,13 +877,8 @@ export default function SellCheckAdminPage() {
 
     const text = richText.trim();
 
-    if (!text) {
-      setError("本文＋画像の統合解析用の商品ページ本文を貼り付けてください。");
-      return;
-    }
-
-    if (richImageFiles.length === 0) {
-      setError("本文＋画像の統合解析用の商品画像を1枚以上選択してください。");
+    if (!text && richImageFiles.length === 0) {
+      setError("本文または画像を1つ以上入力してください。本文だけ・画像だけでも学習データ化できます。");
       return;
     }
 
@@ -1260,14 +1255,14 @@ export default function SellCheckAdminPage() {
           売れる診断 学習データ管理
         </h1>
         <p className="mt-2 text-sm text-white/65">
-          複数画像解析、CSV/Excel読込、本文＋画像OCR風抽出、保存済み学習データの閲覧・編集・削除を行います。
+          本文＋複数画像からの統合AI抽出、CSV/Excel一括読込、保存済み学習データの閲覧・編集・削除を行います。
         </p>
       </div>
 
       <section className="rounded-3xl border border-white/10 bg-black/30 p-5">
         <div className="mb-3 text-lg font-black">本文＋複数画像から統合AI抽出</div>
         <div className="mb-3 text-sm text-white/55">
-          商品ページ本文と複数画像を同時に解析します。スクショ画像を複数入れれば、本文に足りない情報も画像から補完します。
+          商品ページ本文と複数画像を統合解析します。本文だけ・画像だけでも実行でき、スクショ画像を複数入れれば不足情報を補完します。
         </div>
 
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_320px]">
@@ -1307,7 +1302,7 @@ export default function SellCheckAdminPage() {
               <span>
                 商品画像・スクショを複数選択
                 <br />
-                本文と同時に解析します
+                本文だけ・画像だけでも解析できます
               </span>
             )}
           </label>
@@ -1323,7 +1318,7 @@ export default function SellCheckAdminPage() {
           <button
             type="button"
             onClick={extractRichFromTextAndImages}
-            disabled={richBusy}
+            disabled={richBusy || (!richText.trim() && richImageFiles.length === 0)}
             className="rounded-full bg-white px-5 py-2 text-sm font-black text-black disabled:opacity-50"
           >
             {richBusy ? "統合解析中..." : "本文＋複数画像を学習データ化"}
@@ -1358,55 +1353,6 @@ export default function SellCheckAdminPage() {
             <span>CSV / Excelファイルを選択</span>
           )}
         </label>
-      </section>
-
-      <section className="rounded-3xl border border-white/10 bg-black/30 p-5">
-        <div className="mb-3 text-lg font-black">商品ページ本文からAI抽出</div>
-        <div className="mb-3 text-sm text-white/55">
-          メルカリ等の商品ページ本文・商品説明・価格情報を貼り付けると、学習データ形式に変換します。
-        </div>
-
-        <textarea
-          value={rawText}
-          onChange={(e) => setRawText(e.target.value)}
-          className="min-h-[180px] w-full rounded-2xl border border-white/10 bg-black/45 p-4 text-sm text-white outline-none"
-          placeholder="商品名、商品説明、価格、売却済み表示、状態、閲覧数、いいね数などをまとめて貼り付け"
-        />
-
-        <div className="mt-3 flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={extractFromRawText}
-            disabled={extractBusy}
-            className="rounded-full bg-white px-5 py-2 text-sm font-black text-black disabled:opacity-50"
-          >
-            {extractBusy ? "AI抽出中..." : "AIで学習データ化"}
-          </button>
-        </div>
-      </section>
-
-      <section className="rounded-3xl border border-white/10 bg-black/30 p-5">
-        <div className="mb-3 text-lg font-black">CSV貼り付け</div>
-        <div className="mb-3 text-sm text-white/55">
-形式：商品名,出品価格,売却価格,カテゴリ,状態,売却済み,閲覧数,いいね,メモ,ブランド,型番,素材,商品種別,作品名・キャラクター,シリーズ,メーカー,年代,コレクター分類,素材分類,キーワード,状態リスク,説明文品質,希少性,需要,ブランド力,コレクター価値,年代価値,現在人気度,出品数の少なさ,検索キーワード強度
-        </div>
-
-        <textarea
-          value={csvText}
-          onChange={(e) => setCsvText(e.target.value)}
-          className="min-h-[140px] w-full rounded-2xl border border-white/10 bg-black/45 p-4 text-sm text-white outline-none"
-placeholder="帰ってきたウルトラマン ブリキ玩具,49800,45000,hobby,fair,売却済み,1200,80,当時物,TOMY,ゼンマイ歩行,ブリキ ソフビ,ブリキ玩具,帰ってきたウルトラマン,昭和ウルトラシリーズ,TOMY,昭和,特撮・昭和レトロ玩具,ブリキ,昭和レトロ 当時物 円谷 ブリキ,65,80,92,88,72,95,90,76,85,94"
-        />
-
-        <div className="mt-3 flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={applyCsvText}
-            className="rounded-full bg-white px-5 py-2 text-sm font-black text-black"
-          >
-            CSVを入力欄へ反映
-          </button>
-        </div>
       </section>
 
       <section className="rounded-3xl border border-white/10 bg-black/30 p-5">
@@ -1798,7 +1744,7 @@ function RowEditor(props: {
     imageFileName,
     busy,
     analyzeImagesForRow,
-    hideImageAnalyzer,
+    hideImageAnalyzer = true,
   } = props;
 
   return (
@@ -2030,81 +1976,9 @@ function RowEditor(props: {
         <MarketValueScoreFields row={row} index={index} updateRow={updateRow} />
       </div>
 
-      {!hideImageAnalyzer ? (
-        <div className="mt-3 rounded-2xl border border-white/10 bg-white/5 p-4">
-          <div className="mb-3 text-sm font-black text-white/80">複数画像診断</div>
-
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-[260px_1fr]">
-            <label className="flex min-h-[180px] cursor-pointer items-center justify-center rounded-2xl border border-dashed border-white/25 bg-black/35 p-3 text-center text-sm text-white/65 hover:bg-white/10">
-              <input
-                type="file"
-                accept="image/*"
-                multiple
-                className="hidden"
-                disabled={busy}
-                onChange={(e) => {
-                  const files = Array.from(e.target.files ?? []);
-                  void analyzeImagesForRow(index, files);
-                  e.currentTarget.value = "";
-                }}
-              />
-
-              {imagePreviewUrls.length > 0 ? (
-                <div className="grid w-full grid-cols-2 gap-2">
-                  {imagePreviewUrls.map((url, i) => (
-                    <img
-                      key={`${url}-${i}`}
-                      src={url}
-                      alt="学習データ用の商品画像"
-                      className="h-[82px] w-full rounded-xl object-contain"
-                    />
-                  ))}
-                </div>
-              ) : (
-                <span>
-                  複数画像を選択
-                  <br />
-                  まとめて診断
-                </span>
-              )}
-            </label>
-
-            <div className="space-y-3">
-              <div className="flex flex-wrap items-center gap-2">
-                <label className="inline-flex cursor-pointer rounded-full bg-white px-4 py-2 text-xs font-black text-black">
-                  {busy ? "画像診断中..." : "画像を複数選んで診断"}
-                  <input
-                    type="file"
-                    accept="image/*"
-                    multiple
-                    className="hidden"
-                    disabled={busy}
-                    onChange={(e) => {
-                      const files = Array.from(e.target.files ?? []);
-                      void analyzeImagesForRow(index, files);
-                      e.currentTarget.value = "";
-                    }}
-                  />
-                </label>
-
-                {imageFileName ? (
-                  <div className="text-xs text-white/55">選択中：{imageFileName}</div>
-                ) : (
-                  <div className="text-xs text-white/45">
-                    複数画像から、明るさ・構図・背景・傷リスクを平均化します。
-                  </div>
-                )}
-              </div>
-
-              <ImageScoreFields row={row} index={index} updateRow={updateRow} />
-            </div>
-          </div>
-        </div>
-      ) : (
-        <div className="mt-3">
-          <ImageScoreFields row={row} index={index} updateRow={updateRow} />
-        </div>
-      )}
+      <div className="mt-3">
+        <ImageScoreFields row={row} index={index} updateRow={updateRow} />
+      </div>
 
       <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-[1fr_auto]">
         <Field label="メモ">

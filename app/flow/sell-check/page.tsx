@@ -219,8 +219,8 @@ export default function SellCheckPage() {
     [drafts, selectedDraftId]
   );
 
-  const [imageFile, setImageFile] = useState<File | null>(null);
-  const [previewUrl, setPreviewUrl] = useState("");
+  const [imageFiles, setImageFiles] = useState<File[]>([]);
+  const [previewUrls, setPreviewUrls] = useState<string[]>([]);
 
   const [price, setPrice] = useState("");
   const [purchasePrice, setPurchasePrice] = useState("");
@@ -349,16 +349,18 @@ export default function SellCheckPage() {
   }, [uid]);
 
   useEffect(() => {
-    if (!imageFile) {
-      setPreviewUrl("");
+    if (imageFiles.length === 0) {
+      setPreviewUrls([]);
       return;
     }
 
-    const url = URL.createObjectURL(imageFile);
-    setPreviewUrl(url);
+    const urls = imageFiles.map((file) => URL.createObjectURL(file));
+    setPreviewUrls(urls);
 
-    return () => URL.revokeObjectURL(url);
-  }, [imageFile]);
+    return () => {
+      urls.forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [imageFiles]);
 
   useEffect(() => {
     if (sourceMode !== "draft") return;
@@ -481,13 +483,13 @@ export default function SellCheckPage() {
         usedDraftId = selectedDraft.id;
         imageSource = "draft";
       } else {
-        if (!imageFile) {
-          setError("診断対象の画像を選択してください。");
+        if (imageFiles.length === 0) {
+          setError("診断対象の画像を1枚以上選択してください。");
           return;
         }
 
-        targetFile = imageFile;
-        usedImageUrl = previewUrl;
+        targetFile = imageFiles[0] || null;
+        usedImageUrl = previewUrls[0] || "";
         imageSource = "manual";
       }
 
@@ -507,7 +509,13 @@ export default function SellCheckPage() {
       form.append("title", title);
       form.append("memo", memo);
       form.append("keywords", keywords);
-      form.append("image", targetFile);
+      if (sourceMode === "manual") {
+        imageFiles.slice(0, 8).forEach((file) => {
+          form.append("images", file);
+        });
+      } else {
+        form.append("image", targetFile);
+      }
 
       if (usedDraftId) {
         form.append("draftId", usedDraftId);
@@ -666,33 +674,48 @@ export default function SellCheckPage() {
                     <input
                       type="file"
                       accept="image/*"
+                      multiple
                       className="hidden"
                       onChange={(e) => {
-                        const f = e.target.files?.[0] || null;
-                        setImageFile(f);
+                        const files = Array.from(e.target.files ?? []).slice(0, 8);
+                        setImageFiles(files);
                       }}
                     />
 
-                    {previewUrl ? (
-                      <img
-                        src={previewUrl}
-                        alt="診断対象の商品画像"
-                        className="max-h-[260px] w-full rounded-xl object-contain"
-                      />
+                    {previewUrls.length > 0 ? (
+                      <div className="w-full">
+                        <div className="mb-3 text-left text-xs font-black text-white/55">
+                          診断対象の商品画像：{previewUrls.length}枚
+                        </div>
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          {previewUrls.map((url, index) => (
+                            <div key={`${imageFiles[index]?.name || "image"}-${index}`} className="overflow-hidden rounded-2xl border border-white/10 bg-black/30">
+                              <img
+                                src={url}
+                                alt={`診断対象の商品画像 ${index + 1}`}
+                                className="max-h-[220px] w-full rounded-xl object-contain"
+                              />
+                              <div className="border-t border-white/10 px-3 py-2 text-xs font-bold text-white/50">
+                                {imageFiles[index]?.name || `画像 ${index + 1}`}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
                     ) : (
                       <span>
-                        画像を選択
+                        画像を複数選択
                         <br />
-                        ここが診断対象になります
+                        全体・裏面・傷・付属品もまとめて診断できます
                       </span>
                     )}
                   </label>
 
-                  {imageFile ? (
+                  {imageFiles.length > 0 ? (
                     <div className="mt-3 text-xs text-white/55">
-                      対象画像：{imageFile.name}
+                      対象画像：{imageFiles.map((file) => file.name).join(", ")}
                       <br />
-                      サイズ：約{Math.round(imageFile.size / 1024).toLocaleString()}KB
+                      合計サイズ：約{Math.round(imageFiles.reduce((sum, file) => sum + file.size, 0) / 1024).toLocaleString()}KB
                     </div>
                   ) : null}
                 </>

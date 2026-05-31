@@ -87,7 +87,7 @@ async function fileToDataUrl(file: File): Promise<string> {
 }
 
 async function analyzeImageAndText(args: {
-  imageDataUrl: string;
+  imageDataUrls: string[];
   title: string;
   memo: string;
   keywords: string;
@@ -106,7 +106,7 @@ async function analyzeImageAndText(args: {
 あなたは中古市場分析AIです。
 
 目的：
-売れる診断用に、画像・商品名・説明文・キーワード・市場価値を推定してください。
+売れる診断用に、1枚または複数の商品画像・商品名・説明文・キーワード・市場価値を統合推定してください。
 
 重要：
 - category に依存しすぎないこと
@@ -115,6 +115,7 @@ async function analyzeImageAndText(args: {
 - 販売中の高値を売却価格として扱わないこと
 - 実際に売れる保証はしないこと
 - 分からないことは空文字にすること
+- 複数画像がある場合は、全体画像・拡大画像・裏面・付属品・傷の見え方を統合して判断すること
 
 抽出したい属性：
 - productType: 商品種別。例：ソフビ、ブリキ、超合金、フィギュア、ミニカー、家具、食器
@@ -176,6 +177,8 @@ ${args.category}
 
 状態：
 ${args.condition}
+
+画像枚数：${args.imageDataUrls.length}
 `.trim();
 
   const completion = await client.chat.completions.create({
@@ -192,12 +195,12 @@ ${args.condition}
         role: "user",
         content: [
           { type: "text", text: prompt },
-          {
-            type: "image_url",
+          ...args.imageDataUrls.slice(0, 8).map((url) => ({
+            type: "image_url" as const,
             image_url: {
-              url: args.imageDataUrl,
+              url,
             },
-          },
+          })),
         ],
       },
     ],
@@ -432,9 +435,12 @@ export async function POST(req: NextRequest) {
   try {
     const form = await req.formData();
 
-    const image = form.get("image");
+    const imageFiles = [
+      ...form.getAll("images"),
+      ...form.getAll("image"),
+    ].filter((item): item is File => item instanceof File).slice(0, 8);
 
-    if (!(image instanceof File)) {
+    if (imageFiles.length === 0) {
       return NextResponse.json(
         { ok: false, error: "画像がありません" },
         { status: 400 }
@@ -460,14 +466,14 @@ export async function POST(req: NextRequest) {
 
     const imageMeta: SellCheckImageMeta = {
       hasImage: true,
-      fileName: image.name || "uploaded-image",
-      fileSize: image.size || 0,
+      fileName: imageFiles.map((file) => file.name || "uploaded-image").join(", "),
+      fileSize: imageFiles.reduce((sum, file) => sum + (file.size || 0), 0),
     };
 
-    const imageDataUrl = await fileToDataUrl(image);
+    const imageDataUrls = await Promise.all(imageFiles.map((file) => fileToDataUrl(file)));
 
     const ai = await analyzeImageAndText({
-      imageDataUrl,
+      imageDataUrls,
       title,
       memo,
       keywords,

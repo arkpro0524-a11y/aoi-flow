@@ -426,6 +426,126 @@ const GENRE_RULES: GenreRule[] = [
   },
 ];
 
+
+type ProductGroupRule = {
+  name: string;
+  words: string[];
+  smallCapitalWords: string[];
+  riskWords: string[];
+  reason: string;
+  evidence: string[];
+  sellCheckKeywords: string[];
+};
+
+const PRODUCT_GROUP_RULES: ProductGroupRule[] = [
+  {
+    name: "平成レトロ文具・メモ帳/シール",
+    words: ["平成", "レトロ", "メモ", "メモ帳", "シール", "文具", "便箋", "手帳", "紙もの", "サンリオ", "zashikibuta"],
+    smallCapitalWords: ["メモ", "メモ帳", "シール", "文具", "紙もの", "便箋", "手帳"],
+    riskWords: ["汚れ", "折れ", "書き込み", "欠品"],
+    reason: "スクショ上で複数見えやすい紙もの・文具系です。小型軽量で送料が抑えやすく、平成レトロ/キャラ文具の文脈にも接続できます。",
+    evidence: ["小型・軽量で小資本検証に向く", "複数セット化しやすい", "写真で量感と柄のかわいさを出しやすい"],
+    sellCheckKeywords: ["平成レトロ メモ帳", "平成レトロ シール", "レトロ 文具 売り切れ", "サンリオ メモ帳 レトロ"],
+  },
+  {
+    name: "レトロキャラクター雑貨・紙ものセット",
+    words: ["キャラクター", "アニメ", "サンリオ", "キキララ", "アーミー", "army", "平成", "昭和", "紙もの", "雑貨", "グッズ", "セット"],
+    smallCapitalWords: ["紙もの", "雑貨", "グッズ", "セット", "シール", "カード"],
+    riskWords: ["偽物", "版権", "高額", "プレミア"],
+    reason: "単品名よりも、キャラクター性・時代感・セット量で価値が出やすい候補です。まずは同系統の売却済みをSELL CHECKで確認する対象です。",
+    evidence: ["キャラ・時代感・量感をまとめて訴求できる", "投稿素材として見た目が強い", "個別IPの人気差を確認すれば精度が上がる"],
+    sellCheckKeywords: ["平成レトロ キャラクター グッズ", "昭和 キャラクター 紙もの", "レトロ サンリオ 雑貨", "キャラクター メモ帳 セット"],
+  },
+  {
+    name: "ぬいぐるみ・マスコット小物セット",
+    words: ["ぬいぐるみ", "マスコット", "キイロイトリ", "リラックマ", "キャラクター", "小物", "セット"],
+    smallCapitalWords: ["ぬいぐるみ", "マスコット", "小物", "セット"],
+    riskWords: ["汚れ", "におい", "毛玉", "大型"],
+    reason: "キャラ認知と見た目の分かりやすさがあります。小型マスコット中心なら発送しやすい一方、汚れ・におい・状態差の確認が必要です。",
+    evidence: ["キャラクター認知が強い", "複数まとめ売りで単価を作れる", "状態写真が売れ行きに直結する"],
+    sellCheckKeywords: ["ぬいぐるみ マスコット セット 売り切れ", "リラックマ キイロイトリ マスコット", "平成 キャラクター ぬいぐるみ"],
+  },
+  {
+    name: "レトロTシャツ・スウェット/アパレル",
+    words: ["tシャツ", "tee", "シャツ", "スウェット", "アパレル", "ヴィンテージ", "vintage", "usa製", "bose", "paul smith", "saturdays"],
+    smallCapitalWords: ["tシャツ", "シャツ", "スウェット"],
+    riskWords: ["高額", "偽物", "サイズ", "シミ", "穴", "ブランド品"],
+    reason: "視覚的に目立つ候補ですが、ブランド・サイズ・状態・真贋でブレます。小資本ではまず安価で状態が明確なものだけ確認対象です。",
+    evidence: ["SNS映えと着用文脈を作りやすい", "ブランド/サイズで価格差が大きい", "高額品は初心者フェーズでは慎重"],
+    sellCheckKeywords: ["ヴィンテージ Tシャツ 売り切れ", "90s Tシャツ USA製", "レトロ アパレル 売却済み"],
+  },
+  {
+    name: "昭和レトロ小型家電・卓上雑貨",
+    words: ["扇風機", "卓上", "家電", "水切り", "ざる", "昭和", "レトロ", "プラスチック", "生活雑貨"],
+    smallCapitalWords: ["卓上", "小型", "ざる", "生活雑貨"],
+    riskWords: ["動作未確認", "大型", "壊れ", "送料", "電池", "カビ"],
+    reason: "生活感と昭和レトロの見た目はありますが、家電系は動作・送料・破損リスクが出ます。小型で非電動に近いものから確認です。",
+    evidence: ["昭和生活感の写真素材になる", "家電は動作確認が必要", "送料と破損リスクで利益が削られやすい"],
+    sellCheckKeywords: ["昭和レトロ 卓上 扇風機", "昭和レトロ 生活雑貨 売り切れ", "レトロ プラスチック 雑貨"],
+  },
+  {
+    name: "高額スニーカー/ブランド衣類は今回は見送り寄り",
+    words: ["nike", "ナイキ", "air jordan", "スニーカー", "45,250", "67,500", "高額", "ブランド"],
+    smallCapitalWords: [],
+    riskWords: ["偽物", "真贋", "高額", "ブランド", "サイズ", "競争"],
+    reason: "スクショ内では価格が高く、真贋・サイズ・競争リスクが大きい候補です。現在予算が小さい段階では観測に留めるのが安全です。",
+    evidence: ["高額で仕入れ上限を超えやすい", "真贋/サイズ/相場ブレが大きい", "小資本の学習対象としては損失幅が大きい"],
+    sellCheckKeywords: ["スニーカー 売却済み 真贋", "Air Jordan レトロ 売り切れ"],
+  },
+];
+
+function buildProductGroupBuyCandidates(args: {
+  input: ProductSelectorInput;
+  text: string;
+  axes: ProductSelectorAxis[];
+}): ProductSelectorBuyCandidate[] {
+  const { input, text, axes } = args;
+  const visualScore = axes.find((axis) => axis.key === "visual")?.score ?? 0;
+  const marketScore = axes.find((axis) => axis.key === "marketSignal")?.score ?? 0;
+  const smallCapitalScore = axes.find((axis) => axis.key === "smallCapital")?.score ?? 0;
+  const budget = Number.isFinite(input.budget) ? input.budget : 0;
+  const isSmallBudget = budget > 0 && budget <= 5000;
+
+  return PRODUCT_GROUP_RULES.map((rule) => {
+    const itemHits = hitCount(text, rule.words);
+    const smallHits = hitCount(text, rule.smallCapitalWords);
+    const riskHits = hitCount(text, rule.riskWords);
+    const broadPenalty = rule.name.includes("高額") ? 22 : 0;
+    const apparelPenalty = rule.name.includes("アパレル") && isSmallBudget ? 8 : 0;
+
+    if (itemHits <= 0) return null;
+
+    const score = clampScore(
+      34 +
+        itemHits * 10 +
+        smallHits * 7 +
+        visualScore * 0.12 +
+        marketScore * 0.08 +
+        smallCapitalScore * 0.12 +
+        (isSmallBudget ? 8 : 0) -
+        riskHits * 9 -
+        broadPenalty -
+        apparelPenalty
+    );
+
+    return {
+      name: rule.name,
+      score,
+      action: actionFromCandidateScore(score),
+      reason: rule.reason,
+      evidence: uniqKeepOrder([
+        ...rule.evidence,
+        isSmallBudget ? "現在予算5,000円前後では小型・軽量を優先" : "予算に対して仕入れ上限確認が必要",
+        riskHits > 0 ? "状態・真贋・送料リスク語があるためSELL CHECK確認必須" : "大きな危険語は少なめ",
+      ]),
+      sellCheckKeywords: uniqKeepOrder(rule.sellCheckKeywords),
+    };
+  })
+    .filter((x): x is ProductSelectorBuyCandidate => Boolean(x))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 6);
+}
+
 function scoreAxis(
   key: ProductSelectorAxisKey,
   label: string,
@@ -735,6 +855,21 @@ function buildLearningSignals(input: ProductSelectorInput, text: string): string
   return signals;
 }
 
+
+function uniqProductSelectorBuyCandidates(candidates: ProductSelectorBuyCandidate[]): ProductSelectorBuyCandidate[] {
+  const seen = new Set<string>();
+  const out: ProductSelectorBuyCandidate[] = [];
+
+  for (const candidate of candidates.sort((a, b) => b.score - a.score)) {
+    const key = normalizeText(candidate.name);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(candidate);
+  }
+
+  return out;
+}
+
 function buildBuyCandidates(args: {
   input: ProductSelectorInput;
   text: string;
@@ -752,6 +887,11 @@ function buildBuyCandidates(args: {
     visualScore >= 55 ? "スクショ/画像から視覚的な売り場感を確認" : "画像特徴はまだ弱め",
     smallCapitalScore >= 55 ? "小資本で試しやすい可能性あり" : "送料・破損・保管リスクの確認が必要",
   ];
+
+  // スクショに複数の商品群が見える場合、
+  // 「レトロアパレル」などの大きすぎる一括判定に寄せず、
+  // 文具・キャラ雑貨・ぬいぐるみ・小型家電・高額品リスクなどへ分解します。
+  const fromProductGroups = buildProductGroupBuyCandidates({ input, text, axes });
 
   const fromGenre = genreCandidates
     .filter((candidate) => candidate.name !== "観測候補未確定")
@@ -774,7 +914,8 @@ function buildBuyCandidates(args: {
       };
     });
 
-  if (fromGenre.length > 0) return fromGenre.slice(0, 5);
+  const mergedCandidates = uniqProductSelectorBuyCandidates([...fromProductGroups, ...fromGenre]);
+  if (mergedCandidates.length > 0) return mergedCandidates.slice(0, 6);
 
   const fallbackName = input.candidateHint || input.name || "スクショ内で目立つ小型商品";
   const fallbackScore = clampScore((marketScore + visualScore + smallCapitalScore) / 3);

@@ -762,8 +762,8 @@ export default function ProductSelectorPage() {
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState("");
   const [savedLogId, setSavedLogId] = useState("");
-  const [imageDataUrl, setImageDataUrl] = useState("");
-  const [imageFileName, setImageFileName] = useState("");
+  const [imageDataUrls, setImageDataUrls] = useState<string[]>([]);
+  const [imageFileNames, setImageFileNames] = useState<string[]>([]);
   const [imageExtractLoading, setImageExtractLoading] = useState(false);
   const [imageExtractError, setImageExtractError] = useState("");
 
@@ -778,31 +778,35 @@ export default function ProductSelectorPage() {
     setInput((prev) => ({ ...prev, [key]: value }));
   }
 
-  async function handleImageFileChange(file: File | null) {
+  async function handleImageFileChange(files: File[]) {
     setImageExtractError("");
 
-    if (!file) {
-      setImageDataUrl("");
-      setImageFileName("");
+    if (files.length === 0) {
+      setImageDataUrls([]);
+      setImageFileNames([]);
       return;
     }
 
-    if (!file.type.startsWith("image/")) {
-      setImageExtractError("画像ファイルを選択してください。");
+    const targets = files.slice(0, 6);
+
+    const invalid = targets.find((file) => !file.type.startsWith("image/"));
+    if (invalid) {
+      setImageExtractError("画像ファイルだけを選択してください。");
       return;
     }
 
-    // Vercel/APIへ巨大画像を投げすぎないため、まずは10MBで止めます。
-    // 既存機能には触れず、PRODUCT SELECTORの画像投入だけ安全に追加しています。
-    if (file.size > 10 * 1024 * 1024) {
-      setImageExtractError("画像サイズが大きすぎます。10MB以下のスクショ画像を使ってください。");
+    // Vercel/APIへ巨大画像を投げすぎないため、各10MBで止めます。
+    // 既存機能には触れず、PRODUCT SELECTORの画像投入だけ安全に拡張しています。
+    const tooLarge = targets.find((file) => file.size > 10 * 1024 * 1024);
+    if (tooLarge) {
+      setImageExtractError("画像サイズが大きすぎます。各10MB以下のスクショ画像を使ってください。");
       return;
     }
 
     try {
-      const dataUrl = await readImageFileAsDataUrl(file);
-      setImageDataUrl(dataUrl);
-      setImageFileName(file.name);
+      const dataUrls = await Promise.all(targets.map((file) => readImageFileAsDataUrl(file)));
+      setImageDataUrls(dataUrls);
+      setImageFileNames(targets.map((file) => file.name || "uploaded-image"));
       setAiResult(null);
       setSavedLogId("");
     } catch (error) {
@@ -811,8 +815,8 @@ export default function ProductSelectorPage() {
   }
 
   async function applyImageToInput() {
-    if (!imageDataUrl) {
-      setImageExtractError("先にスクショ画像を選択してください。");
+    if (imageDataUrls.length === 0) {
+      setImageExtractError("先にスクショ画像を1枚以上選択してください。");
       return;
     }
 
@@ -837,8 +841,11 @@ export default function ProductSelectorPage() {
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
-          imageDataUrl,
-          imageFileName,
+          imageDataUrls,
+          imageFileNames,
+          // 旧API互換用。サーバー側は imageDataUrls を優先します。
+          imageDataUrl: imageDataUrls[0] || "",
+          imageFileName: imageFileNames.join(", "),
           input,
         }),
       });
@@ -855,7 +862,7 @@ export default function ProductSelectorPage() {
       const nextInput: ProductSelectorInput = {
         ...input,
         name: input.name.trim() || extracted.observationTheme || input.name,
-        sourceTypes: mergeWords(input.sourceTypes, ["スクショ画像", imageFileName]),
+        sourceTypes: mergeWords(input.sourceTypes, ["スクショ画像", `${imageFileNames.length}枚`, ...imageFileNames]),
         sourceText: appendLine(input.sourceText, extracted.sourceText),
         visualNotes: appendLine(input.visualNotes, extracted.visualNotes),
         candidateHint: appendLine(input.candidateHint, extracted.candidateHint),
@@ -979,12 +986,12 @@ export default function ProductSelectorPage() {
                       SNS・ニュース・メルカリ画面・Google画像などのスクショを入れて、文字と見た目を抽出し、その場で「今見る候補」を返します。
                     </p>
                   </div>
-                  {imageFileName ? (
+                  {imageFileNames.length > 0 ? (
                     <button
                       type="button"
                       onClick={() => {
-                        setImageDataUrl("");
-                        setImageFileName("");
+                        setImageDataUrls([]);
+                        setImageFileNames([]);
                         setImageExtractError("");
                       }}
                       className="shrink-0 rounded-full border border-white/10 bg-black/25 px-3 py-2 text-xs font-black text-white/60 transition hover:bg-white/10"
@@ -998,21 +1005,31 @@ export default function ProductSelectorPage() {
                   <input
                     type="file"
                     accept="image/*"
+                    multiple
                     onChange={(e) => {
-                      void handleImageFileChange(e.target.files?.[0] || null);
+                      void handleImageFileChange(Array.from(e.target.files ?? []));
                     }}
                     className="block w-full cursor-pointer rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm font-bold text-white file:mr-4 file:rounded-full file:border-0 file:bg-cyan-200/15 file:px-4 file:py-2 file:text-xs file:font-black file:text-cyan-50 hover:file:bg-cyan-200/22"
                   />
 
-                  {imageDataUrl ? (
-                    <div className="overflow-hidden rounded-2xl border border-white/10 bg-black/25">
-                      <img
-                        src={imageDataUrl}
-                        alt="PRODUCT SELECTORに投入したスクショ"
-                        className="max-h-64 w-full object-contain"
-                      />
-                      <div className="border-t border-white/10 px-3 py-2 text-xs font-bold text-white/50">
-                        {imageFileName || "選択した画像"}
+                  {imageDataUrls.length > 0 ? (
+                    <div className="grid gap-3 rounded-2xl border border-white/10 bg-black/25 p-3">
+                      <div className="text-xs font-black text-white/55">
+                        PRODUCT SELECTORに投入したスクショ：{imageDataUrls.length}枚
+                      </div>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        {imageDataUrls.map((url, index) => (
+                          <div key={`${imageFileNames[index] || "image"}-${index}`} className="overflow-hidden rounded-2xl border border-white/10 bg-black/30">
+                            <img
+                              src={url}
+                              alt={`PRODUCT SELECTORに投入したスクショ ${index + 1}`}
+                              className="max-h-52 w-full object-contain"
+                            />
+                            <div className="border-t border-white/10 px-3 py-2 text-xs font-bold text-white/50">
+                              {imageFileNames[index] || `選択した画像 ${index + 1}`}
+                            </div>
+                          </div>
+                        ))}
                       </div>
                     </div>
                   ) : null}
@@ -1020,7 +1037,7 @@ export default function ProductSelectorPage() {
                   <button
                     type="button"
                     onClick={applyImageToInput}
-                    disabled={!imageDataUrl || imageExtractLoading}
+                    disabled={imageDataUrls.length === 0 || imageExtractLoading}
                     className="rounded-2xl border border-cyan-200/25 bg-cyan-200/12 px-4 py-3 text-sm font-black text-cyan-50 transition hover:bg-cyan-200/18 disabled:cursor-not-allowed disabled:opacity-55"
                   >
                     {imageExtractLoading || aiLoading ? "スクショ即判定中..." : "スクショから即判定"}

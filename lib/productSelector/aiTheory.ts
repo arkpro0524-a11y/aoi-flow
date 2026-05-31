@@ -73,10 +73,11 @@ PRODUCT SELECTOR は「商品を見るAI」ではなく、
 必ず分けること：
 1. 観測根拠
 2. 推論
-3. 触るべきジャンル候補
-4. まだ触らない理由
-5. 次に集めるべきデータ
-6. SELL CHECKに渡すべき個別商品条件
+3. スクショ内に見える商品群の分解
+4. 今この場で見るべき候補ランキング
+5. まだ触らない理由
+6. 次に集めるべきデータ
+7. SELL CHECKに渡すべき個別商品条件
 
 禁止：
 - 実在しないデータを見たふりをしない
@@ -91,6 +92,10 @@ PRODUCT SELECTOR は「商品を見るAI」ではなく、
 - 既に一部で再評価されているが、まだ仕入れ市場に完全反映されていない文脈を探す
 - Ventoの世界観に乗るかを重視する
 - 小資本フェーズでは、小型・軽量・壊れにくい・投稿価値が高いものを優先する
+- スクショに複数の商品群がある場合は、必ず複数候補へ分解する
+- 「レトロアパレル」など大分類1つにまとめすぎない
+- 画像内に文具・シール・メモ帳・キャラ雑貨・ぬいぐるみ・家電・スニーカー等が混在する場合、それぞれ別候補として扱う
+- 高額スニーカーやブランド衣類は、小資本フェーズではリスク候補として分ける
 - 価格判断と仕入れ上限は SELL CHECK へ渡す
 
 出力は必ず JSON のみ。
@@ -158,12 +163,12 @@ decision は touch_now / research_first / watch_only / avoid_now のいずれか
   "searchKeywords": [],
   "buyCandidates": [
     {
-      "name": "",
+      "name": "平成レトロ文具・メモ帳/シール",
       "score": 0,
       "action": "research_first",
-      "reason": "",
-      "evidence": [],
-      "sellCheckKeywords": []
+      "reason": "スクショ内の商品群を分解し、今見る候補として返す。最終購入判断ではない。",
+      "evidence": ["画像内で見えた商品特徴", "小型軽量か", "価格帯/状態/送料リスク"],
+      "sellCheckKeywords": ["SELL CHECKへ渡す検索語"]
     }
   ],
   "observationFacts": [
@@ -290,7 +295,19 @@ function normalizeBuyCandidates(v: unknown, fallback: ProductSelectorBuyCandidat
     .filter((x): x is ProductSelectorBuyCandidate => Boolean(x))
     .slice(0, 6);
 
-  return out.length > 0 ? out : fallback;
+  // AIが「レトロアパレル」など1候補に寄りすぎた場合でも、
+  // 固定ルール側で分解した候補を消さずに合流します。
+  const seen = new Set<string>();
+  const merged: ProductSelectorBuyCandidate[] = [];
+
+  for (const candidate of [...out, ...fallback].sort((a, b) => b.score - a.score)) {
+    const key = candidate.name.toLowerCase().trim();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    merged.push(candidate);
+  }
+
+  return merged.length > 0 ? merged.slice(0, 6) : fallback;
 }
 
 function normalizeObservationFacts(v: unknown, fallback: ProductSelectorObservationFact[]): ProductSelectorObservationFact[] {

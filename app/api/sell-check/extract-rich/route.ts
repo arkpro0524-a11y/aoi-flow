@@ -235,16 +235,9 @@ export async function POST(req: NextRequest) {
       ...form.getAll("image"),
     ].filter((x): x is File => x instanceof File);
 
-    if (!text) {
+    if (!text && files.length === 0) {
       return NextResponse.json(
-        { ok: false, error: "商品ページ本文が空です" },
-        { status: 400 }
-      );
-    }
-
-    if (files.length === 0) {
-      return NextResponse.json(
-        { ok: false, error: "商品画像が必要です" },
+        { ok: false, error: "本文または画像を1つ以上入力してください" },
         { status: 400 }
       );
     }
@@ -268,7 +261,7 @@ export async function POST(req: NextRequest) {
 
     const prompt = `
 あなたは中古販売・フリマ商品の学習データ作成担当です。
-商品ページ本文と複数の商品画像を同時に見て、売れる診断の学習データを1行に整理してください。
+商品ページ本文と複数の商品画像を統合して、売れる診断の学習データを1行に整理してください。本文だけ、画像だけの場合も分かる範囲で整理してください。
 
 必ずJSONだけを返してください。
 説明文は不要です。
@@ -316,6 +309,8 @@ export async function POST(req: NextRequest) {
 
 重要：
 - 複数画像は同じ商品の別角度として扱う
+- 画像だけの場合は、商品名や価格が不明なら空文字にし、画像から読める特徴をmemoとkeywordsに残す
+- 本文だけの場合は、画像スコアは分からないため50前後の控えめ評価にする
 - 傷・汚れ・欠品が1枚でも見える場合はmemoに書く
 - 本文と画像の状態説明がズレる場合、conditionRiskScoreを上げる
 - 分からないことは断定しない
