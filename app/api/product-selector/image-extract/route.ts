@@ -16,6 +16,7 @@ type ImageExtractResult = {
   category: string;
   keywords: string[];
   memo: string;
+  detectedFeaturesText: string;
 };
 
 function safeString(v: unknown): string {
@@ -58,6 +59,7 @@ function normalizeResult(raw: unknown): ImageExtractResult {
     category: safeString(obj.category),
     keywords: safeStringArray(obj.keywords),
     memo: safeString(obj.memo),
+    detectedFeaturesText: safeString(obj.detectedFeaturesText),
   };
 }
 
@@ -133,7 +135,8 @@ PRODUCT SELECTORの入力欄へ反映するため、1枚または複数のスク
   "candidateHint": "画像内に見える商品群を大分類1つに潰さず、文具/シール/メモ帳/キャラ雑貨/ぬいぐるみ/家電/アパレル/スニーカー等に分解した候補",
   "category": "electronics / fashion / interior / hobby / kids / other のどれか",
   "keywords": ["検索に使う短い語句"],
-  "memo": "注意点。断定できないことは断定しない"
+  "memo": "注意点。断定できないことは断定しない",
+  "detectedFeaturesText": "色合い、年代感、素材、レア要素、投稿価値、仕入れ実務を箇条書きで統合"
 }
 
 既存入力：${JSON.stringify(input)}
@@ -144,6 +147,8 @@ PRODUCT SELECTORの入力欄へ反映するため、1枚または複数のスク
 - 複数スクショは同じ観測テーマの別サンプルとして統合し、共通して見える売れ筋特徴と例外を分けてください。
 - スクショに複数の商品群がある場合、必ず複数の候補名を candidateHint / keywords / memo に残してください。
 - 「レトロ」や「アパレル」だけでまとめず、平成レトロ文具、メモ帳、シール、キャラクター雑貨、ぬいぐるみ、卓上家電、高額スニーカーなど具体的に分解してください。
+- detectedFeaturesTextには必ず、色合い、年代感、素材、レア要素、投稿価値、仕入れ実務を入れてください。
+- 例：色合い=くすみ赤/黄ばみクリーム/昭和印刷色、年代感=昭和後期〜平成初期、素材=紙もの/金属/陶器、レア要素=企業ノベルティ/当時物/年号/セット量、投稿価値=俯瞰撮影/並べ撮り、仕入れ実務=軽い/壊れにくい/送料注意。
 - 画像から読み取れない価格上昇や人気拡大は断定しないでください。
 `.trim();
 

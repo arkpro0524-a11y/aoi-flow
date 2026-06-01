@@ -20,6 +20,7 @@ import type {
   ProductSelectorGenreCandidate,
   ProductSelectorBuyCandidate,
   ProductSelectorObservationFact,
+  ProductSelectorDetectedFeature,
   ProductSelectorInput,
   ProductSelectorResult,
 } from "@/lib/productSelector/scoring";
@@ -93,10 +94,14 @@ PRODUCT SELECTOR は「商品を見るAI」ではなく、
 - Ventoの世界観に乗るかを重視する
 - 小資本フェーズでは、小型・軽量・壊れにくい・投稿価値が高いものを優先する
 - スクショに複数の商品群がある場合は、必ず複数候補へ分解する
+- 画像やスクショが投入されている場合、絶対に「視覚素材未提供」と書かない。低精度なら「視覚特徴は粗い」と書く
 - 「レトロアパレル」など大分類1つにまとめすぎない
 - 画像内に文具・シール・メモ帳・キャラ雑貨・ぬいぐるみ・家電・スニーカー等が混在する場合、それぞれ別候補として扱う
 - 高額スニーカーやブランド衣類は、小資本フェーズではリスク候補として分ける
 - 価格判断と仕入れ上限は SELL CHECK へ渡す
+- 色合いは、くすみ赤/クリーム/黄ばみ/パステル/金属色/昭和印刷色などの粒度で見る
+- 年代は、昭和中期/昭和後期/1980年代/平成初期/Y2Kなど、断定せず推定レンジで見る
+- レア要素は、非売品/企業ノベルティ/当時物/廃盤/年号/セット量/未使用などに分ける
 
 出力は必ず JSON のみ。
 説明文やMarkdownを外側に書かない。
@@ -173,6 +178,14 @@ decision は touch_now / research_first / watch_only / avoid_now のいずれか
   ],
   "observationFacts": [
     { "label": "", "value": "", "confidence": 0 }
+  ],
+  "detectedFeatures": [
+    { "label": "色合い", "value": "", "confidence": 0 },
+    { "label": "年代感", "value": "", "confidence": 0 },
+    { "label": "素材", "value": "", "confidence": 0 },
+    { "label": "レア要素", "value": "", "confidence": 0 },
+    { "label": "投稿価値", "value": "", "confidence": 0 },
+    { "label": "仕入れ実務", "value": "", "confidence": 0 }
   ],
   "learningSignals": [],
   "evidence": [
@@ -333,6 +346,30 @@ function normalizeObservationFacts(v: unknown, fallback: ProductSelectorObservat
   return out.length > 0 ? out : fallback;
 }
 
+function normalizeDetectedFeatures(v: unknown, fallback: ProductSelectorDetectedFeature[]): ProductSelectorDetectedFeature[] {
+  const rows = Array.isArray(v) ? v : [];
+
+  const out = rows
+    .map((x) => {
+      if (!x || typeof x !== "object") return null;
+      const row = x as { label?: unknown; value?: unknown; confidence?: unknown };
+      const label = safeString(row.label);
+      const value = safeString(row.value);
+      if (!label && !value) return null;
+
+      return {
+        label: label || "検出特徴",
+        value: value || "未確定",
+        confidence: safeNumber(row.confidence, 50),
+      };
+    })
+    .filter((x): x is ProductSelectorDetectedFeature => Boolean(x))
+    .slice(0, 10);
+
+  // AIが特徴を返さない場合でも、固定ルール側の特徴を消さない。
+  return out.length > 0 ? out : fallback;
+}
+
 function normalizeEvidence(v: unknown): ProductSelectorAiFinding[] {
   if (!Array.isArray(v)) return [];
 
@@ -395,6 +432,7 @@ export function normalizeProductSelectorAiResult(
         : fallback.searchKeywords,
     buyCandidates: normalizeBuyCandidates(obj.buyCandidates, fallback.buyCandidates),
     observationFacts: normalizeObservationFacts(obj.observationFacts, fallback.observationFacts),
+    detectedFeatures: normalizeDetectedFeatures(obj.detectedFeatures, fallback.detectedFeatures),
     learningSignals:
       safeStringArray(obj.learningSignals).length > 0
         ? safeStringArray(obj.learningSignals)

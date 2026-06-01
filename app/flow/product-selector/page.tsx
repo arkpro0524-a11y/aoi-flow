@@ -225,6 +225,7 @@ type ProductSelectorImageExtractResult = {
   category: string;
   keywords: string[];
   memo: string;
+  detectedFeaturesText?: string;
 };
 
 type ProductSelectorImageExtractResponse = {
@@ -545,6 +546,26 @@ function ResultPanel({ result, input, hasInput }: { result: ProductSelectorResul
         </div>
       </div>
 
+      {result.detectedFeatures.length > 0 ? (
+        <div className="rounded-3xl border border-cyan-200/15 bg-cyan-200/[0.055] p-5">
+          <h3 className="text-lg font-black text-white">検出特徴</h3>
+          <p className="mt-2 text-xs font-bold leading-6 text-white/50">
+            スクショから見えた色合い・年代感・素材・レア要素・投稿価値・仕入れ実務です。ここは商品価格ではなく、次に見るべき特徴の整理です。
+          </p>
+          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {result.detectedFeatures.map((feature) => (
+              <div key={`${feature.label}-${feature.value}`} className="rounded-2xl border border-white/10 bg-black/25 p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-xs font-black text-cyan-50/70">{feature.label}</span>
+                  <span className="text-xs font-black text-white/45">信頼 {feature.confidence}/100</span>
+                </div>
+                <p className="mt-2 text-sm font-bold leading-7 text-white/75">{feature.value}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
       <div className="grid gap-4 lg:grid-cols-2">
         <div className="rounded-3xl border border-white/10 bg-white/[0.05] p-5">
           <h3 className="text-lg font-black text-white">観測データ化</h3>
@@ -864,7 +885,7 @@ export default function ProductSelectorPage() {
         name: input.name.trim() || extracted.observationTheme || input.name,
         sourceTypes: mergeWords(input.sourceTypes, ["スクショ画像", `${imageFileNames.length}枚`, ...imageFileNames]),
         sourceText: appendLine(input.sourceText, extracted.sourceText),
-        visualNotes: appendLine(input.visualNotes, extracted.visualNotes),
+        visualNotes: appendLine(input.visualNotes, appendLine(extracted.visualNotes, extracted.detectedFeaturesText)),
         candidateHint: appendLine(input.candidateHint, extracted.candidateHint),
         category: input.category || extracted.category || input.category,
         keywords: mergeWords(input.keywords, extracted.keywords),

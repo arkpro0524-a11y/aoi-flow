@@ -69,6 +69,12 @@ export type ProductSelectorObservationFact = {
   confidence: number;
 };
 
+export type ProductSelectorDetectedFeature = {
+  label: string;
+  value: string;
+  confidence: number;
+};
+
 export type ProductSelectorResult = {
   totalScore: number;
   decision: ProductSelectorDecision;
@@ -85,6 +91,7 @@ export type ProductSelectorResult = {
   searchKeywords: string[];
   buyCandidates: ProductSelectorBuyCandidate[];
   observationFacts: ProductSelectorObservationFact[];
+  detectedFeatures: ProductSelectorDetectedFeature[];
   learningSignals: string[];
 };
 
@@ -227,6 +234,12 @@ const VISUAL_WORDS = [
   "ノイズ",
   "古さ",
   "写真",
+  "画像",
+  "スクショ",
+  "商品画像",
+  "売り切れ",
+  "sold",
+  "メルカリ",
   "動画",
   "リール",
 ];
@@ -440,7 +453,7 @@ type ProductGroupRule = {
 const PRODUCT_GROUP_RULES: ProductGroupRule[] = [
   {
     name: "平成レトロ文具・メモ帳/シール",
-    words: ["平成", "レトロ", "メモ", "メモ帳", "シール", "文具", "便箋", "手帳", "紙もの", "サンリオ", "zashikibuta"],
+    words: ["昭和", "平成", "レトロ", "メモ", "メモ帳", "シール", "文具", "便箋", "手帳", "紙もの", "紙", "封筒", "切手", "レター", "サンリオ", "zashikibuta"],
     smallCapitalWords: ["メモ", "メモ帳", "シール", "文具", "紙もの", "便箋", "手帳"],
     riskWords: ["汚れ", "折れ", "書き込み", "欠品"],
     reason: "スクショ上で複数見えやすい紙もの・文具系です。小型軽量で送料が抑えやすく、平成レトロ/キャラ文具の文脈にも接続できます。",
@@ -802,6 +815,62 @@ function actionLabel(action: ProductSelectorBuyCandidate["action"]): string {
   return "観測のみ";
 }
 
+function extractDetectedFeatures(text: string): ProductSelectorDetectedFeature[] {
+  const features: ProductSelectorDetectedFeature[] = [];
+
+  function add(label: string, value: string, confidence: number) {
+    if (!value) return;
+    const key = normalizeText(`${label}:${value}`);
+    if (features.some((item) => normalizeText(`${item.label}:${item.value}`) === key)) return;
+    features.push({ label, value, confidence: clampScore(confidence) });
+  }
+
+  const eraValues: string[] = [];
+  if (includesAny(text, ["昭和", "昭和13年", "昭和14年", "昭和40", "昭和50", "昭和60"])) eraValues.push("昭和中期〜後期");
+  if (includesAny(text, ["平成", "平成レトロ", "90年代", "1990", "2000", "y2k"])) eraValues.push("平成初期〜Y2K");
+  if (includesAny(text, ["1980", "80年代", "1984", "1985", "1986", "1987", "1988", "1989"])) eraValues.push("1980年代");
+  if (includesAny(text, ["1970", "70年代", "1960", "60年代"])) eraValues.push("1960〜1970年代");
+  add("年代感", uniqKeepOrder(eraValues).join(" / ") || "年代は未確定。商品名・刻印・年号の確認が必要", eraValues.length > 0 ? 76 : 35);
+
+  const colorValues: string[] = [];
+  if (includesAny(text, ["赤", "レッド", "red", "朱色"])) colorValues.push("くすみ赤・昭和印刷赤");
+  if (includesAny(text, ["黄", "黄色", "イエロー", "クリーム", "黄ばみ"])) colorValues.push("黄ばみ・クリーム系");
+  if (includesAny(text, ["青", "ブルー", "水色", "紺"])) colorValues.push("青・くすみブルー");
+  if (includesAny(text, ["ピンク", "桃", "サンリオ", "かわいい"])) colorValues.push("ピンク/パステル系");
+  if (includesAny(text, ["金", "ゴールド", "古銭", "真鍮", "銅"])) colorValues.push("金属色・真鍮/古銭色");
+  if (includesAny(text, ["カラフル", "柄", "ポップ", "キャラクター"])) colorValues.push("多色・ポップ柄");
+  add("色合い", uniqKeepOrder(colorValues).join(" / ") || "色合いは未確定。スクショから手動メモを追加すると精度が上がる", colorValues.length > 0 ? 72 : 30);
+
+  const materialValues: string[] = [];
+  if (includesAny(text, ["紙", "紙もの", "メモ", "メモ帳", "シール", "切手", "カード", "便箋", "レター"])) materialValues.push("紙もの");
+  if (includesAny(text, ["金属", "古銭", "真鍮", "ブリキ", "ミニカー", "カメラ"])) materialValues.push("金属");
+  if (includesAny(text, ["プラスチック", "プラ", "フィギュア", "雑貨", "おもちゃ"])) materialValues.push("プラスチック");
+  if (includesAny(text, ["布", "ぬいぐるみ", "tシャツ", "服", "アパレル", "スウェット"])) materialValues.push("布・繊維");
+  if (includesAny(text, ["陶器", "器", "皿", "茶碗", "グラス", "ガラス"])) materialValues.push("陶器/ガラス");
+  add("素材", uniqKeepOrder(materialValues).join(" / ") || "素材は未確定", materialValues.length > 0 ? 78 : 35);
+
+  const rarityValues: string[] = [];
+  if (includesAny(text, ["非売品", "ノベルティ", "企業物", "企業ロゴ", "pr", "販促", "配布"])) rarityValues.push("企業ノベルティ/販促品");
+  if (includesAny(text, ["当時物", "未使用", "廃盤", "絶版", "レア", "希少"])) rarityValues.push("当時物・廃盤/未使用系");
+  if (includesAny(text, ["昭和13年", "昭和14年", "古銭", "切手", "年号"])) rarityValues.push("年号・刻印で個体差確認可能");
+  if (includesAny(text, ["セット", "まとめ", "大量", "15セット", "4点", "10点"])) rarityValues.push("セット量で価値化しやすい");
+  add("レア要素", uniqKeepOrder(rarityValues).join(" / ") || "レア要素は未確定。非売品・年号・当時物・企業名を確認", rarityValues.length > 0 ? 70 : 32);
+
+  const practicalValues: string[] = [];
+  if (includesAny(text, ["紙", "シール", "メモ", "カード", "切手", "小物", "ミニカー", "キーホルダー"])) practicalValues.push("小型・軽量・送料を抑えやすい");
+  if (includesAny(text, ["陶器", "ガラス", "家電", "カメラ", "ライト", "扇風機"])) practicalValues.push("動作/破損/送料リスクあり");
+  if (includesAny(text, ["スニーカー", "ブランド", "高額", "nike", "ナイキ"])) practicalValues.push("真贋・サイズ・高額リスクあり");
+  add("仕入れ実務", uniqKeepOrder(practicalValues).join(" / ") || "送料・破損・真贋は個別確認", practicalValues.length > 0 ? 75 : 40);
+
+  const photoValues: string[] = [];
+  if (includesAny(text, ["紙", "シール", "メモ", "カード", "切手", "大量", "セット", "柄"])) photoValues.push("俯瞰撮影・並べ撮り向き");
+  if (includesAny(text, ["金属", "古銭", "カメラ", "ミニカー", "真鍮"])) photoValues.push("質感アップ撮影向き");
+  if (includesAny(text, ["キャラクター", "サンリオ", "かわいい", "ポップ", "カラフル"])) photoValues.push("SNS映え/キャラ訴求向き");
+  add("投稿価値", uniqKeepOrder(photoValues).join(" / ") || "投稿価値は未確定", photoValues.length > 0 ? 76 : 35);
+
+  return features.slice(0, 8);
+}
+
 function buildObservationFacts(input: ProductSelectorInput, text: string, axes: ProductSelectorAxis[]): ProductSelectorObservationFact[] {
   const source = input.sourceTypes || "観測元未指定";
   const visualScore = axes.find((axis) => axis.key === "visual")?.score ?? 0;
@@ -821,7 +890,7 @@ function buildObservationFacts(input: ProductSelectorInput, text: string, axes: 
     },
     {
       label: "視覚素材",
-      value: visualScore >= 50 ? "画像・スクショから見た目の特徴あり" : "視覚根拠はまだ弱い",
+      value: visualScore >= 50 ? "画像・スクショから見た目の特徴あり" : "画像はあるが、色・素材・年代・商品群の抽出がまだ弱い",
       confidence: visualScore,
     },
     {
@@ -972,6 +1041,7 @@ export function evaluateProductCandidate(input: ProductSelectorInput): ProductSe
   const genreCandidates = buildGenreCandidates(mergedText);
   const buyCandidates = buildBuyCandidates({ input, text: mergedText, axes, genreCandidates });
   const observationFacts = buildObservationFacts(input, mergedText, axes);
+  const detectedFeatures = extractDetectedFeatures(mergedText);
   const learningSignals = buildLearningSignals(input, mergedText);
 
   const nextActions = [
@@ -1010,6 +1080,7 @@ export function evaluateProductCandidate(input: ProductSelectorInput): ProductSe
     searchKeywords: buildSearchKeywords(input, mergedText),
     buyCandidates,
     observationFacts,
+    detectedFeatures,
     learningSignals,
   };
 }
