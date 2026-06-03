@@ -224,6 +224,7 @@ export default function FlowShell({ user, onLogout, children }: Props) {
                 <Tab href="/" label="トップ" />
                 <Tab href="/flow/drafts" label="下書き一覧" />
                 <Tab href="/flow/drafts/new" label="新規作成" />
+                <Tab href="/flow/library" label="画像ライブラリ" />
                 <Tab href="/flow/product-selector" label="商品選定" />
                 <Tab href="/flow/sell-check" label="売れる診断" />
 

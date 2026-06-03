@@ -69,6 +69,12 @@ const BG_SCALE_UI_MAX = 440;
 const BG_POS_UI_MIN = 0;
 const BG_POS_UI_MAX = 200;
 
+
+type LibraryBackgroundItem = {
+  url: string;
+  name: string;
+  source: "template" | "bg-stock" | "uploaded";
+};
 type Props = {
   serverPlacementMeta?: {
     canvas?: number;
@@ -114,6 +120,7 @@ type Props = {
 
   templateBgUrls?: string[];
   aiBgUrls?: string[];
+  libraryBackgrounds?: LibraryBackgroundItem[];
 
   templateRecommended?: TemplateRecommendItem[];
   templateRecommendTopReason?: string;
@@ -905,6 +912,85 @@ function SmallBadge({ active, label }: { active: boolean; label: string }) {
   );
 }
 
+
+function LibraryBackgroundSection({
+  title,
+  emptyText,
+  assets,
+  busy,
+  currentUrl,
+  onSelect,
+  labelForSource,
+}: {
+  title: string;
+  emptyText: string;
+  assets: LibraryBackgroundItem[];
+  busy?: boolean;
+  currentUrl?: string;
+  onSelect: (url: string) => void | Promise<void>;
+  labelForSource: (source: LibraryBackgroundItem["source"]) => string;
+}) {
+  const safeCurrentUrl = String(currentUrl || "").trim();
+
+  return (
+    <div>
+      <div className="mb-2 text-white/60" style={{ fontSize: 11 }}>
+        {title}
+      </div>
+
+      {(assets || []).length > 0 ? (
+        <div className="flex max-h-[220px] flex-col gap-2 overflow-auto pr-1">
+          {(assets || []).slice(0, 12).map((asset, i) => {
+            const u = String(asset.url || "").trim();
+            const isCurrent = safeCurrentUrl === u;
+
+            return (
+              <button
+                key={`${title}-${u}-${i}`}
+                type="button"
+                disabled={busy || !u}
+                onClick={async () => {
+                  await onSelect(u);
+                }}
+                className="rounded-xl border px-3 py-3 text-left transition hover:bg-white/5"
+                style={{
+                  borderColor: isCurrent
+                    ? "rgba(120,255,220,0.55)"
+                    : "rgba(255,255,255,0.10)",
+                  background: isCurrent
+                    ? "rgba(120,255,220,0.08)"
+                    : "rgba(0,0,0,0.15)",
+                  color: "rgba(255,255,255,0.82)",
+                }}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="truncate font-semibold" style={{ fontSize: 12 }}>
+                      {asset.name || `${title} ${i + 1}`}
+                    </div>
+                    <div className="mt-1 text-white/45" style={{ fontSize: 10 }}>
+                      {labelForSource(asset.source)}
+                    </div>
+                  </div>
+
+                  <SmallBadge active={isCurrent} label={isCurrent ? "選択中" : "未選択"} />
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      ) : (
+        <div
+          className="rounded-xl border border-white/10 bg-black/20 px-3 py-3 text-white/55"
+          style={{ fontSize: 12, lineHeight: 1.6 }}
+        >
+          {emptyText}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SizeTemplateButton({
   active,
   label,
@@ -955,6 +1041,7 @@ export default function ProductPlacementEditor({
 
   templateBgUrls = [],
   aiBgUrls = [],
+  libraryBackgrounds = [],
 
   templateRecommended = [],
   templateRecommendTopReason = "",
@@ -1055,6 +1142,19 @@ export default function ProductPlacementEditor({
   const [compositeImageRefreshKey, setCompositeImageRefreshKey] = useState(0);
   const [compositeTextImageRefreshKey, setCompositeTextImageRefreshKey] =
     useState(0);
+
+
+  const templateLibraryBackgrounds = useMemo(() => {
+    return (libraryBackgrounds || []).filter((asset) => asset.source === "template");
+  }, [libraryBackgrounds]);
+
+  const aiLibraryBackgrounds = useMemo(() => {
+    return (libraryBackgrounds || []).filter((asset) => asset.source === "bg-stock");
+  }, [libraryBackgrounds]);
+
+  const uploadedLibraryBackgrounds = useMemo(() => {
+    return (libraryBackgrounds || []).filter((asset) => asset.source === "uploaded");
+  }, [libraryBackgrounds]);
 
   const safeSizeTemplateType: SizeTemplateType =
     sizeTemplateType === "compare" || sizeTemplateType === "detail"
@@ -1634,6 +1734,10 @@ export default function ProductPlacementEditor({
     if (!current) return -1;
     return templateRecommended.findIndex((item) => item.url === current);
   }, [templateBgUrl, templateRecommended]);
+
+  const currentTemplateBgUrl = useMemo(() => {
+    return String(templateBgUrl || "").trim();
+  }, [templateBgUrl]);
 
   const currentAiBgUrl = useMemo(() => {
     return String(bgImageUrl || "").trim();
@@ -2373,6 +2477,54 @@ export default function ProductPlacementEditor({
                   </div>
                 )}
               </div>
+
+              <LibraryBackgroundSection
+                title="テンプレ背景ライブラリ"
+                emptyText="テンプレ背景がありません。背景生成タブでテンプレ背景を生成するか、画像ライブラリへ保存してください。"
+                assets={templateLibraryBackgrounds}
+                busy={busy}
+                currentUrl={currentTemplateBgUrl || templateBgUrl || bgImageUrl}
+                onSelect={async (u) => {
+                  await onSelectTemplateBg?.(u);
+                  await onChangePhotoMode(TEMPLATE_MODE);
+                  setIsBackgroundLocked(false);
+                  setEditingStep("background");
+                  setActivePreviewTab("edit");
+                }}
+                labelForSource={() => "テンプレ背景"}
+              />
+
+              <LibraryBackgroundSection
+                title="AI生成背景ライブラリ"
+                emptyText="AI生成背景がありません。背景生成タブでAI背景を生成・同期してください。"
+                assets={aiLibraryBackgrounds}
+                busy={busy}
+                currentUrl={currentAiBgUrl || bgImageUrl}
+                onSelect={async (u) => {
+                  await onSelectAiBg?.(u);
+                  await onChangePhotoMode(AI_BG_MODE);
+                  setIsBackgroundLocked(false);
+                  setEditingStep("background");
+                  setActivePreviewTab("edit");
+                }}
+                labelForSource={() => "AI生成背景"}
+              />
+
+              <LibraryBackgroundSection
+                title="手動アップロード背景"
+                emptyText="手動アップロード背景がありません。画像ライブラリから保存してください。"
+                assets={uploadedLibraryBackgrounds}
+                busy={busy}
+                currentUrl={currentAiBgUrl || bgImageUrl}
+                onSelect={async (u) => {
+                  await onSelectAiBg?.(u);
+                  await onChangePhotoMode(AI_BG_MODE);
+                  setIsBackgroundLocked(false);
+                  setEditingStep("background");
+                  setActivePreviewTab("edit");
+                }}
+                labelForSource={() => "手動アップロード"}
+              />
             </div>
           </div>
 

@@ -142,6 +142,57 @@ function buildDownloadUrl(bucketName: string, path: string, token: string) {
   )}?alt=media&token=${token}`;
 }
 
+async function mirrorTemplateBackgroundToLibrary({
+  bucket,
+  uid,
+  sourcePath,
+  fileName,
+}: {
+  bucket: any;
+  uid: string;
+  sourcePath: string;
+  fileName: string;
+}) {
+  const safeName = fileName.replace(/[^a-zA-Z0-9_.-]/g, "_") || `template_${Date.now()}.png`;
+  const libraryPath = `users/${uid}/asset-library/template-backgrounds/${safeName}`;
+
+  if (sourcePath === libraryPath) {
+    return "";
+  }
+
+  const sourceFile = bucket.file(sourcePath);
+  const libraryFile = bucket.file(libraryPath);
+
+  const [libraryExists] = await libraryFile.exists().catch(() => [false]);
+  if (!libraryExists) {
+    await sourceFile.copy(libraryFile);
+  }
+
+  const [meta] = await libraryFile.getMetadata().catch(() => [null as any]);
+  const existingToken =
+    meta?.metadata?.firebaseStorageDownloadTokens ||
+    meta?.metadata?.firebaseStorageDownloadToken ||
+    "";
+
+  const token =
+    typeof existingToken === "string" && existingToken.trim()
+      ? existingToken.split(",")[0].trim()
+      : crypto.randomUUID();
+
+  if (!existingToken) {
+    await libraryFile.setMetadata({
+      contentType: meta?.contentType || "image/png",
+      metadata: {
+        firebaseStorageDownloadTokens: token,
+        aoiFlowAssetKind: "templateBackground",
+        sourcePath,
+      },
+    });
+  }
+
+  return buildDownloadUrl(bucket.name, libraryPath, token);
+}
+
 async function loadBrand(uid: string, brandId: string) {
   const db = getAdminDb();
   const ref = db.doc(`users/${uid}/brands/${brandId}`);
@@ -844,6 +895,12 @@ export async function POST(req: Request) {
       }
 
       const url = buildDownloadUrl(bucket.name, objectPath, token);
+      const libraryUrl = await mirrorTemplateBackgroundToLibrary({
+        bucket,
+        uid,
+        sourcePath: objectPath,
+        fileName: `${templateCategory}_${hash}.png`,
+      }).catch(() => "");
 
       const prevTemplateBgUrls = Array.isArray(draftData.templateBgUrls)
         ? draftData.templateBgUrls.map((v: unknown) => String(v ?? "").trim()).filter(Boolean)
@@ -871,6 +928,7 @@ export async function POST(req: Request) {
         reused: true,
         url,
         imageUrl: url,
+        libraryUrl,
         templateCategory,
         tags,
         templateId: `${templateCategory}_${hash}`,
@@ -950,6 +1008,12 @@ export async function POST(req: Request) {
     });
 
     const url = buildDownloadUrl(bucket.name, objectPath, token);
+    const libraryUrl = await mirrorTemplateBackgroundToLibrary({
+      bucket,
+      uid,
+      sourcePath: objectPath,
+      fileName: `${templateCategory}_${hash}.png`,
+    }).catch(() => "");
 
     const prevTemplateBgUrls = Array.isArray(draftData.templateBgUrls)
       ? draftData.templateBgUrls.map((v: unknown) => String(v ?? "").trim()).filter(Boolean)
@@ -978,6 +1042,7 @@ export async function POST(req: Request) {
       reused: false,
       url,
       imageUrl: url,
+      libraryUrl,
       templateCategory,
       tags,
       templateId: `${templateCategory}_${hash}`,

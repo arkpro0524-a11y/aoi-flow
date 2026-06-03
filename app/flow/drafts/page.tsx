@@ -347,6 +347,8 @@ export default function DraftsPage() {
                         <img
                           src={d.imageUrl}
                           alt="thumb"
+                          loading="lazy"
+                          decoding="async"
                           draggable={false}
                           style={{
                             width: "100%",
@@ -425,6 +427,8 @@ export default function DraftsPage() {
                         <img
                           src={d.imageUrl}
                           alt="thumb"
+                          loading="lazy"
+                          decoding="async"
                           draggable={false}
                           style={{
                             width: "100%",

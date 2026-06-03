@@ -8,7 +8,7 @@ import type {
   TextOverlay,
   SizeTemplateType,
 } from "@/lib/types/draft";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { ref, uploadBytes, getDownloadURL, listAll } from "firebase/storage";
 import { storage } from "@/firebase";
 import { Btn } from "../ui";
 import ProductPlacementEditor from "./ProductPlacementEditor";
@@ -39,6 +39,12 @@ type TemplateRecommendResult = {
   picked?: {
     reason?: string;
   } | null;
+};
+
+type UserLibraryBackground = {
+  url: string;
+  name: string;
+  source: "template" | "bg-stock" | "uploaded";
 };
 
 type Props = {
@@ -665,6 +671,81 @@ export default function BackgroundPanel({
   const [aiBgReferenceUrl, setAiBgReferenceUrl] = useState("");
   const [aiBgReferenceBusy, setAiBgReferenceBusy] = useState(false);
 
+  const [libraryBackgrounds, setLibraryBackgrounds] = useState<UserLibraryBackground[]>([]);
+  const [libraryBusy, setLibraryBusy] = useState(false);
+
+  async function loadUserBackgroundLibrary() {
+    if (!uid) return;
+
+    setLibraryBusy(true);
+
+    try {
+      const targets: Array<{ source: UserLibraryBackground["source"]; path: string }> = [
+        // テンプレ背景の共通ライブラリ。
+        // ここを読み込まないと、画像ライブラリに保存したテンプレ背景を
+        // 商品/背景合成側から選べません。
+        { source: "template" as const, path: `users/${uid}/asset-library/template-backgrounds` },
+        { source: "bg-stock" as const, path: `users/${uid}/bg-stock` },
+        { source: "uploaded" as const, path: `users/${uid}/asset-library/uploaded` },
+      ];
+
+      // 既存下書きのテンプレ背景も救済して表示します。
+      // 以前の実装ではテンプレ背景が下書き配下だけに保存されるため、
+      // 共通ライブラリが空だと「テンプレ背景がない」ように見えていました。
+      const draftRoot = await listAll(ref(storage, `users/${uid}/drafts`)).catch(() => ({
+        prefixes: [] as any[],
+      }));
+
+      for (const draftPrefix of draftRoot.prefixes || []) {
+        if (!draftPrefix?.fullPath) continue;
+        targets.push({
+          source: "template" as const,
+          path: `${draftPrefix.fullPath}/template-bg`,
+        });
+      }
+
+      const next: UserLibraryBackground[] = [];
+
+      for (const target of targets) {
+        const listed = await listAll(ref(storage, target.path)).catch(() => ({ items: [] as any[] }));
+
+        for (const item of listed.items) {
+          const url = await getDownloadURL(item).catch(() => "");
+          if (!url) continue;
+
+          next.push({
+            url,
+            name: item.name,
+            source: target.source,
+          });
+        }
+      }
+
+      const seen = new Set<string>();
+      setLibraryBackgrounds(
+        next.filter((asset) => {
+          if (seen.has(asset.url)) return false;
+          seen.add(asset.url);
+          return true;
+        })
+      );
+    } catch (e: any) {
+      console.error(e);
+      showMsg(`画像ライブラリの取得に失敗：${e?.message || "不明"}`);
+    } finally {
+      setLibraryBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!uid) {
+      setLibraryBackgrounds([]);
+      return;
+    }
+
+    void loadUserBackgroundLibrary();
+  }, [uid]);
+
   async function uploadAiBackgroundReference(file: File | null) {
     if (!file || !uid) return;
     setAiBgReferenceBusy(true);
@@ -941,8 +1022,8 @@ await saveDraft({
   gap: 12px;
 
   /*
-    現在の背景プレビューは上に固定し、
-    画像の目的 / 背景選択 / テンプレ背景 / AI背景だけを
+    現在の背景生成プレビューは上に固定し、
+    画像の目的 / 背景生成 / テンプレ背景 / AI背景だけを
     この枠の中で独立スクロールさせます。
 
     重要:
@@ -988,7 +1069,7 @@ await saveDraft({
         <div className="flex flex-wrap items-center gap-2">
           <TopTabButton
             active={innerTab === "background"}
-            label="背景選択"
+            label="背景生成"
             onClick={() => setInnerTab("background")}
           />
           <TopTabButton
@@ -1003,7 +1084,7 @@ await saveDraft({
             <div className="backgroundFixedPreview">
               <div className="mb-2 flex items-center justify-between gap-2">
                 <div className="text-white/80 font-bold" style={{ fontSize: 12 }}>
-                  現在の背景プレビュー
+                  現在の背景生成プレビュー
                 </div>
 
                 <SmallBadge
@@ -1038,7 +1119,7 @@ await saveDraft({
               )}
 
               <div className="mt-2 text-white/50" style={{ fontSize: 11, lineHeight: 1.5 }}>
-                下の操作エリアだけスクロールします。選択中の背景はここに固定表示されます。
+                ここは背景を生成して確認する場所です。背景を使う選択は「商品/背景合成」タブで行います。
               </div>
             </div>
 
@@ -1230,11 +1311,11 @@ await saveDraft({
 
               <div className="rounded-2xl border border-white/10 bg-black/15 p-3">
                 <div className="text-white/85 font-bold" style={{ fontSize: 12 }}>
-                  背景選択
+                  背景生成
                 </div>
 
                 <div className="mt-2 text-white/55" style={{ fontSize: 12, lineHeight: 1.6 }}>
-                  テンプレ背景とAI背景をここでまとめて管理します。選択した背景は合成タブの編集プレビューに反映されます。
+                  ここではテンプレ背景とAI背景を生成・同期し、生成結果を確認します。背景の選択は「商品/背景合成」タブで行います。
                 </div>
               </div>
 
@@ -1272,78 +1353,11 @@ await saveDraft({
                   >
                     テンプレ背景を同期
                   </Btn>
-
-                  <Btn
-                    variant="secondary"
-                    disabled={!uid || busy || templateBgUrls.length === 0 || templateRecommendBusy}
-                    onClick={handleFetchTemplateRecommendations}
-                  >
-                    {templateRecommendBusy ? "おすすめ取得中..." : "おすすめ取得"}
-                  </Btn>
                 </div>
 
                 <div className="mt-2 text-white/55" style={{ fontSize: 12, lineHeight: 1.5 }}>
                   ※ テンプレ背景は、商品を主役に見せる販売向け背景です。
                 </div>
-
-                {templateRecommendTopReason || templateRecommended.length > 0 ? (
-                  <div className="mt-3 rounded-2xl border border-white/10 bg-black/15 p-3">
-                    <div className="text-white/85 font-bold" style={{ fontSize: 12 }}>
-                      おすすめテンプレ
-                    </div>
-
-                    {templateRecommendTopReason ? (
-                      <div
-                        className="mt-2 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-white/72"
-                        style={{ fontSize: 12, lineHeight: 1.6 }}
-                      >
-                        {templateRecommendTopReason}
-                      </div>
-                    ) : null}
-
-                    {templateRecommended.length > 0 ? (
-                      <div className="mt-3 flex flex-col gap-2">
-                        {templateRecommended.slice(0, 3).map((item, index) => {
-                          const isCurrent =
-                            String(templateBgUrl || d.templateBgUrl || "").trim() === item.url;
-
-                          return (
-                            <button
-                              key={`${item.url}-${index}`}
-                              type="button"
-                              onClick={() => void handleSelectTemplateBackground(item.url)}
-                              className="rounded-xl border px-3 py-3 text-left transition hover:bg-white/5"
-                              style={{
-                                borderColor: "rgba(255,255,255,0.10)",
-                                background: "rgba(0,0,0,0.15)",
-                                color: "rgba(255,255,255,0.82)",
-                              }}
-                            >
-                              <div className="flex items-center justify-between gap-3">
-                                <div className="font-semibold" style={{ fontSize: 12 }}>
-                                  おすすめ {index + 1}
-                                  {typeof item.score === "number" ? ` / score ${item.score}` : ""}
-                                </div>
-
-                                <SmallBadge
-                                  active={isCurrent}
-                                  label={isCurrent ? "選択中" : "候補"}
-                                />
-                              </div>
-
-                              <div
-                                className="mt-2 text-white/62"
-                                style={{ fontSize: 12, lineHeight: 1.6 }}
-                              >
-                                {item.reason || "商品との相性が高い背景です"}
-                              </div>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    ) : null}
-                  </div>
-                ) : null}
 
                 {templateBgUrls.length > 0 ? (
                   <div className="mt-3">
@@ -1379,14 +1393,7 @@ await saveDraft({
                               color: "rgba(255,255,255,0.82)",
                             }}
                           >
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setActivePhotoMode("template");
-                                void handleSelectTemplateBackground(u);
-                              }}
-                              className="block w-full text-left transition hover:bg-white/5"
-                            >
+                            <div className="block w-full text-left">
                               <div className="flex items-center justify-between gap-2">
                                 <div className="font-semibold" style={{ fontSize: 12 }}>
                                   テンプレ背景 {index + 1}
@@ -1416,30 +1423,6 @@ await saveDraft({
                                   理由：{recommendedItem.reason}
                                 </div>
                               ) : null}
-                            </button>
-
-                            <div className="mt-2 flex gap-2">
-                              <Btn
-                                variant="secondary"
-                                disabled={!uid || busy}
-                                onClick={() => {
-                                  setActivePhotoMode("template");
-                                  void handleSelectTemplateBackground(u);
-                                }}
-                              >
-                                使う
-                              </Btn>
-
-                              <Btn
-                                variant="danger"
-                                disabled={!uid || busy || typeof onRemoveTemplateBgImage !== "function"}
-                                onClick={() => {
-                                  void onRemoveTemplateBgImage?.(u);
-                                }}
-                                title="画面上と下書き上だけから外します。Storageの本体は消しません"
-                              >
-                                外す
-                              </Btn>
                             </div>
                           </div>
                         );
@@ -1547,18 +1530,6 @@ await saveDraft({
 
                   <Btn
                     variant="secondary"
-                    disabled={
-                      !uid ||
-                      busy ||
-                      (!aiOnlyPreviewBackgroundUrl && !String(backgroundKeyword || "").trim() && !aiBgReferenceUrl)
-                    }
-                    onClick={replaceBackgroundAndSaveToAiImage}
-                  >
-                    製品画像＋背景を合成（保存）
-                  </Btn>
-
-                  <Btn
-                    variant="secondary"
                     disabled={!uid || busy}
                     onClick={syncBgImagesFromStorage}
                   >
@@ -1567,24 +1538,13 @@ await saveDraft({
                 </div>
 
                 <div className="mt-2 text-white/55" style={{ fontSize: 12, lineHeight: 1.5 }}>
-                  ※ この背景が「合成」と「動画」に使われます。
+                  ※ ここはAI背景を生成して確認する場所です。背景の選択と合成保存は「商品/背景合成」タブで行います。
                 </div>
 
                 {aiBgUrls.length > 0 ? (
                   <div className="mt-3">
-                    <div className="mb-2 flex items-center justify-between">
-                      <div className="text-white/70" style={{ fontSize: 12 }}>
-                        背景履歴（クリックで表示｜課金なし）
-                      </div>
-
-                      <Btn
-                        variant="danger"
-                        disabled={!uid || busy || aiBgUrls.length === 0}
-                        onClick={clearBgHistory}
-                        title="この下書きの候補リストだけ消します（Storageの画像は消えません）"
-                      >
-                        履歴クリア
-                      </Btn>
+                    <div className="mb-2 text-white/70" style={{ fontSize: 12 }}>
+                      AI背景生成履歴（確認用）
                     </div>
 
                     <div className="flex flex-col gap-2">
@@ -1599,40 +1559,9 @@ await saveDraft({
                             fontSize: 12,
                           }}
                         >
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setActivePhotoMode("ai_bg");
-                              void handleSelectAiBackground(u);
-                            }}
-                            className="block w-full text-left transition hover:bg-white/5"
-                          >
+                          <div className="block w-full text-left">
                             {u.slice(0, 60)}
                             {u.length > 60 ? "…" : ""}
-                          </button>
-
-                          <div className="mt-2 flex gap-2">
-                            <Btn
-                              variant="secondary"
-                              disabled={!uid || busy}
-                              onClick={() => {
-                                setActivePhotoMode("ai_bg");
-                                void handleSelectAiBackground(u);
-                              }}
-                            >
-                              使う
-                            </Btn>
-
-                            <Btn
-                              variant="danger"
-                              disabled={!uid || busy || typeof onRemoveAiBgImage !== "function"}
-                              onClick={() => {
-                                void onRemoveAiBgImage?.(u);
-                              }}
-                              title="画面上と下書き上だけから外します。Storageの本体は消しません"
-                            >
-                              外す
-                            </Btn>
                           </div>
                         </div>
                       ))}
@@ -1659,6 +1588,7 @@ await saveDraft({
               templateBgUrl={templateBgUrl}
               templateBgUrls={templateBgUrls}
               aiBgUrls={aiBgUrls}
+              libraryBackgrounds={libraryBackgrounds}
               templateRecommended={templateRecommended}
               templateRecommendTopReason={templateRecommendTopReason}
               isCompositeFresh={isCompositeFresh}
