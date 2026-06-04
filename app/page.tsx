@@ -42,11 +42,11 @@ const MENU_ITEMS: MenuItem[] = [
     description: "背景・完成画像を再利用",
   },
   {
-    href: "/flow/product-selector",
+    href: "/flow/market-research",
     image: "/product_selector_logo.png",
-    alt: "Product Selector",
-    label: "商品選定",
-    description: "市場スクショから候補を見る",
+    alt: "Market Research",
+    label: "市場調査",
+    description: "市場発見・理論DB・商品選定",
   },
   {
     href: "/flow/sell-check",

@@ -36,11 +36,11 @@ const FEATURE_CARDS: FeatureCard[] = [
     accent: "Assets",
   },
   {
-    href: "/flow/product-selector",
-    title: "商品選定",
-    subtitle: "スクショや市場観測から候補を探す",
+    href: "/flow/market-research",
+    title: "市場調査",
+    subtitle: "市場発見・理論DB・商品候補選定をまとめて行う",
     image: "/product_selector_logo.png",
-    accent: "Selector",
+    accent: "Market",
   },
   {
     href: "/flow/sell-check",
@@ -119,7 +119,7 @@ export default function FlowIndexPage() {
           作業入口
         </h1>
         <p className="mt-4 max-w-3xl text-sm leading-7 text-white/70 md:text-base">
-          下書き、画像ライブラリ、商品選定、売れる診断へここから移動します。
+          下書き、画像ライブラリ、市場調査、売れる診断へここから移動します。
           作った画像や背景は資産として蓄積し、次の下書きでも再利用する前提にします。
         </p>
       </section>

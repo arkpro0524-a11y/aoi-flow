@@ -1,0 +1,87 @@
+// app/api/market-research/analyze/route.ts
+// Vento 市場調査OSの分析API。
+// ユーザーが投入した記事・スクショ・商品候補から、
+// TREND RADAR / TREND KNOWLEDGE / PRODUCT SELECTOR / SOURCE CHECK を一括で返します。
+
+import { NextResponse } from "next/server";
+import { requireUserFromAuthHeader, getAdminDb } from "@/app/api/_firebase/admin";
+import {
+  analyzeMarketResearch,
+  normalizeMarketResearchInput,
+} from "@/lib/vento/marketResearch";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+export async function POST(req: Request) {
+  try {
+    const user = await requireUserFromAuthHeader(req);
+    const body = (await req.json()) as { input?: unknown; save?: boolean };
+
+    const input = normalizeMarketResearchInput(body.input);
+    const result = analyzeMarketResearch(input);
+
+    let savedLogId: string | undefined;
+    let savedKnowledgeIds: string[] = [];
+
+    // 何も入力されていない場合でも、画面の説明として結果を返せるようにします。
+    // ただし保存は入力がある場合だけ行います。
+    const hasInput =
+      input.theme ||
+      input.sourceText ||
+      input.visualNotes ||
+      input.productCandidates ||
+      input.sourceNotes ||
+      input.imageNames.length > 0;
+
+    if (body.save !== false && hasInput) {
+      const db = getAdminDb();
+      const now = new Date().toISOString();
+
+      const logRef = await db.collection("market_research_logs").add({
+        uid: user.uid,
+        input,
+        result,
+        createdAt: now,
+        updatedAt: now,
+        version: "vento-market-research-os-2026-06",
+      });
+
+      savedLogId = logRef.id;
+
+      const writes = result.trendKnowledge.cards.map(async (card) => {
+        const ref = await db.collection("trend_knowledge_cards").add({
+          uid: user.uid,
+          sourceLogId: logRef.id,
+          ...card,
+          createdAt: now,
+          updatedAt: now,
+          version: "trend-knowledge-2026-06",
+        });
+        return ref.id;
+      });
+
+      savedKnowledgeIds = await Promise.all(writes);
+    }
+
+    return NextResponse.json({
+      ok: true,
+      result,
+      savedLogId,
+      savedKnowledgeIds,
+    });
+  } catch (error) {
+    console.error("[MARKET_RESEARCH_ANALYZE_ERROR]", error);
+
+    return NextResponse.json(
+      {
+        ok: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "市場調査の分析に失敗しました。",
+      },
+      { status: 500 }
+    );
+  }
+}
