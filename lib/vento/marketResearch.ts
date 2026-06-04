@@ -358,9 +358,12 @@ function extractProductPicks(input: MarketResearchInput, candidates: MarketCandi
     }
 
     const finalScore = clampScore(score);
+    const action: ProductPick["action"] =
+      finalScore >= 68 ? "SELL CHECKへ" : finalScore >= 52 ? "先に検索" : "観測のみ";
+
     return {
       name,
-      action: finalScore >= 68 ? "SELL CHECKへ" : finalScore >= 52 ? "先に検索" : "観測のみ",
+      action,
       score: finalScore,
       reason: reasons.length > 0 ? reasons.join(" / ") : "特徴が薄いため、まず市場名と検索語を確認してください。",
       checkPoints: [
