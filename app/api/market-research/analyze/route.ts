@@ -7,6 +7,7 @@ import { NextResponse } from "next/server";
 import { requireUserFromAuthHeader, getAdminDb } from "@/app/api/_firebase/admin";
 import {
   analyzeMarketResearch,
+  normalizeMarketCard,
   normalizeMarketResearchInput,
 } from "@/lib/vento/marketResearch";
 
@@ -23,6 +24,8 @@ export async function POST(req: Request) {
 
     let savedLogId: string | undefined;
     let savedKnowledgeIds: string[] = [];
+    let savedMarketCardIds: string[] = [];
+    let savedTheoryId: string | undefined;
 
     // 何も入力されていない場合でも、画面の説明として結果を返せるようにします。
     // ただし保存は入力がある場合だけ行います。
@@ -62,6 +65,53 @@ export async function POST(req: Request) {
       });
 
       savedKnowledgeIds = await Promise.all(writes);
+
+      // TREND KNOWLEDGE画面で編集・一覧表示できる「市場カード」も同時保存します。
+      // 旧trend_knowledge_cardsは残しつつ、新しい市場研究レイヤー用のvento_market_cardsを追加するだけです。
+      const observationItems = result.trendKnowledge.observationPlans.flatMap((plan) => plan.observationItems);
+      const marketCardWrites = result.trendKnowledge.cards.map(async (card) => {
+        const marketCard = normalizeMarketCard({
+          marketName: card.marketName,
+          domesticDemand: card.domesticDemand,
+          overseasDemand: card.overseasDemand,
+          researchSources: card.nextResearch,
+          searchWords: card.searchWords,
+          observationItems,
+          hypothesis: card.summary,
+          theory: result.designLearning.marketTheory || result.marketTheoryEngine.marketTheory,
+          evidence: card.theoryReasons,
+          missingInfo: card.missingData,
+          status: card.integratedJudgement === "見送り" ? "pass" : card.integratedJudgement === "有望" ? "validated" : "researching",
+          updatedAt: now,
+        });
+
+        const ref = await db.collection("vento_market_cards").add({
+          uid: user.uid,
+          sourceLogId: logRef.id,
+          ...marketCard,
+          createdAt: now,
+          version: "vento-market-card-2026-06",
+        });
+        return ref.id;
+      });
+
+      savedMarketCardIds = await Promise.all(marketCardWrites);
+
+      const theoryRef = await db.collection("vento_market_theories").add({
+        uid: user.uid,
+        sourceLogId: logRef.id,
+        marketTheoryEngine: result.marketTheoryEngine,
+        designLearning: result.designLearning,
+        designScore: result.designScore,
+        marketFormation: result.marketFormation,
+        multiDataIntegration: result.multiDataIntegration,
+        sourceCheck: result.sourceCheck,
+        createdAt: now,
+        updatedAt: now,
+        version: "vento-market-theory-engine-2026-06",
+      });
+
+      savedTheoryId = theoryRef.id;
     }
 
     return NextResponse.json({
@@ -69,6 +119,8 @@ export async function POST(req: Request) {
       result,
       savedLogId,
       savedKnowledgeIds,
+      savedMarketCardIds,
+      savedTheoryId,
     });
   } catch (error) {
     console.error("[MARKET_RESEARCH_ANALYZE_ERROR]", error);
