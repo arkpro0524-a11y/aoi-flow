@@ -82,13 +82,13 @@ function MenuCard({ item }: { item: MenuItem }) {
   return (
     <Link
       href={item.href}
-      className="group flex min-h-[158px] flex-col items-center justify-center rounded-[1.4rem] bg-white/30 px-4 py-4 text-center shadow-[0_16px_44px_rgba(15,30,48,0.10)] backdrop-blur-md transition hover:-translate-y-1 hover:bg-white/44"
+      className="group flex min-h-[210px] flex-col items-center justify-center rounded-[1.4rem] bg-white/12 px-3 py-3 text-center shadow-[0_12px_34px_rgba(15,30,48,0.08)] backdrop-blur-sm transition hover:-translate-y-1 hover:bg-white/24"
     >
       {/*
         ロゴ画像そのものに余白があるため、カード側の白い内枠を廃止しています。
         これで「透明な枠の中に小さく入っている」見え方を抑え、ロゴを主役にします。
       */}
-      <div className="flex h-[108px] w-[108px] items-center justify-center">
+      <div className="flex h-[156px] w-[156px] items-center justify-center">
         {item.image ? (
           <img
             src={item.image}
@@ -106,10 +106,10 @@ function MenuCard({ item }: { item: MenuItem }) {
         )}
       </div>
 
-      <div className="mt-2 text-[15px] font-black tracking-[0.16em] text-[#1c4f82]">
+      <div className="mt-1 text-[20px] font-black tracking-[0.14em] text-[#1c4f82]">
         {item.label}
       </div>
-      <div className="mt-1 text-[11px] font-bold leading-4 text-[#0f1e30]/68">
+      <div className="mt-1 text-[13px] font-bold leading-5 text-[#0f1e30]/72">
         {item.description}
       </div>
     </Link>
@@ -167,7 +167,7 @@ export default function HomePage() {
         <div className="absolute left-0 top-0 z-10 flex h-[45%] w-full items-center justify-center">
           <div className="text-center">
             <div className="mb-7 flex justify-center">
-              <div className="flex h-[120px] w-[120px] items-center justify-center rounded-full bg-white/85 shadow-[0_20px_70px_rgba(15,30,48,0.20)] backdrop-blur-md">
+              <div className="flex h-[132px] w-[132px] items-center justify-center rounded-full bg-white/85 shadow-[0_20px_70px_rgba(15,30,48,0.20)] backdrop-blur-md">
                 <img
                   src="/logo-aoi-flow1.png"
                   alt="AOI FLOW Logo"
@@ -206,9 +206,9 @@ export default function HomePage() {
           カードは横4列×2段で整理します。
           画面上の余白と背景の美しさを残しつつ、ロゴの周囲の余計な枠を小さくしています。
         */}
-        <div className="relative z-10 flex min-h-screen items-end justify-center pb-8 pt-[45vh]">
-          <div className="w-full max-w-[1120px] px-5">
-            <div className="grid grid-cols-4 gap-x-7 gap-y-5">
+        <div className="relative z-10 flex min-h-screen items-end justify-center pb-7 pt-[44vh]">
+          <div className="w-full max-w-[1280px] px-5">
+            <div className="grid grid-cols-4 gap-x-8 gap-y-5">
               {MENU_ITEMS.map((item) => (
                 <MenuCard key={item.href} item={item} />
               ))}
