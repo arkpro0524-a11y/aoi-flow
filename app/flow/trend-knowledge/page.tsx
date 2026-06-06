@@ -263,6 +263,33 @@ export default function TrendKnowledgePage() {
                   <SmallList title="検索ワード" items={card.searchWords || []} />
                   <SmallList title="観測項目" items={card.observationItems || []} />
                 </div>
+
+                <div className="mt-4 rounded-2xl border border-cyan-200/20 bg-cyan-200/10 p-4">
+                  <div className="text-xs font-black tracking-[0.16em] text-cyan-100/70">この市場カードからの次の指示</div>
+                  <div className="mt-2 text-sm leading-7 text-white/78">
+                    1. 「検索ワード」で調査先を検索する → 2. スクショ・本文を集める → 3. 市場研究へ戻って再分析する → 4. 理論が固まったら商品探索へ進む。
+                  </div>
+                  <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-3">
+                    <Link
+                      href={`/flow/market-research?market=${encodeURIComponent(card.marketName)}&keywords=${encodeURIComponent((card.searchWords || []).join(" "))}`}
+                      className="rounded-full border border-white/15 bg-white/10 px-4 py-2 text-center text-xs font-black text-white no-underline"
+                    >
+                      観測スクショを追加して再分析
+                    </Link>
+                    <Link
+                      href={`/flow/product-selector?market=${encodeURIComponent(card.marketName)}&keywords=${encodeURIComponent((card.searchWords || []).join(" "))}`}
+                      className="rounded-full border border-white/15 bg-white/10 px-4 py-2 text-center text-xs font-black text-white no-underline"
+                    >
+                      この市場で商品探索
+                    </Link>
+                    <Link
+                      href={`/flow/sell-check?source=trend-knowledge&title=${encodeURIComponent(card.marketName)}&keywords=${encodeURIComponent((card.searchWords || []).join(" "))}&memo=${encodeURIComponent(card.theory || card.hypothesis || "市場カードからSELL CHECKへ接続")}`}
+                      className="rounded-full bg-white px-4 py-2 text-center text-xs font-black text-black no-underline"
+                    >
+                      最後にSELL CHECKへ
+                    </Link>
+                  </div>
+                </div>
               </article>
             ))}
           </div>
