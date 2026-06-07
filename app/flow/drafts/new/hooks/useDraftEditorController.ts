@@ -479,7 +479,7 @@ export default function useDraftEditorController(params: Params) {
 
   async function handleEnsureDraftId() {
     if (!state.draftId) {
-      await persistence.saveDraft();
+      await persistence.saveDraft({ __forceCreate: true } as any);
       persistence.showMsg("先に下書きを作成しました");
     } else {
       persistence.showMsg("この下書きはすでに作成済みです");

@@ -1015,7 +1015,7 @@ const nextBackgroundY = clamp(
       return [];
     }
 
-    const ensuredDraftId = draftId ?? (await saveDraft());
+    const ensuredDraftId = draftId ?? (await saveDraft({ __forceCreate: true } as any));
     if (!ensuredDraftId) {
       showMsg("下書きIDの確定に失敗しました");
       return [];
@@ -1157,7 +1157,7 @@ const nextBackgroundY = clamp(
         throw new Error("no token");
       }
 
-      const ensuredDraftId = draftId ?? (await saveDraft());
+      const ensuredDraftId = draftId ?? (await saveDraft({ __forceCreate: true } as any));
       if (!ensuredDraftId) {
         throw new Error("failed to create draft");
       }
@@ -1290,7 +1290,7 @@ const nextBackgroundY = clamp(
   async function syncTemplateBgImagesFromStorage() {
     if (!uid) return;
 
-    const ensuredDraftId = draftId ?? (await saveDraft());
+    const ensuredDraftId = draftId ?? (await saveDraft({ __forceCreate: true } as any));
     if (!ensuredDraftId) {
       showMsg("下書きIDの確定に失敗しました");
       return;
@@ -1403,7 +1403,7 @@ const nextBackgroundY = clamp(
   async function syncBaseAndMaterialImagesFromStorage() {
     if (!uid) return;
 
-    const ensuredDraftId = draftId ?? (await saveDraft());
+    const ensuredDraftId = draftId ?? (await saveDraft({ __forceCreate: true } as any));
     if (!ensuredDraftId) {
       showMsg("下書きIDの確定に失敗しました");
       return;
@@ -1466,7 +1466,7 @@ const nextBackgroundY = clamp(
   async function syncCompositeImagesFromStorage() {
     if (!uid) return;
 
-    const ensuredDraftId = draftId ?? (await saveDraft());
+    const ensuredDraftId = draftId ?? (await saveDraft({ __forceCreate: true } as any));
     if (!ensuredDraftId) {
       showMsg("下書きIDの確定に失敗しました");
       return;
@@ -1527,7 +1527,7 @@ const nextBackgroundY = clamp(
   async function syncCompositeTextImagesFromStorage() {
     if (!uid) return;
 
-    const ensuredDraftId = draftId ?? (await saveDraft());
+    const ensuredDraftId = draftId ?? (await saveDraft({ __forceCreate: true } as any));
     if (!ensuredDraftId) {
       showMsg("下書きIDの確定に失敗しました");
       return;
@@ -1790,7 +1790,7 @@ async function renderToCanvasAndGetDataUrlSilent(): Promise<string | null> {
     setCutoutReason("");
 
     try {
-      const ensuredDraftId = draftId ?? (await saveDraft());
+      const ensuredDraftId = draftId ?? (await saveDraft({ __forceCreate: true } as any));
       if (!ensuredDraftId) {
         throw new Error("下書きIDが作れませんでした");
       }
@@ -1841,7 +1841,7 @@ async function renderToCanvasAndGetDataUrlSilent(): Promise<string | null> {
     setBusy(true);
 
     try {
-      const ensuredDraftId = draftId ?? (await saveDraft());
+      const ensuredDraftId = draftId ?? (await saveDraft({ __forceCreate: true } as any));
       if (!ensuredDraftId) {
         throw new Error("下書きIDが作れませんでした");
       }
@@ -2034,7 +2034,7 @@ async function renderToCanvasAndGetDataUrlSilent(): Promise<string | null> {
         throw new Error("no token");
       }
 
-      const ensuredDraftId = draftId ?? (await saveDraft());
+      const ensuredDraftId = draftId ?? (await saveDraft({ __forceCreate: true } as any));
       if (!ensuredDraftId) {
         throw new Error("failed to create draft");
       }
@@ -2186,7 +2186,7 @@ async function renderToCanvasAndGetDataUrlSilent(): Promise<string | null> {
         throw new Error("no token");
       }
 
-      const ensuredDraftId = draftId ?? (await saveDraft());
+      const ensuredDraftId = draftId ?? (await saveDraft({ __forceCreate: true } as any));
       if (!ensuredDraftId) {
         throw new Error("failed to create draft");
       }
@@ -2313,7 +2313,7 @@ async function saveCompositeAsImageUrl() {
   setBusy(true);
 
   try {
-    const ensuredDraftId = draftId ?? (await saveDraft());
+    const ensuredDraftId = draftId ?? (await saveDraft({ __forceCreate: true } as any));
     if (!ensuredDraftId) {
       throw new Error("failed to create draft");
     }
@@ -2377,7 +2377,7 @@ async function saveCompositeTextImageFromCompositeSlot() {
   setBusy(true);
 
   try {
-    const ensuredDraftId = draftId ?? (await saveDraft());
+    const ensuredDraftId = draftId ?? (await saveDraft({ __forceCreate: true } as any));
     if (!ensuredDraftId) {
       throw new Error("failed to create draft");
     }
@@ -2472,7 +2472,7 @@ async function saveCompositeTextImageFromCompositeSlot() {
         throw new Error("Vision（必須）が空です");
       }
 
-      const ensuredDraftId = draftId ?? (await saveDraft());
+      const ensuredDraftId = draftId ?? (await saveDraft({ __forceCreate: true } as any));
       if (!ensuredDraftId) {
         throw new Error("failed to create draft");
       }
@@ -2641,7 +2641,7 @@ commitDraftPatch({
     setBusy(true);
 
     try {
-      const ensuredDraftId = draftId ?? (await saveDraft());
+      const ensuredDraftId = draftId ?? (await saveDraft({ __forceCreate: true } as any));
       if (!ensuredDraftId) {
         throw new Error("failed to create draft");
       }
@@ -2971,9 +2971,12 @@ const compositePatch = {
   async function syncBgImagesFromStorage() {
     if (!uid) return;
 
-    const ensuredDraftId = draftId ?? (await saveDraft());
+    // Storage 同期は「既存下書きの保存済み画像を読み直す」処理です。
+    // 新規作成直後に draftId がない状態で下書きを作ると、
+    // ユーザーが何もしていないのに空下書きが一覧に増えてしまいます。
+    const ensuredDraftId = String(draftId || "").trim();
     if (!ensuredDraftId) {
-      showMsg("下書きIDの確定に失敗しました");
+      showMsg("まだ下書きが作成されていないため、背景履歴の同期は行いません");
       return;
     }
 
@@ -3071,7 +3074,7 @@ commitDraftPatch({
   async function syncIdeaImagesFromStorage() {
     if (!uid) return;
 
-    const ensuredDraftId = draftId ?? (await saveDraft());
+    const ensuredDraftId = draftId ?? (await saveDraft({ __forceCreate: true } as any));
     if (!ensuredDraftId) {
       showMsg("下書きIDの確定に失敗しました");
       return;
@@ -3157,7 +3160,7 @@ commitDraftPatch({
   async function syncStoryImagesFromStorage() {
     if (!uid) return;
 
-    const ensuredDraftId = draftId ?? (await saveDraft());
+    const ensuredDraftId = draftId ?? (await saveDraft({ __forceCreate: true } as any));
     if (!ensuredDraftId) {
       showMsg("下書きIDの確定に失敗しました");
       return;

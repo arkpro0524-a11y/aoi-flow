@@ -816,7 +816,22 @@ export default function BackgroundPanel({
     if (busy) return;
     if (typeof syncBgImagesFromStorage !== "function") return;
 
-    const key = String((d as any).id || d.userId || d.baseImageUrl || "new-draft").trim();
+    // 新規作成直後は draftId がまだ存在しません。
+    // ここで Storage 同期を自動実行すると、同期処理が下書きIDを作るため、
+    // 「画面を開いただけで空下書きが増える」原因になります。
+    // 既存下書き、または実際に背景/素材がある時だけ自動同期します。
+    const existingDraftId = String((d as any).id || "").trim();
+    const hasBackgroundMaterial = Boolean(
+      String(d.baseImageUrl || "").trim() ||
+        String(d.bgImageUrl || "").trim() ||
+        String(d.templateBgUrl || "").trim() ||
+        (Array.isArray(d.bgImageUrls) && d.bgImageUrls.length > 0) ||
+        (Array.isArray(d.templateBgUrls) && d.templateBgUrls.length > 0)
+    );
+
+    if (!existingDraftId && !hasBackgroundMaterial) return;
+
+    const key = String(existingDraftId || d.baseImageUrl || d.bgImageUrl || d.templateBgUrl).trim();
     if (!key) return;
     if (autoSyncBgKeyRef.current === key) return;
 
