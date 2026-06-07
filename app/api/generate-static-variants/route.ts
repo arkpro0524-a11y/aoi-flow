@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
 import { getAdminAuth } from "@/firebaseAdmin";
+import { buildAoiFlowGenerationMarketContext } from "@/lib/marketFusion";
 
 export const runtime = "nodejs";
 
@@ -100,6 +101,12 @@ export async function POST(req: NextRequest) {
     const vision = safeText(body.vision, 1600);
     const keywords = safeText(body.keywords, 1600);
     const purpose = normalizePurpose(body.purpose);
+    const marketContext = buildAoiFlowGenerationMarketContext({
+      marketTheory: body.marketTheory,
+      designGrammar: body.designGrammar,
+      commonWorldviews: body.commonWorldviews,
+      commonStories: body.commonStories,
+    });
 
     if (!vision) return bad("vision is required");
     if (!process.env.OPENAI_API_KEY) return bad("OPENAI_API_KEY missing", 500);
@@ -114,12 +121,19 @@ Generate exactly 3 variants.
 Each must use strategyType: direct, branding, proof.
 Do NOT include brand names or copyrighted characters.
 Do NOT include text overlays, watermarks, logos.
+If marketResearchContext is provided, use it as visual direction only. Do not print it as text.
 `;
 
     const user = {
       vision,
       keywords,
       purpose,
+      marketResearchContext: {
+        marketTheory: marketContext.marketTheory,
+        designGrammar: marketContext.designGrammar,
+        commonWorldviews: marketContext.commonWorldviews,
+        commonStories: marketContext.commonStories,
+      },
       output: {
         recommendation: "v1|v2|v3",
         variants: [
@@ -188,6 +202,10 @@ Do NOT include text overlays, watermarks, logos.
     return NextResponse.json(
       {
         recommendation,
+        marketTheory: marketContext.marketTheory,
+        designGrammar: marketContext.designGrammar,
+        commonWorldviews: marketContext.commonWorldviews,
+        commonStories: marketContext.commonStories,
         variants: normalized,
       },
       { status: 200 }

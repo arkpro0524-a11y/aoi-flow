@@ -509,83 +509,6 @@ function buildFormalPatch(next: DraftDoc) {
   };
 }
 
-
-function hasNonEmptyValueForDraftSave(value: unknown): boolean {
-  if (value === null || value === undefined) return false;
-  if (typeof value === "string") return value.trim().length > 0;
-  if (typeof value === "number" || typeof value === "boolean") return true;
-  if (Array.isArray(value)) return value.some((item) => hasNonEmptyValueForDraftSave(item));
-  if (typeof value === "object") {
-    return Object.values(value as Record<string, unknown>).some((item) =>
-      hasNonEmptyValueForDraftSave(item)
-    );
-  }
-  return false;
-}
-
-function hasMeaningfulDraftContent(next: DraftDoc, partial?: Partial<DraftDoc>): boolean {
-  const checkKeys: Array<keyof DraftDoc | string> = [
-    "title",
-    "vision",
-    "keywords",
-    "keywordsText",
-    "memo",
-    "igCaption",
-    "xCaption",
-    "ig",
-    "x",
-    "instagramSales",
-    "xSales",
-    "ecTitle",
-    "ecDescription",
-    "ecBullets",
-    "savedCaptionSets",
-    "shortCopies",
-    "baseImageUrl",
-    "bgImageUrl",
-    "aiImageUrl",
-    "compositeImageUrl",
-    "compositeTextImageUrl",
-    "foregroundImageUrl",
-    "stageImageUrl",
-    "videoUrl",
-    "imageUrl",
-    "imageIdeaUrl",
-    "imageIdeaUrls",
-    "bgImageUrls",
-    "nonAiVideoUrl",
-    "nonAiVideoUrls",
-    "templateBgUrl",
-    "templateBgUrls",
-    "useSceneImageUrl",
-    "useSceneImageUrls",
-    "detailImageUrl",
-    "detailImageUrls",
-    "storyImageUrl",
-    "storyImageUrls",
-    "productVideo",
-    "cmVideo",
-    "outcome",
-    "images",
-    "staticImageLogs",
-    "staticImageVariants",
-  ];
-
-  for (const key of checkKeys) {
-    if (hasNonEmptyValueForDraftSave((next as any)[key])) return true;
-  }
-
-  if (partial && typeof partial === "object") {
-    for (const [key, value] of Object.entries(partial as Record<string, unknown>)) {
-      if (key.startsWith("__")) continue;
-      if (key === "userId" || key === "brand" || key === "brandId" || key === "phase") continue;
-      if (hasNonEmptyValueForDraftSave(value)) return true;
-    }
-  }
-
-  return false;
-}
-
 export default function useDraftPersistence(params: Params) {
   const {
     id,
@@ -628,7 +551,7 @@ export default function useDraftPersistence(params: Params) {
   }
 
   const saveDraft = useCallback(
-    async (partial?: Partial<DraftDoc> & { __forceCreate?: boolean }): Promise<string | null> => {
+    async (partial?: Partial<DraftDoc>): Promise<string | null> => {
       return enqueueSave(async () => {
         const u = auth.currentUser;
 
@@ -640,24 +563,14 @@ export default function useDraftPersistence(params: Params) {
         const token = await u.getIdToken(true);
 
         const base = dRef.current;
-        const forceCreate = Boolean((partial as any)?.__forceCreate);
-        const cleanPartial: Partial<DraftDoc> = { ...(partial ?? {}) };
-        delete (cleanPartial as any).__forceCreate;
-
         const next: DraftDoc = {
           ...base,
-          ...cleanPartial,
+          ...(partial ?? {}),
           userId: u.uid,
         };
 
-        const currentDraftId = draftIdRef.current;
-
-        if (!currentDraftId && !forceCreate && !hasMeaningfulDraftContent(next, cleanPartial)) {
-          showMsg("まだ内容がないため、下書きは作成していません");
-          return null;
-        }
-
         const payload = buildFormalPatch(next);
+        const currentDraftId = draftIdRef.current;
 
         const res = await fetch("/api/drafts/save", {
           method: "POST",

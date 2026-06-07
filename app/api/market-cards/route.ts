@@ -3,7 +3,7 @@
 
 import { NextResponse } from "next/server";
 import { getAdminDb, requireUserFromAuthHeader } from "@/app/api/_firebase/admin";
-import { normalizeMarketCard } from "@/lib/vento/marketResearch";
+import { analyzeMarketResearch, normalizeMarketCard } from "@/lib/vento/marketResearch";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,6 +21,135 @@ function clean(value: unknown): unknown {
     return out;
   }
   return value;
+}
+
+function cardToResearchInput(card: ReturnType<typeof normalizeMarketCard>) {
+  const lines = [
+    card.marketName,
+    String(card.domesticDemand ?? ""),
+    String(card.overseasDemand ?? ""),
+    ...(Array.isArray(card.researchSources) ? card.researchSources : []),
+    ...(Array.isArray(card.searchWords) ? card.searchWords : []),
+    ...(Array.isArray(card.observationItems) ? card.observationItems : []),
+    card.hypothesis,
+    card.theory,
+    ...(Array.isArray(card.evidence) ? card.evidence : []),
+    ...(Array.isArray(card.missingInfo) ? card.missingInfo : []),
+  ]
+    .map((item) => String(item ?? "").trim())
+    .filter(Boolean);
+
+  return {
+    theme: card.marketName || "未命名市場",
+    sourceText: lines.join("\n"),
+    visualNotes: [card.theory, card.hypothesis].filter(Boolean).join("\n"),
+    productCandidates: Array.isArray(card.searchWords) ? card.searchWords.join("\n") : "",
+    sourceNotes: Array.isArray(card.researchSources) ? card.researchSources.join("\n") : "",
+    budget: 0,
+    imageNames: [],
+  };
+}
+
+async function saveLinkedMarketResearch(args: {
+  db: ReturnType<typeof getAdminDb>;
+  uid: string;
+  cardId: string;
+  card: ReturnType<typeof normalizeMarketCard>;
+  now: string;
+}) {
+  const { db, uid, cardId, card, now } = args;
+  const result = analyzeMarketResearch(cardToResearchInput(card));
+  const firstTrend = result.trendKnowledge.cards[0];
+  const theory = result.marketTheoryEngine;
+  const design = result.designLearning;
+
+  const common = {
+    uid,
+    marketCardId: cardId,
+    marketName: card.marketName || firstTrend?.marketName || "未命名市場",
+    domesticDemand: result.domesticDemand,
+    overseasDemand: result.overseasDemand,
+    updatedAt: now,
+    version: "vento-market-linkage-2026-06-final",
+  };
+
+  await Promise.all([
+    db.collection("trend_knowledge_cards").doc(cardId).set(
+      clean({
+        ...common,
+        researchPlan: firstTrend?.researchPlan ?? card.researchPlan ?? [],
+        searchKeywords: firstTrend?.searchKeywords ?? card.searchKeywords ?? card.searchWords ?? [],
+        observationTargets: firstTrend?.observationTargets ?? card.observationTargets ?? card.observationItems ?? [],
+        nextResearchActions: firstTrend?.nextResearchActions ?? card.nextResearchActions ?? [],
+        missingInformation: firstTrend?.missingInformation ?? card.missingInformation ?? card.missingInfo ?? [],
+        hypothesis: card.hypothesis,
+      }) as Record<string, unknown>,
+      { merge: true }
+    ),
+    db.collection("market_theories").doc(cardId).set(
+      clean({
+        ...common,
+        marketExistenceScore: theory.marketExistenceScore,
+        marketFormationScore: theory.marketFormationScore,
+        dataJudgement: theory.dataJudgement,
+        theoryJudgement: theory.theoryJudgement,
+        evidence: theory.evidence,
+        missingEvidence: theory.missingEvidence,
+        seriesScore: theory.seriesScore,
+        storyScore: theory.storyScore,
+        worldviewScore: theory.worldviewScore,
+        collectorScore: theory.collectorScore,
+        communityScore: theory.communityScore,
+        searchCultureScore: theory.searchCultureScore,
+        snsScore: theory.snsScore,
+        youtubeScore: theory.youtubeScore,
+        redditScore: theory.redditScore,
+        overseasDistributionScore: theory.overseasDistributionScore,
+        marketTheory: theory.marketTheory,
+      }) as Record<string, unknown>,
+      { merge: true }
+    ),
+    db.collection("design_learning").doc(cardId).set(
+      clean({
+        ...common,
+        commonColors: design.commonColors,
+        commonShapes: design.commonShapes,
+        commonMaterials: design.commonMaterials,
+        commonWorldviews: design.commonWorldviews,
+        commonStories: design.commonStories,
+        designGrammar: design.designGrammar,
+        marketTheory: design.marketTheory,
+        designScore: result.designScore,
+      }) as Record<string, unknown>,
+      { merge: true }
+    ),
+    db.collection("theory_db").doc(cardId).set(
+      clean({
+        ...common,
+        marketTheory: design.marketTheory || theory.marketTheory,
+        designGrammar: design.designGrammar,
+        marketExistenceScore: theory.marketExistenceScore,
+        marketFormationScore: theory.marketFormationScore,
+        researchHistory: [
+          `TREND KNOWLEDGE保存時に MARKET THEORY ENGINE / DESIGN LEARNING を自動実行: ${now}`,
+        ],
+        evidence: theory.evidence,
+        missingEvidence: theory.missingEvidence,
+      }) as Record<string, unknown>,
+      { merge: true }
+    ),
+  ]);
+
+  return {
+    marketExistenceScore: theory.marketExistenceScore,
+    marketFormationScore: theory.marketFormationScore,
+    dataJudgement: theory.dataJudgement,
+    theoryJudgement: theory.theoryJudgement,
+    designGrammar: design.designGrammar,
+    marketTheory: design.marketTheory || theory.marketTheory,
+    commonWorldviews: design.commonWorldviews,
+    commonStories: design.commonStories,
+  };
 }
 
 export async function GET(req: Request) {
@@ -70,7 +199,8 @@ export async function POST(req: Request) {
         version: "trend-knowledge-card-2026-06",
       }) as Record<string, unknown>
     );
-    return NextResponse.json({ ok: true, id: ref.id });
+    const linked = await saveLinkedMarketResearch({ db, uid: user.uid, cardId: ref.id, card, now });
+    return NextResponse.json({ ok: true, id: ref.id, linked });
   } catch (error) {
     console.error("[MARKET_CARDS_POST_ERROR]", error);
     return NextResponse.json(
@@ -93,16 +223,18 @@ export async function PUT(req: Request) {
     if (!snap.exists || snap.data()?.uid !== user.uid) throw new Error("編集できない市場カードです。");
 
     const card = normalizeMarketCard(body.card);
+    const now = new Date().toISOString();
     await ref.set(
       clean({
         ...card,
         uid: user.uid,
-        updatedAt: new Date().toISOString(),
+        updatedAt: now,
       }) as Record<string, unknown>,
       { merge: true }
     );
+    const linked = await saveLinkedMarketResearch({ db, uid: user.uid, cardId: id, card, now });
 
-    return NextResponse.json({ ok: true, id });
+    return NextResponse.json({ ok: true, id, linked });
   } catch (error) {
     console.error("[MARKET_CARDS_PUT_ERROR]", error);
     return NextResponse.json(

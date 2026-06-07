@@ -29,6 +29,11 @@ export type MarketCard = {
   theory: string;
   evidence: string[];
   missingInfo: string[];
+  researchPlan?: string[];
+  searchKeywords?: string[];
+  observationTargets?: string[];
+  nextResearchActions?: string[];
+  missingInformation?: string[];
   status: MarketStatus;
   updatedAt: string;
 };
@@ -47,6 +52,8 @@ export type SourceCheckResult = {
   contactValue: ZeroToThree;
   negotiationPotential: ZeroToThree;
   shippingCompatibility: ZeroToThree;
+  supplyPotential: number;
+  repeatSupply: number;
   totalScore: number;
   judgement: "供給源として強い" | "会話する価値あり" | "商品単位で確認" | "供給源価値は弱い";
   reasons: string[];
@@ -102,22 +109,37 @@ export type TrendKnowledgeCard = {
   nextResearch: string[];
   relatedProducts: string[];
   searchWords: string[];
+  // TREND KNOWLEDGE強化：Firestore trend_knowledge_cards / API出力で使う正式フィールド
+  researchPlan: string[];
+  searchKeywords: string[];
+  observationTargets: string[];
+  nextResearchActions: string[];
+  missingInformation: string[];
 };
 
 export type MarketTheoryEngineResult = {
   marketExistence: VentoJudgement;
+  marketExistenceLevel: "低" | "中" | "高";
+  marketExistenceScore: number;
+  dataJudgement: string;
+  theoryJudgement: string;
   seriesScore: ZeroToThree;
   storyScore: ZeroToThree;
+  worldviewScore: ZeroToThree;
   overseasDistributionScore: ZeroToThree;
   collectorScore: ZeroToThree;
   communityScore: ZeroToThree;
   searchCultureScore: ZeroToThree;
   snsScore: ZeroToThree;
+  youtubeScore: ZeroToThree;
+  redditScore: ZeroToThree;
   marketFormationScore: number;
+  marketFormationMaxScore: 30;
   marketTheory: string;
   evidence: string[];
   scoreReasons: string[];
   missingInformation: string[];
+  missingEvidence: string[];
   confidence: "低" | "中" | "高";
   domesticDemand: string;
   overseasDemand: string;
@@ -135,6 +157,11 @@ export type DesignLearningResult = {
   worldview: string;
   designGrammar: string[];
   marketTheory: string;
+  commonColors: string[];
+  commonShapes: string[];
+  commonMaterials: string[];
+  commonWorldviews: string[];
+  commonStories: string[];
   storedTheoryNote: string;
   targetFeatures: string[];
   domesticDesignDemand: string;
@@ -149,6 +176,14 @@ export type DesignScoreBreakdown = {
   photogenic: ZeroToThree;
   brand: ZeroToThree;
   collectingCulture: ZeroToThree;
+  // DESIGN SCORE正式フィールド。既存名も残しつつ追加します。
+  seriesScore: ZeroToThree;
+  worldviewScore: ZeroToThree;
+  storyScore: ZeroToThree;
+  displayScore: ZeroToThree;
+  photoScore: ZeroToThree;
+  brandScore: ZeroToThree;
+  collectorScore: ZeroToThree;
   total: number;
   reasons: string[];
 };
@@ -187,6 +222,12 @@ export type ProductPick = {
 export type SourceCheckSummary = {
   sourceType: string;
   sourceScore: number;
+  supplyPotential: number;
+  repeatSupply: number;
+  warehousePotential: number;
+  deadStockPotential: number;
+  bundlePotential: number;
+  contactValue: number;
   sellerPotential: string;
   reasons: string[];
   risks: string[];
@@ -235,6 +276,8 @@ export type MarketResearchResult = {
   sourceCheck: SourceCheckSummary;
   sellCheckUpgradePreview: SellCheckUpgradePreview;
   snsLearningPlan: string[];
+  domesticDemand: string;
+  overseasDemand: string;
 };
 
 function safeText(...values: string[]): string {
@@ -484,6 +527,26 @@ function buildKnowledgeCard(candidate: MarketCandidate, text: string): TrendKnow
     nextResearch: candidate.searchWords,
     relatedProducts: candidate.relatedProducts,
     searchWords: candidate.searchWords,
+    researchPlan: [
+      "Google画像/Pinterestで共通デザインを50件観測する",
+      "eBay SOLD/メルカリ売却済みで売買履歴を30件確認する",
+      "YouTube/Reddit/SNSで収集文化・紹介文化を20件確認する",
+    ],
+    searchKeywords: candidate.searchWords,
+    observationTargets: [
+      "ケース形状",
+      "色・素材感",
+      "シリーズ性",
+      "売買履歴",
+      "国内需要",
+      "海外需要",
+    ],
+    nextResearchActions: [
+      `${candidate.marketName} をGoogle画像で検索する`,
+      `${candidate.searchWords[0] ?? candidate.marketName} をeBay SOLDで検索する`,
+      "YouTube/Reddit/SNSで市場名・コレクター語句を確認する",
+    ],
+    missingInformation: missing.length > 0 ? missing : ["追加検証データ"],
   };
 }
 
@@ -505,6 +568,13 @@ function buildDesignScore(text: string): DesignScoreBreakdown {
     photogenic,
     brand,
     collectingCulture,
+    seriesScore: series,
+    worldviewScore: worldview,
+    storyScore: story,
+    displayScore: display,
+    photoScore: photogenic,
+    brandScore: brand,
+    collectorScore: collectingCulture,
     total,
     reasons: uniq([
       series > 0 ? "シリーズ性があるため、単品ではなく集める市場として見られます。" : "",
@@ -557,67 +627,94 @@ function buildMarketFormation(text: string): MarketFormationBreakdown {
 
 function buildMarketTheoryEngine(card: TrendKnowledgeCard, design: DesignScoreBreakdown, formation: MarketFormationBreakdown): MarketTheoryEngineResult {
   // 指示仕様どおり、AIの直接採点ではなく既存の特徴語から0〜3点へルール化します。
-  // 合計21点満点を100点換算して marketFormationScore とします。
+  // 市場理論エンジンは10項目×3点=30点満点で marketFormationScore を返します。
   const seriesScore = design.series;
   const storyScore = design.story;
+  const worldviewScore = design.worldview;
   const overseasDistributionScore = formation.overseasDistribution;
   const collectorScore = Math.max(formation.collectors, design.collectingCulture) as ZeroToThree;
   const communityScore = Math.max(formation.community, formation.reddit, formation.youtube) as ZeroToThree;
   const searchCultureScore = formation.searchWords;
   const snsScore = formation.sns;
+  const youtubeScore = formation.youtube;
+  const redditScore = formation.reddit;
 
   const rawTotal =
     seriesScore +
     storyScore +
+    worldviewScore +
     overseasDistributionScore +
     collectorScore +
     communityScore +
     searchCultureScore +
-    snsScore;
+    snsScore +
+    youtubeScore +
+    redditScore;
 
-  const score = clampScore((rawTotal / 21) * 100);
+  const marketExistenceLevel: "低" | "中" | "高" = rawTotal >= 20 ? "高" : rawTotal >= 10 ? "中" : "低";
   const marketExistence: VentoJudgement =
-    card.integratedJudgement === "有望" || score >= 72 ? "有望" : score >= 42 ? "検証優先" : card.integratedJudgement;
-  const confidence: "低" | "中" | "高" = score >= 72 ? "高" : score >= 42 ? "中" : "低";
+    marketExistenceLevel === "高" || card.integratedJudgement === "有望"
+      ? "有望"
+      : marketExistenceLevel === "中"
+        ? "検証優先"
+        : "弱い";
+  const confidence: "低" | "中" | "高" = marketExistenceLevel;
 
   const scoreReasons = uniq([
-    seriesScore > 0 ? `seriesScore ${seriesScore}/3：シリーズ・連続作品・型番違いとして観測できる可能性があります。` : "seriesScore 0/3：シリーズ性は未確認です。",
-    storyScore > 0 ? `storyScore ${storyScore}/3：物語・背景・世界観で説明できる余地があります。` : "storyScore 0/3：物語性は未確認です。",
-    overseasDistributionScore > 0 ? `overseasDistributionScore ${overseasDistributionScore}/3：海外流通・英語検索導線の可能性があります。` : "overseasDistributionScore 0/3：海外流通は未確認です。",
-    collectorScore > 0 ? `collectorScore ${collectorScore}/3：コレクター・収集文化につながる要素があります。` : "collectorScore 0/3：コレクター需要は未確認です。",
-    communityScore > 0 ? `communityScore ${communityScore}/3：YouTube / Reddit / コミュニティ観測の余地があります。` : "communityScore 0/3：コミュニティは未確認です。",
-    searchCultureScore > 0 ? `searchCultureScore ${searchCultureScore}/3：検索語・呼び名・市場名を作れる可能性があります。` : "searchCultureScore 0/3：検索文化は未確認です。",
-    snsScore > 0 ? `snsScore ${snsScore}/3：SNSで見せ方・保存・拡散の余地があります。` : "snsScore 0/3：SNS反応は未確認です。",
+    seriesScore > 0 ? `シリーズ性 ${seriesScore}/3：シリーズ・連続作品・型番違いとして観測できる可能性があります。` : "シリーズ性 0/3：シリーズ性は未確認です。",
+    storyScore > 0 ? `物語性 ${storyScore}/3：物語・背景説明で価値を説明できる余地があります。` : "物語性 0/3：物語性は未確認です。",
+    worldviewScore > 0 ? `世界観 ${worldviewScore}/3：世界観・雰囲気で市場を作れる可能性があります。` : "世界観 0/3：世界観は未確認です。",
+    overseasDistributionScore > 0 ? `海外流通 ${overseasDistributionScore}/3：海外流通・英語検索導線の可能性があります。` : "海外流通 0/3：海外流通は未確認です。",
+    collectorScore > 0 ? `コレクター文化 ${collectorScore}/3：コレクター・収集文化につながる要素があります。` : "コレクター文化 0/3：コレクター需要は未確認です。",
+    communityScore > 0 ? `コミュニティ ${communityScore}/3：YouTube / Reddit / フォーラムで語られる余地があります。` : "コミュニティ 0/3：コミュニティは未確認です。",
+    searchCultureScore > 0 ? `検索文化 ${searchCultureScore}/3：検索語・呼び名・市場名を作れる可能性があります。` : "検索文化 0/3：検索文化は未確認です。",
+    snsScore > 0 ? `SNS文化 ${snsScore}/3：SNSで見せ方・保存・拡散の余地があります。` : "SNS文化 0/3：SNS反応は未確認です。",
+    youtubeScore > 0 ? `YouTube存在 ${youtubeScore}/3：動画紹介・レビュー文化を確認できます。` : "YouTube存在 0/3：YouTube上の文脈は未確認です。",
+    redditScore > 0 ? `Reddit存在 ${redditScore}/3：海外掲示板・コミュニティで検証できます。` : "Reddit存在 0/3：Reddit上の文脈は未確認です。",
   ]);
 
   return {
     marketExistence,
+    marketExistenceLevel,
+    marketExistenceScore: rawTotal,
+    dataJudgement: card.dataJudgement,
+    theoryJudgement: card.theoryJudgement,
     seriesScore,
     storyScore,
+    worldviewScore,
     overseasDistributionScore,
     collectorScore,
     communityScore,
     searchCultureScore,
     snsScore,
-    marketFormationScore: score,
+    youtubeScore,
+    redditScore,
+    marketFormationScore: rawTotal,
+    marketFormationMaxScore: 30,
     marketTheory:
-      rawTotal >= 12
-        ? `${card.marketName}は、売却履歴だけでなく、シリーズ性・物語性・海外流通・収集文化から市場存在性を検証できる段階です。`
-        : `${card.marketName}は、現時点では売買データだけで断定せず、指定7項目を追加観測して市場存在性を確認する段階です。`,
-    evidence: uniq([...card.theoryReasons, ...design.reasons, ...formation.reasons, ...scoreReasons]).slice(0, 14),
+      rawTotal >= 20
+        ? `${card.marketName}は、売却履歴だけでなく、シリーズ性・物語性・世界観・海外流通・収集文化から市場存在性が高いと説明できる段階です。`
+        : rawTotal >= 10
+          ? `${card.marketName}は、データ不足で終了せず、10項目の不足を追加観測しながら市場理論を作る段階です。`
+          : `${card.marketName}は、現時点では市場存在性が弱く、まず検索語・売買履歴・コミュニティ・世界観の追加観測が必要です。`,
+    evidence: uniq([...card.theoryReasons, ...design.reasons, ...formation.reasons, ...scoreReasons]).slice(0, 18),
     scoreReasons,
     missingInformation: card.missingData,
+    missingEvidence: card.missingData,
     confidence,
     domesticDemand: card.domesticDemand,
     overseasDemand: card.overseasDemand,
     nextHypothesisTests: [
-      "seriesScore：同シリーズ・型番違い・連作があるか確認する",
-      "storyScore：物語・世界観・背景説明があるか確認する",
-      "overseasDistributionScore：eBay / Google英語検索で海外流通を確認する",
-      "collectorScore：収集対象として語られているか確認する",
-      "communityScore：YouTube / Reddit / フォーラムで語られているか確認する",
-      "searchCultureScore：市場名として成立する検索語を複数作る",
-      "snsScore：Instagram / X / Pinterestで保存・見せ方の文脈を見る",
+      "シリーズ性：同シリーズ・型番違い・連作があるか確認する",
+      "物語性：物語・背景説明があるか確認する",
+      "世界観：商品単体ではなく世界観市場として説明できるか見る",
+      "海外流通：eBay / Google英語検索で海外流通を確認する",
+      "コレクター文化：収集対象として語られているか確認する",
+      "コミュニティ：YouTube / Reddit / フォーラムで語られているか確認する",
+      "検索文化：市場名として成立する検索語を複数作る",
+      "SNS文化：Instagram / X / Pinterestで保存・見せ方の文脈を見る",
+      "YouTube存在：紹介動画・レビュー・コレクション動画を確認する",
+      "Reddit存在：海外掲示板で検索し、反応と呼び名を確認する",
     ],
   };
 }
@@ -662,6 +759,33 @@ function buildDesignLearning(card: TrendKnowledgeCard, text: string, design: Des
       ? `${card.marketName}は、色・形・素材感・飾りやすさの共通文法を追加観測して理論化できます。`
       : `${card.marketName}の共通文法は未確定です。`);
 
+  const commonColors = uniq([
+    includesAny(text, ["金色", "ゴールド"]) ? "金色/ゴールド" : "",
+    includesAny(text, ["暖色", "ブラウン", "木目"]) ? "暖色/ブラウン/木目" : "",
+    includesAny(text, ["昭和", "レトロ"]) ? "昭和レトロ色" : "",
+  ]);
+  const commonShapes = uniq([
+    includesAny(text, ["小型", "ミニ"]) ? "小型" : "",
+    includesAny(text, ["ハウス", "家"]) ? "家型/ハウス型" : "",
+    includesAny(text, ["丸", "文字盤", "ケース"]) ? "丸形/ケース形状" : "",
+  ]);
+  const commonMaterials = uniq([
+    includesAny(text, ["木", "木目"]) ? "木/木目" : "",
+    includesAny(text, ["陶器"]) ? "陶器" : "",
+    includesAny(text, ["金属", "真鍮"]) ? "金属/真鍮" : "",
+    includesAny(text, ["プラスチック"]) ? "プラスチック" : "",
+  ]);
+  const commonWorldviews = uniq([
+    includesAny(text, ["世界観", "童話", "村", "shoemaker"]) ? "童話/村/世界観" : "",
+    includesAny(text, ["昭和", "レトロ"]) ? "昭和レトロ" : "",
+    includesAny(text, ["企業", "ロゴ", "記念"]) ? "企業ロゴ/記念品" : "",
+  ]);
+  const commonStories = uniq([
+    includesAny(text, ["物語", "ストーリー", "職人", "工房"]) ? "物語/職人工房" : "",
+    includesAny(text, ["シリーズ", "複数作品"]) ? "シリーズ展開" : "",
+    includesAny(text, ["記念", "周年"]) ? "記念/周年背景" : "",
+  ]);
+
   return {
     colorPattern,
     shapePattern,
@@ -673,6 +797,11 @@ function buildDesignLearning(card: TrendKnowledgeCard, text: string, design: Des
     worldview,
     designGrammar: grammar.length > 0 ? grammar : ["市場文法は未確定です。色・形・素材・サイズ感・装飾・世界観を追加観測してください。"],
     marketTheory,
+    commonColors: commonColors.length > 0 ? commonColors : ["未確定"],
+    commonShapes: commonShapes.length > 0 ? commonShapes : ["未確定"],
+    commonMaterials: commonMaterials.length > 0 ? commonMaterials : ["未確定"],
+    commonWorldviews: commonWorldviews.length > 0 ? commonWorldviews : ["未確定"],
+    commonStories: commonStories.length > 0 ? commonStories : ["未確定"],
     storedTheoryNote: "この理論は市場カードの theory に保存して更新していく市場仮説です。",
     targetFeatures: [
       "colorPattern",
@@ -795,6 +924,12 @@ function buildResearchSourceCheck(input: MarketResearchInput, text: string): Sou
   return {
     sourceType: includesAny(text, ["ジモティー", "メルカリ", "ebay"]) ? "マーケットプレイス供給源" : "未分類供給源",
     sourceScore: clampScore(score),
+    supplyPotential: clampScore(score),
+    repeatSupply: includesAny(text, ["倉庫", "整理", "在庫", "大量", "まとめ", "店舗", "閉店"]) ? 3 : includesAny(text, ["他にも", "複数", "セット"]) ? 2 : 1,
+    warehousePotential: includesAny(text, ["倉庫", "店舗", "閉店", "在庫"]) ? 3 : includesAny(text, ["整理", "片付け", "実家"]) ? 2 : 1,
+    deadStockPotential: includesAny(text, ["未使用", "デッドストック", "長期保管"]) ? 3 : 0,
+    bundlePotential: includesAny(text, ["まとめ", "セット", "一括", "複数"]) ? 3 : 0,
+    contactValue: includesAny(text, ["返信", "郵送", "相談", "値下げ", "価格交渉"]) ? 2 : 0,
     sellerPotential: score >= 68 ? "供給源として会話する価値あり" : score >= 50 ? "商品単位で確認" : "供給源価値は低め",
     reasons: reasons.length > 0 ? reasons : ["供給源評価に必要な情報が不足しています。"],
     risks: risks.length > 0 ? risks : ["出品者の継続在庫・保管状況は未確認です。"],
@@ -875,6 +1010,8 @@ export function analyzeMarketResearch(input: MarketResearchInput): MarketResearc
       "投稿反応が高く売却が弱い市場は、投稿価値高・物販価値低として補正する",
       "売却が早い市場は、SELL CHECKの回転価格帯を優先する",
     ],
+    domesticDemand: marketTheoryEngine.domesticDemand,
+    overseasDemand: marketTheoryEngine.overseasDemand,
   };
 }
 
@@ -970,6 +1107,11 @@ export function normalizeMarketCard(raw: unknown): MarketCard {
     theory: marketLayerText(obj.theory),
     evidence: marketLayerArray(obj.evidence),
     missingInfo: marketLayerArray(obj.missingInfo),
+    researchPlan: marketLayerArray(obj.researchPlan),
+    searchKeywords: marketLayerArray(obj.searchKeywords),
+    observationTargets: marketLayerArray(obj.observationTargets),
+    nextResearchActions: marketLayerArray(obj.nextResearchActions),
+    missingInformation: marketLayerArray(obj.missingInformation),
     status,
     updatedAt: marketLayerText(obj.updatedAt) || new Date().toISOString(),
   };
@@ -1065,6 +1207,8 @@ export function buildSourceCheck(input: SourceCheckInput | MarketResearchInput):
     contactValue,
     negotiationPotential,
     shippingCompatibility,
+    supplyPotential: totalScore,
+    repeatSupply: repeatSupplyPotential,
     totalScore,
     judgement,
     reasons,

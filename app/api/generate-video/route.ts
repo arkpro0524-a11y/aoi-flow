@@ -6,6 +6,7 @@ import admin from "firebase-admin";
 import { startVideoTaskWithRunway, type RunwayVideoParams } from "@/lib/server/runway";
 import { getIdempotencyKey } from "@/lib/server/idempotency";
 import { getAdminAuth, getAdminDb } from "@/firebaseAdmin";
+import { buildAoiFlowGenerationMarketContext } from "@/lib/marketFusion";
 
 export const runtime = "nodejs";
 
@@ -70,7 +71,20 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "referenceImageUrl required" }, { status: 400 });
     }
 
-    const vision = String(payload?.vision || "").trim();
+    const marketContext = buildAoiFlowGenerationMarketContext({
+      marketTheory: payload?.marketTheory,
+      designGrammar: payload?.designGrammar,
+      commonWorldviews: payload?.commonWorldviews,
+      commonStories: payload?.commonStories,
+    });
+
+    const vision = [
+      String(payload?.vision || "").trim(),
+      marketContext.marketTheory ? `市場理論: ${marketContext.marketTheory}` : "",
+      marketContext.designGrammar ? `デザイン文法: ${marketContext.designGrammar}` : "",
+      marketContext.commonWorldviews.length ? `共通世界観: ${marketContext.commonWorldviews.join(" / ")}` : "",
+      marketContext.commonStories.length ? `共通物語: ${marketContext.commonStories.join(" / ")}` : "",
+    ].filter(Boolean).join("\n").trim();
     if (!vision) {
       return NextResponse.json({ error: "vision required" }, { status: 400 });
     }
@@ -111,6 +125,10 @@ export async function POST(req: Request) {
         videoRatio: ratio,
         videoQuality: quality,
         videoSize: size,
+        marketTheory: marketContext.marketTheory || null,
+        designGrammar: marketContext.designGrammar || null,
+        commonWorldviews: marketContext.commonWorldviews,
+        commonStories: marketContext.commonStories,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       },
       { merge: true }

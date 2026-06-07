@@ -211,7 +211,7 @@ export default function useDraftVideoActions(params: Params) {
   async function syncVideosFromStorage() {
     if (!uid) return;
 
-    const ensuredDraftId = draftId ?? (await saveDraft({ __forceCreate: true } as any));
+    const ensuredDraftId = draftId ?? (await saveDraft());
 
     if (!ensuredDraftId) {
       showMsg("下書きIDの確定に失敗しました");
@@ -306,7 +306,7 @@ export default function useDraftVideoActions(params: Params) {
       return;
     }
 
-    const ensuredDraftId = draftId ?? (await saveDraft({ __forceCreate: true } as any));
+    const ensuredDraftId = draftId ?? (await saveDraft());
 
     if (!ensuredDraftId) {
       setNonAiReason("保存できません：下書きIDの確定に失敗しました");
@@ -357,7 +357,7 @@ export default function useDraftVideoActions(params: Params) {
 
     setNonAiReason("");
 
-    const ensuredDraftId = draftId ?? (await saveDraft({ __forceCreate: true } as any));
+    const ensuredDraftId = draftId ?? (await saveDraft());
 
     if (!ensuredDraftId) {
       setNonAiReason("保存できません：下書きIDの確定に失敗しました");
@@ -432,7 +432,7 @@ export default function useDraftVideoActions(params: Params) {
       return;
     }
 
-    const ensuredDraftId = draftId ?? (await saveDraft({ __forceCreate: true } as any));
+    const ensuredDraftId = draftId ?? (await saveDraft());
 
     if (!ensuredDraftId) {
       setBurnReason("draftId がありません（先に保存してください）");
@@ -491,7 +491,7 @@ export default function useDraftVideoActions(params: Params) {
 
 
   async function extractProductVideoClip() {
-    const ensuredDraftId = draftId ?? (await saveDraft({ __forceCreate: true } as any));
+    const ensuredDraftId = draftId ?? (await saveDraft());
 
     if (!ensuredDraftId) {
       setNonAiReason("切り抜きできません：下書きIDの確定に失敗しました");

@@ -59,6 +59,11 @@ export async function POST(req: Request) {
           ...card,
           createdAt: now,
           updatedAt: now,
+          researchPlan: card.researchPlan,
+          searchKeywords: card.searchKeywords,
+          observationTargets: card.observationTargets,
+          nextResearchActions: card.nextResearchActions,
+          missingInformation: card.missingInformation,
           version: "trend-knowledge-2026-06",
         });
         return ref.id;
@@ -97,9 +102,17 @@ export async function POST(req: Request) {
 
       savedMarketCardIds = await Promise.all(marketCardWrites);
 
-      const theoryRef = await db.collection("vento_market_theories").add({
+      const theoryPayload = {
         uid: user.uid,
         sourceLogId: logRef.id,
+        marketExistenceScore: result.marketTheoryEngine.marketExistenceScore,
+        marketFormationScore: result.marketTheoryEngine.marketFormationScore,
+        dataJudgement: result.marketTheoryEngine.dataJudgement,
+        theoryJudgement: result.marketTheoryEngine.theoryJudgement,
+        evidence: result.marketTheoryEngine.evidence,
+        missingEvidence: result.marketTheoryEngine.missingEvidence,
+        domesticDemand: result.marketTheoryEngine.domesticDemand,
+        overseasDemand: result.marketTheoryEngine.overseasDemand,
         marketTheoryEngine: result.marketTheoryEngine,
         designLearning: result.designLearning,
         designScore: result.designScore,
@@ -109,6 +122,43 @@ export async function POST(req: Request) {
         createdAt: now,
         updatedAt: now,
         version: "vento-market-theory-engine-2026-06",
+      };
+      const theoryRef = await db.collection("market_theories").add(theoryPayload);
+      await db.collection("vento_market_theories").add(theoryPayload);
+
+      await db.collection("design_learning").add({
+        uid: user.uid,
+        sourceLogId: logRef.id,
+        commonColors: result.designLearning.commonColors,
+        commonShapes: result.designLearning.commonShapes,
+        commonMaterials: result.designLearning.commonMaterials,
+        commonWorldviews: result.designLearning.commonWorldviews,
+        commonStories: result.designLearning.commonStories,
+        designGrammar: result.designLearning.designGrammar,
+        marketTheory: result.designLearning.marketTheory,
+        designScore: result.designScore,
+        domesticDemand: result.domesticDemand,
+        overseasDemand: result.overseasDemand,
+        createdAt: now,
+        updatedAt: now,
+        version: "design-learning-2026-06",
+      });
+
+      await db.collection("theory_db").add({
+        uid: user.uid,
+        sourceLogId: logRef.id,
+        marketName: result.trendKnowledge.cards[0]?.marketName ?? "未命名市場",
+        marketTheory: result.designLearning.marketTheory || result.marketTheoryEngine.marketTheory,
+        marketHypothesis: result.trendKnowledge.cards[0]?.summary ?? "",
+        successCases: [],
+        failureCases: [],
+        purchaseReasons: result.sellCheckUpgradePreview.buyConditions,
+        passReasons: result.sellCheckUpgradePreview.passConditions,
+        researchHistory: result.trendKnowledge.cards[0]?.nextResearchActions ?? [],
+        observationHistory: result.trendKnowledge.observationPlans.map((plan) => `${plan.sourceName}: ${plan.targetCount}件`),
+        createdAt: now,
+        updatedAt: now,
+        version: "theory-db-2026-06",
       });
 
       savedTheoryId = theoryRef.id;

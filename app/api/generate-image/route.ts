@@ -6,6 +6,7 @@ import { getStorage } from "firebase-admin/storage";
 import { getIdempotencyKey } from "@/lib/server/idempotency";
 import { PRICING } from "@/lib/server/pricing";
 import { getAdminAuth, getAdminDb } from "@/firebaseAdmin";
+import { buildAoiFlowGenerationMarketContext } from "@/lib/marketFusion";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -45,6 +46,10 @@ type ReqBody = {
   sellDirection?: string;
   bgScene?: string;
   draftId?: string;
+  marketTheory?: unknown;
+  designGrammar?: unknown;
+  commonWorldviews?: unknown;
+  commonStories?: unknown;
 };
 
 /**
@@ -212,6 +217,25 @@ function buildRegenerationPrompt(args: {
   return lines.filter(Boolean).join("\n").slice(0, PRICING.MAX_PROMPT_CHARS);
 }
 
+function buildMarketPromptBlock(input: {
+  marketTheory?: unknown;
+  designGrammar?: unknown;
+  commonWorldviews?: unknown;
+  commonStories?: unknown;
+}): string {
+  const context = buildAoiFlowGenerationMarketContext(input);
+  const lines = [
+    "",
+    "Market research context for AOI FLOW generation:",
+    context.marketTheory ? `Market theory: ${context.marketTheory}` : "",
+    context.designGrammar ? `Design grammar: ${context.designGrammar}` : "",
+    context.commonWorldviews.length ? `Common worldviews: ${context.commonWorldviews.join(" / ")}` : "",
+    context.commonStories.length ? `Common stories: ${context.commonStories.join(" / ")}` : "",
+    "Use this only to improve visual direction. Do not print these words as text in the image.",
+  ].filter(Boolean);
+  return lines.length > 2 ? lines.join("\n") : "";
+}
+
 export async function POST(req: Request) {
   let uid = "";
 
@@ -241,6 +265,12 @@ export async function POST(req: Request) {
   const sellDirection = safeText(body.sellDirection, 100);
   const bgScene = safeText(body.bgScene, 100);
   const draftId = safeText(body.draftId, 200);
+  const marketPromptBlock = buildMarketPromptBlock({
+    marketTheory: body.marketTheory,
+    designGrammar: body.designGrammar,
+    commonWorldviews: body.commonWorldviews,
+    commonStories: body.commonStories,
+  });
 
   /**
    * prompt 決定ルール
@@ -250,7 +280,7 @@ export async function POST(req: Request) {
    * 2. referenceImageUrl があるなら再生成用 prompt
    * 3. 旧来の通常画像生成 prompt
    */
-  const prompt = (
+  const promptBase = (
     directPrompt ||
     (referenceImageUrl
       ? buildRegenerationPrompt({
@@ -275,7 +305,11 @@ export async function POST(req: Request) {
         ]
           .filter(Boolean)
           .join("\n"))
-  )
+  );
+
+  const prompt = [promptBase, marketPromptBlock]
+    .filter(Boolean)
+    .join("\n")
     .slice(0, PRICING.MAX_PROMPT_CHARS)
     .trim();
 

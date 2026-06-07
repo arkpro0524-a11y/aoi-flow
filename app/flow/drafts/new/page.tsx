@@ -325,7 +325,7 @@ export default function NewDraftPage() {
             setD={c.setD}
             onApplyIg3ToOverlayOnly={c.applyIg3ToOverlayOnly}
             onSaveDraft={() => {
-              void c.saveDraft({ __forceCreate: true } as any);
+              void c.saveDraft();
             }}
             onSaveCaptionSet={() => {
               void c.saveCurrentCaptionSet();
@@ -422,7 +422,7 @@ export default function NewDraftPage() {
                   onSaveCompositeAsImageUrl={c.saveCompositeAsImageUrl}
                   onSaveCompositeTextImageFromCompositeSlot={c.saveCompositeTextImageFromCompositeSlot}
                   onSaveDraft={() => {
-                    void c.saveDraft({ __forceCreate: true } as any);
+                    void c.saveDraft();
                   }}
                   onGenerateBackgroundImage={c.generateBackgroundImage}
                   onReplaceBackgroundAndSaveToAiImage={c.replaceBackgroundAndSaveToAiImage}
@@ -548,7 +548,7 @@ export default function NewDraftPage() {
     }
 
     onBurnVideo={c.burnVideo}
-    onSaveDraft={(partial?: any) => c.saveDraft(partial ?? ({ __forceCreate: true } as any))}
+    onSaveDraft={c.saveDraft}
     onSetPhase={c.setPhase}
 
     serverPlacementMeta={

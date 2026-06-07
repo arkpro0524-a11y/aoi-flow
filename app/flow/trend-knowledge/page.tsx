@@ -143,6 +143,11 @@ export default function TrendKnowledgePage() {
       observationItems: linesToArray(observationItemsText),
       evidence: linesToArray(evidenceText),
       missingInfo: linesToArray(missingInfoText),
+      researchPlan: linesToArray(researchSourcesText),
+      searchKeywords: linesToArray(searchWordsText),
+      observationTargets: linesToArray(observationItemsText),
+      nextResearchActions: linesToArray(researchSourcesText).map((source) => `${source}を確認する`),
+      missingInformation: linesToArray(missingInfoText),
       updatedAt: new Date().toISOString(),
     };
   }
@@ -259,9 +264,13 @@ export default function TrendKnowledgePage() {
                 </div>
                 <p className="mt-4 rounded-2xl border border-white/10 bg-black/20 p-4 text-sm leading-6 text-white/72">{card.theory || "理論未入力"}</p>
                 <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-3">
-                  <SmallList title="次に見るべき調査先" items={card.researchSources || []} />
-                  <SmallList title="検索ワード" items={card.searchWords || []} />
-                  <SmallList title="観測項目" items={card.observationItems || []} />
+                  <SmallList title="次に見るべき調査先" items={(card.researchPlan && card.researchPlan.length > 0 ? card.researchPlan : card.researchSources) || []} />
+                  <SmallList title="検索ワード" items={(card.searchKeywords && card.searchKeywords.length > 0 ? card.searchKeywords : card.searchWords) || []} />
+                  <SmallList title="観察項目" items={(card.observationTargets && card.observationTargets.length > 0 ? card.observationTargets : card.observationItems) || []} />
+                </div>
+                <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
+                  <SmallList title="次回調査" items={card.nextResearchActions || []} />
+                  <SmallList title="不足情報" items={(card.missingInformation && card.missingInformation.length > 0 ? card.missingInformation : card.missingInfo) || []} />
                 </div>
 
                 <div className="mt-4 rounded-2xl border border-cyan-200/20 bg-cyan-200/10 p-4">

@@ -816,28 +816,20 @@ export default function BackgroundPanel({
     if (busy) return;
     if (typeof syncBgImagesFromStorage !== "function") return;
 
-    // 新規作成直後は draftId がまだ存在しません。
-    // ここで Storage 同期を自動実行すると、同期処理が下書きIDを作るため、
-    // 「画面を開いただけで空下書きが増える」原因になります。
-    // 既存下書き、または実際に背景/素材がある時だけ自動同期します。
-    const existingDraftId = String((d as any).id || "").trim();
-    const hasBackgroundMaterial = Boolean(
-      String(d.baseImageUrl || "").trim() ||
-        String(d.bgImageUrl || "").trim() ||
-        String(d.templateBgUrl || "").trim() ||
-        (Array.isArray(d.bgImageUrls) && d.bgImageUrls.length > 0) ||
-        (Array.isArray(d.templateBgUrls) && d.templateBgUrls.length > 0)
-    );
+    // 新規作成画面を開いただけでは下書きを作らない。
+    // 以前は d.userId や "new-draft" をキーにして背景履歴同期を走らせていたため、
+    // syncBgImagesFromStorage() -> saveDraft() の流れで空下書きが作成されていた。
+    // 自動同期は、URLに既存の draft id がある編集画面だけで許可する。
+    const search = typeof window !== "undefined" ? window.location.search : "";
+    const urlDraftId = new URLSearchParams(search).get("id")?.trim() ?? "";
+    if (!urlDraftId) return;
 
-    if (!existingDraftId && !hasBackgroundMaterial) return;
-
-    const key = String(existingDraftId || d.baseImageUrl || d.bgImageUrl || d.templateBgUrl).trim();
-    if (!key) return;
+    const key = urlDraftId;
     if (autoSyncBgKeyRef.current === key) return;
 
     autoSyncBgKeyRef.current = key;
     void syncBgImagesFromStorage();
-  }, [uid, busy, d, syncBgImagesFromStorage]);
+  }, [uid, busy, syncBgImagesFromStorage]);
 
   const compositeTextOverlay = useMemo<TextOverlay | null>(() => {
     if (textOverlay) return textOverlay;

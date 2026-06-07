@@ -11,6 +11,7 @@ import {
   normalizeSellCheckSource,
 } from "@/lib/sellCheck/rules";
 import { calculateSellCheckResult } from "@/lib/sellCheck/scoring";
+import { buildSellCheckMarketContext } from "@/lib/marketFusion";
 import type {
   SellCheckImageAnalysis,
   SellCheckImageMeta,
@@ -464,6 +465,19 @@ export async function POST(req: NextRequest) {
     const memo = safeString(form.get("memo") || form.get("targetDescription"));
     const keywords = safeString(form.get("keywords") || form.get("targetKeywords"));
 
+    const marketContext = buildSellCheckMarketContext({
+      marketExistenceScore: safeScore(form.get("marketExistenceScore"), 0),
+      marketFormationScore: safeScore(form.get("marketFormationScore"), 0),
+      designScore: safeScore(form.get("designScore"), 0),
+      supplyPotential: safeScore(form.get("supplyPotential"), 0),
+      repeatSupply: safeScore(form.get("repeatSupply"), 0),
+      deadStockPotential: safeScore(form.get("deadStockPotential"), 0),
+      contactValue: safeScore(form.get("contactValue"), 0),
+      theoryJudgement: safeString(form.get("theoryJudgement")) || "未確認",
+      domesticDemand: safeString(form.get("domesticDemand")) || "未確認",
+      overseasDemand: safeString(form.get("overseasDemand")) || "未確認",
+    });
+
     const imageMeta: SellCheckImageMeta = {
       hasImage: true,
       fileName: imageFiles.map((file) => file.name || "uploaded-image").join(", "),
@@ -524,6 +538,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       ok: true,
       result,
+      marketContext,
+      marketExistenceScore: marketContext.marketExistenceScore,
+      marketFormationScore: marketContext.marketFormationScore,
+      designScore: marketContext.designScore,
+      supplyPotential: marketContext.supplyPotential,
+      repeatSupply: marketContext.repeatSupply,
+      deadStockPotential: marketContext.deadStockPotential,
+      contactValue: marketContext.contactValue,
+      theoryJudgement: marketContext.theoryJudgement,
+      domesticDemand: marketContext.domesticDemand,
+      overseasDemand: marketContext.overseasDemand,
     });
   } catch (error) {
     console.error(error);

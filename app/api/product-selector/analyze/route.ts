@@ -66,6 +66,9 @@ export async function POST(req: Request) {
 
     const body = (await req.json()) as { input?: unknown };
     const input = normalizeInput(body.input);
+    const bodyInput = body.input && typeof body.input === "object" ? (body.input as Record<string, unknown>) : {};
+    const domesticDemand = safeString(bodyInput.domesticDemand) || "国内需要：PRODUCT SELECTORでは国内売却済み・検索語・SNS反応を別評価してください。";
+    const overseasDemand = safeString(bodyInput.overseasDemand) || "海外需要：PRODUCT SELECTORではeBay SOLD・英語検索・Reddit反応を別評価してください。";
 
     const fallback = evaluateProductCandidate(input);
 
@@ -85,6 +88,8 @@ export async function POST(req: Request) {
         ok: false,
         usedAi: false,
         result: fallback,
+        domesticDemand,
+        overseasDemand,
         error: "観測素材が未入力です。ニュース・SNS・画像メモ・記事などを入力してください。",
       });
     }
@@ -94,6 +99,8 @@ export async function POST(req: Request) {
         ok: true,
         usedAi: false,
         result: fallback,
+        domesticDemand,
+        overseasDemand,
         error: "OPENAI_API_KEY が未設定のため、固定ルール分析のみ返しました。",
       });
     }
@@ -128,6 +135,8 @@ export async function POST(req: Request) {
         uid,
         input,
         result,
+        domesticDemand,
+        overseasDemand,
         usedAi: true,
         theoryVersion: result.theoryVersion,
         createdAt,
@@ -167,6 +176,8 @@ export async function POST(req: Request) {
       ok: true,
       usedAi: true,
       result,
+      domesticDemand,
+      overseasDemand,
       savedLogId,
     });
   } catch (error) {

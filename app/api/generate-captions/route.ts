@@ -3,6 +3,7 @@
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
 import { getAdminAuth, getAdminDb } from "@/firebaseAdmin";
+import { buildAoiFlowGenerationMarketContext } from "@/lib/marketFusion";
 
 export const runtime = "nodejs";
 
@@ -142,6 +143,13 @@ export async function POST(req: Request) {
     const productCautions = toStringArray(body.productCautions, 8);
     const salesGoal = toSafeString(body.salesGoal);
 
+    const marketContext = buildAoiFlowGenerationMarketContext({
+      marketTheory: body.marketTheory,
+      designGrammar: body.designGrammar,
+      commonWorldviews: body.commonWorldviews,
+      commonStories: body.commonStories,
+    });
+
     /**
      * vision はこの API の核なので、空ならエラー
      */
@@ -244,6 +252,12 @@ export async function POST(req: Request) {
       `productUseScenes: ${productUseScenes.join(" / ")}`,
       `productCautions: ${productCautions.join(" / ")}`,
       `salesGoal: ${salesGoal}`,
+      "",
+      "【市場研究OS参照】",
+      `marketTheory: ${marketContext.marketTheory}`,
+      `designGrammar: ${marketContext.designGrammar}`,
+      `commonWorldviews: ${marketContext.commonWorldviews.join(" / ")}`,
+      `commonStories: ${marketContext.commonStories.join(" / ")}`,
       "",
       "【出力ルール】",
       "- instagram は投稿できる本文。長すぎず、共感→魅力→自然な締めの流れにする",
@@ -362,6 +376,11 @@ export async function POST(req: Request) {
       ecBullets: Array.isArray(out.ecBullets)
         ? out.ecBullets.map(String).slice(0, 3)
         : ["", "", ""],
+
+      marketTheory: marketContext.marketTheory,
+      designGrammar: marketContext.designGrammar,
+      commonWorldviews: marketContext.commonWorldviews,
+      commonStories: marketContext.commonStories,
     });
   } catch (e: any) {
     console.error(e);
