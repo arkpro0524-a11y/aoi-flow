@@ -165,7 +165,12 @@ export function buildSellCheckMarketContext(input: Partial<SellCheckMarketContex
   };
 }
 
-export function buildAoiFlowGenerationMarketContext(input: Partial<AoiFlowMarketContext>): AoiFlowMarketContext {
+export function buildAoiFlowGenerationMarketContext(input: {
+  marketTheory?: unknown;
+  designGrammar?: unknown;
+  commonWorldviews?: unknown;
+  commonStories?: unknown;
+}): AoiFlowMarketContext {
   return {
     marketTheory: String(input.marketTheory ?? '').trim(),
     designGrammar: String(input.designGrammar ?? '').trim(),
