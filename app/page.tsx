@@ -1,7 +1,7 @@
 // app/page.tsx
-// AOI FLOW のログイン後トップページ。
-// 元のトップ画面のロゴ位置・大きさを保ちながら、入口カードだけを全機能用に増やしています。
-// 既存機能は削除せず、リンク先を増やすだけの修正です。
+// AOI FLOW のトップページ。
+// 既存機能・既存導線は削除せず、表の入口だけを5カードに整理します。
+
 "use client";
 
 import Link from "next/link";
@@ -12,62 +12,46 @@ import { auth } from "@/firebase";
 
 type MenuItem = {
   href: string;
-  image?: string;
-  emoji?: string;
+  image: string;
   alt: string;
   label: string;
   description: string;
+  links?: { href: string; label: string }[];
 };
 
 const MENU_ITEMS: MenuItem[] = [
   {
-    href: "/flow/drafts/new",
-    image: "/text-video-logo.png",
-    alt: "Text & Video Creation",
-    label: "新規作成",
-    description: "文章・画像・動画を作る",
-  },
-  {
-    href: "/flow/drafts",
-    image: "/drafts_logo.png",
-    alt: "Drafts",
-    label: "下書き一覧",
-    description: "作成中の投稿を確認",
-  },
-  {
-    href: "/flow/library",
-    image: "/image_library_logo.png",
-    alt: "Image Library",
-    label: "画像ライブラリ",
-    description: "背景・完成画像を再利用",
-  },
-  {
     href: "/flow/market-research",
     image: "/product_selector_logo.png",
-    alt: "Market Research",
-    label: "市場調査",
-    description: "市場発見・理論DB・商品選定",
+    alt: "Market Research Lab",
+    label: "市場研究ラボ",
+    description: "市場情報を保存・学習・理論化する",
   },
   {
     href: "/flow/sell-check",
     image: "/sales_diagnosis_logo.png",
-    alt: "Sales Diagnosis",
+    alt: "Sell Check",
     label: "売れる診断",
-    description: "価格・利益・仕入れ判断",
+    description: "DB判定・理論判定・統合判定",
   },
   {
-    href: "/flow/sell-check/admin",
-    image: "/data_collection_logo.png",
-    alt: "Data Collection",
-    label: "学習データ管理",
-    description: "本文・画像・CSVを蓄積",
+    href: "/flow/drafts/new",
+    image: "/text-video-logo.png",
+    alt: "AOI FLOW Creation",
+    label: "商品画像作成",
+    description: "商品画像・説明文・SNS文を作る",
+    links: [
+      { href: "/flow/drafts/new", label: "新規作成" },
+      { href: "/flow/drafts", label: "下書き一覧" },
+      { href: "/flow/posted", label: "投稿済み" },
+    ],
   },
   {
-    href: "/flow/posted",
-    image: "/posted_logo.png",
-    alt: "Posted",
-    label: "投稿済み",
-    description: "出品・売却結果を確認",
+    href: "/flow/library",
+    image: "/image_library_logo.png",
+    alt: "Library",
+    label: "ライブラリ",
+    description: "市場カード・理論DB・画像を保管",
   },
   {
     href: "/flow/brands",
@@ -78,142 +62,233 @@ const MENU_ITEMS: MenuItem[] = [
   },
 ];
 
-function MenuCard({ item }: { item: MenuItem }) {
-  return (
-    <Link
-      href={item.href}
-      className="group flex min-h-[158px] flex-col items-center justify-center rounded-[1.4rem] bg-white/30 px-4 py-4 text-center shadow-[0_16px_44px_rgba(15,30,48,0.10)] backdrop-blur-md transition hover:-translate-y-1 hover:bg-white/44"
-    >
-      {/*
-        ロゴ画像そのものに余白があるため、カード側の白い内枠を廃止しています。
-        これで「透明な枠の中に小さく入っている」見え方を抑え、ロゴを主役にします。
-      */}
-      <div className="flex h-[108px] w-[108px] items-center justify-center">
-        {item.image ? (
-          <img
-            src={item.image}
-            alt={item.alt}
-            draggable={false}
-            className="h-full w-full object-contain transition duration-300 group-hover:scale-[1.06]"
-          />
-        ) : (
-          <div className="text-center text-[#0f1e30]">
-            <div className="text-4xl leading-none">{item.emoji}</div>
-            <div className="mt-2 text-[9px] font-black tracking-[0.22em] text-[#1c4f82]/70">
-              {item.alt}
-            </div>
-          </div>
-        )}
-      </div>
-
-      <div className="mt-2 text-[15px] font-black tracking-[0.16em] text-[#1c4f82]">
-        {item.label}
-      </div>
-      <div className="mt-1 text-[11px] font-bold leading-4 text-[#0f1e30]/68">
-        {item.description}
-      </div>
-    </Link>
-  );
-}
-
 export default function HomePage() {
   const router = useRouter();
+  const [checking, setChecking] = useState(true);
   const [user, setUser] = useState<User | null>(null);
-  const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (u) => {
-      setUser(u ?? null);
-      setReady(true);
+    if (!auth) {
+      setChecking(false);
+      return;
+    }
 
-      if (!u) {
-        router.replace("/login");
-      }
+    const unsub = onAuthStateChanged(auth, (u) => {
+      setUser(u);
+      setChecking(false);
+      if (!u) router.replace("/login");
     });
 
     return () => unsub();
   }, [router]);
 
-  async function logout() {
+  async function handleLogout() {
+    if (!auth) return;
     await signOut(auth);
     router.replace("/login");
   }
 
-  if (!ready || !user) {
-    return <div className="min-h-screen bg-[#f8fafc]" />;
+  if (checking || !user) {
+    return (
+      <main style={{ minHeight: "100vh", background: "#0F1E30", color: "white" }}>
+        <div
+          style={{
+            minHeight: "100vh",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: 12,
+            letterSpacing: "0.2em",
+            opacity: 0.65,
+          }}
+        >
+          LOADING
+        </div>
+      </main>
+    );
   }
 
   return (
-    <main className="min-h-screen bg-[#f8fafc] text-[#0f1e30]">
-      <section className="relative min-h-screen overflow-hidden">
-        <img
-          src="/top-bg.png"
-          alt="AOI FLOW background"
-          className="absolute inset-0 h-full w-full object-cover"
-          draggable={false}
-        />
+    <main
+      style={{
+        minHeight: "100vh",
+        width: "100%",
+        overflowX: "hidden",
+        color: "#0F1E30",
+        backgroundImage:
+          "linear-gradient(rgba(248,250,252,0.58), rgba(248,250,252,0.76)), url('/flow-bg-tech1.png')",
+        backgroundSize: "cover",
+        backgroundPosition: "center",
+        backgroundAttachment: "fixed",
+      }}
+    >
+      <button
+        onClick={handleLogout}
+        style={{
+          position: "fixed",
+          left: 16,
+          top: 16,
+          zIndex: 30,
+          borderRadius: 9999,
+          border: "1px solid rgba(28,79,130,0.18)",
+          background: "rgba(255,255,255,0.58)",
+          padding: "9px 14px",
+          fontSize: 12,
+          fontWeight: 900,
+          color: "#1C4F82",
+          backdropFilter: "blur(12px)",
+        }}
+      >
+        ログアウト
+      </button>
 
-        <div className="absolute inset-0 bg-white/20" />
-
-        <button
-          type="button"
-          onClick={logout}
-          className="absolute right-6 top-6 z-30 rounded-full bg-white/80 px-5 py-3 text-sm font-black text-[#0f1e30] shadow-[0_12px_34px_rgba(15,30,48,0.18)] backdrop-blur-md transition hover:bg-white"
-        >
-          ログアウト
-        </button>
-
-        {/* 元のトップ画面と同じ考え方：ロゴは画面上部45%の中央に固定 */}
-        <div className="absolute left-0 top-0 z-10 flex h-[45%] w-full items-center justify-center">
-          <div className="text-center">
-            <div className="mb-7 flex justify-center">
-              <div className="flex h-[120px] w-[120px] items-center justify-center rounded-full bg-white/85 shadow-[0_20px_70px_rgba(15,30,48,0.20)] backdrop-blur-md">
-                <img
-                  src="/logo-aoi-flow1.png"
-                  alt="AOI FLOW Logo"
-                  className="h-[82%] w-[82%] rounded-full object-contain"
-                  draggable={false}
-                />
-              </div>
-            </div>
-
-            <div
-              style={{
-                fontSize: "clamp(42px, 6vw, 72px)",
-                fontWeight: 800,
-                letterSpacing: "0.25em",
-                color: "#0f1e30",
-              }}
-            >
-              AOI FLOW
-            </div>
-
-            <div
-              style={{
-                marginTop: "10px",
-                fontSize: "clamp(14px, 2vw, 18px)",
-                letterSpacing: "0.35em",
-                color: "#1c4f82",
-                opacity: 0.8,
-              }}
-            >
-              Caption Studio
-            </div>
-          </div>
+      <section
+        style={{
+          minHeight: "100vh",
+          width: "100%",
+          maxWidth: 1180,
+          margin: "0 auto",
+          padding: "72px 20px 46px",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 36,
+        }}
+      >
+        <div style={{ textAlign: "center" }}>
+          <img
+            src="/icon-192.png"
+            alt="AOI FLOW"
+            style={{
+              width: 92,
+              height: 92,
+              objectFit: "contain",
+              borderRadius: 9999,
+              boxShadow: "0 18px 45px rgba(28,79,130,0.22)",
+            }}
+          />
+          <h1
+            style={{
+              marginTop: 24,
+              marginBottom: 0,
+              fontSize: "clamp(42px, 6vw, 80px)",
+              fontWeight: 900,
+              letterSpacing: "0.28em",
+            }}
+          >
+            AOI FLOW
+          </h1>
+          <p
+            style={{
+              marginTop: 10,
+              marginBottom: 0,
+              fontSize: "clamp(16px, 2vw, 24px)",
+              letterSpacing: "0.32em",
+              color: "#1C4F82",
+              fontWeight: 700,
+            }}
+          >
+            Caption Studio
+          </p>
         </div>
 
-        {/*
-          カードは横4列×2段で整理します。
-          画面上の余白と背景の美しさを残しつつ、ロゴの周囲の余計な枠を小さくしています。
-        */}
-        <div className="relative z-10 flex min-h-screen items-end justify-center pb-8 pt-[45vh]">
-          <div className="w-full max-w-[1120px] px-5">
-            <div className="grid grid-cols-4 gap-x-7 gap-y-5">
-              {MENU_ITEMS.map((item) => (
-                <MenuCard key={item.href} item={item} />
-              ))}
-            </div>
-          </div>
+        <div
+          style={{
+            width: "100%",
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+            gap: 18,
+          }}
+        >
+          {MENU_ITEMS.map((item) => (
+            <article
+              key={item.href}
+              style={{
+                minHeight: 245,
+                borderRadius: 28,
+                border: "1px solid rgba(255,255,255,0.64)",
+                background: "rgba(255,255,255,0.52)",
+                boxShadow: "0 22px 60px rgba(28,79,130,0.14)",
+                backdropFilter: "blur(14px)",
+                padding: 18,
+                textAlign: "center",
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <Link href={item.href} style={{ color: "inherit", textDecoration: "none" }}>
+                <img
+                  src={item.image}
+                  alt={item.alt}
+                  style={{
+                    width: 82,
+                    height: 82,
+                    maxWidth: 82,
+                    maxHeight: 82,
+                    objectFit: "contain",
+                    borderRadius: 18,
+                    display: "block",
+                    margin: "0 auto",
+                  }}
+                />
+                <h2
+                  style={{
+                    margin: "18px 0 0",
+                    fontSize: 20,
+                    fontWeight: 900,
+                    letterSpacing: "0.08em",
+                  }}
+                >
+                  {item.label}
+                </h2>
+                <p
+                  style={{
+                    margin: "8px 0 0",
+                    fontSize: 13,
+                    lineHeight: 1.7,
+                    fontWeight: 700,
+                    color: "#1C4F82",
+                  }}
+                >
+                  {item.description}
+                </p>
+              </Link>
+
+              {item.links ? (
+                <div
+                  style={{
+                    marginTop: 14,
+                    display: "flex",
+                    flexWrap: "wrap",
+                    justifyContent: "center",
+                    gap: 8,
+                  }}
+                >
+                  {item.links.map((link) => (
+                    <Link
+                      key={link.href}
+                      href={link.href}
+                      style={{
+                        borderRadius: 9999,
+                        border: "1px solid rgba(28,79,130,0.22)",
+                        background: "rgba(255,255,255,0.62)",
+                        padding: "5px 10px",
+                        fontSize: 11,
+                        fontWeight: 900,
+                        color: "#1C4F82",
+                        textDecoration: "none",
+                      }}
+                    >
+                      {link.label}
+                    </Link>
+                  ))}
+                </div>
+              ) : null}
+            </article>
+          ))}
         </div>
       </section>
     </main>

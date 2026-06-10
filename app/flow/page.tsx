@@ -1,6 +1,6 @@
 // app/flow/page.tsx
-// /flow 配下で使うマイページ型トップ。
-// 既存機能は削除せず、各ページへ移動する入口を整えています。
+// AOI FLOW / Vento の表トップ。
+// 既存ページ・既存API・既存データは削除せず、表に出す入口だけを5つへ整理します。
 
 import Link from "next/link";
 
@@ -8,60 +8,44 @@ type FeatureCard = {
   href: string;
   title: string;
   subtitle: string;
-  image?: string;
-  emoji?: string;
+  image: string;
   accent: string;
+  links?: { href: string; label: string }[];
 };
 
 const FEATURE_CARDS: FeatureCard[] = [
   {
-    href: "/flow/drafts/new",
-    title: "新規作成",
-    subtitle: "商品画像・背景・文章・動画を作る",
-    image: "/text-video-logo.png",
-    accent: "Create",
-  },
-  {
-    href: "/flow/drafts",
-    title: "下書き一覧",
-    subtitle: "作成中の商品投稿を軽く確認する",
-    image: "/drafts_logo.png",
-    accent: "Drafts",
-  },
-  {
-    href: "/flow/library",
-    title: "画像ライブラリ",
-    subtitle: "背景・テンプレ・完成画像を再利用する",
-    image: "/image_library_logo.png",
-    accent: "Assets",
-  },
-  {
     href: "/flow/market-research",
-    title: "市場調査",
-    subtitle: "市場発見・理論DB・商品候補選定をまとめて行う",
+    title: "市場研究ラボ",
+    subtitle: "市場情報を保存・学習・理論化して、次の仕入れ判断へつなげる",
     image: "/product_selector_logo.png",
-    accent: "Market",
+    accent: "Market Research Lab",
   },
   {
     href: "/flow/sell-check",
     title: "売れる診断",
-    subtitle: "個別商品の価格・利益・仕入れ判断",
+    subtitle: "Market DB・Theory DB・商品画像を統合して価格と仕入れを確認する",
     image: "/sales_diagnosis_logo.png",
-    accent: "Check",
+    accent: "SELL CHECK",
   },
   {
-    href: "/flow/sell-check/admin",
-    title: "学習データ管理",
-    subtitle: "本文・画像・CSVから学習データを蓄積",
-    image: "/data_collection_logo.png",
-    accent: "Data",
+    href: "/flow/drafts/new",
+    title: "商品画像作成",
+    subtitle: "商品画像・背景・説明文・SNS文・広告画像を作成する",
+    image: "/text-video-logo.png",
+    accent: "AOI FLOW",
+    links: [
+      { href: "/flow/drafts/new", label: "新規作成" },
+      { href: "/flow/drafts", label: "下書き一覧" },
+      { href: "/flow/posted", label: "投稿済み" },
+    ],
   },
   {
-    href: "/flow/posted",
-    title: "投稿済み",
-    subtitle: "出品・売却結果を振り返る",
-    image: "/posted_logo.png",
-    accent: "Posted",
+    href: "/flow/library",
+    title: "ライブラリ",
+    subtitle: "市場カード・市場データ・学習データ・理論DB・画像を保管する",
+    image: "/image_library_logo.png",
+    accent: "Library",
   },
   {
     href: "/flow/brands",
@@ -72,61 +56,117 @@ const FEATURE_CARDS: FeatureCard[] = [
   },
 ];
 
-function FeatureCardView({ item }: { item: FeatureCard }) {
+export default function FlowHomePage() {
   return (
-    <Link
-      href={item.href}
-      className="group block h-full overflow-hidden rounded-[1.35rem] border border-white/12 bg-white/[0.08] p-5 shadow-[0_18px_50px_rgba(0,0,0,0.18)] transition hover:-translate-y-1 hover:bg-white/[0.13]"
+    <div
+      style={{
+        width: "100%",
+        maxWidth: 1180,
+        margin: "0 auto",
+        minHeight: "calc(100vh - 210px)",
+        display: "flex",
+        flexDirection: "column",
+        justifyContent: "center",
+        gap: 28,
+        padding: "22px 4px",
+      }}
     >
-      <div className="flex h-32 items-center justify-center text-[#0f1e30] sm:h-36">
-        {item.image ? (
-          <img
-            src={item.image}
-            alt={item.title}
-            className="h-full max-h-32 max-w-full object-contain transition duration-300 group-hover:scale-[1.06] sm:max-h-36"
-            draggable={false}
-          />
-        ) : (
-          <div className="text-center">
-            <div className="text-4xl leading-none sm:text-5xl">{item.emoji}</div>
-            <div className="mt-3 text-[10px] font-black tracking-[0.24em] text-[#1c4f82]/70">
-              {item.accent}
-            </div>
-          </div>
-        )}
-      </div>
-
-      <div className="mt-4">
-        <div className="text-base font-black tracking-[0.1em] text-white sm:text-lg">
-          {item.title}
+      <section
+        style={{
+          borderRadius: 28,
+          border: "1px solid rgba(255,255,255,0.16)",
+          background: "rgba(0,0,0,0.20)",
+          padding: "24px clamp(18px, 3vw, 34px)",
+        }}
+      >
+        <div style={{ fontSize: 11, fontWeight: 900, letterSpacing: "0.34em", color: "rgba(255,255,255,0.58)" }}>
+          AOI FLOW / VENTO
         </div>
-        <div className="mt-2 text-xs leading-5 text-white/62 sm:text-sm sm:leading-6">
-          {item.subtitle}
-        </div>
-      </div>
-    </Link>
-  );
-}
-
-export default function FlowIndexPage() {
-  return (
-    <div className="space-y-5">
-      <section className="rounded-[1.75rem] border border-white/12 bg-black/18 p-5 md:p-7">
-        <div className="text-xs font-black tracking-[0.3em] text-white/55">
-          AOI FLOW / MY PAGE
-        </div>
-        <h1 className="mt-3 text-2xl font-black tracking-[0.12em] text-white md:text-4xl">
-          作業入口
+        <h1
+          style={{
+            margin: "12px 0 0",
+            fontSize: "clamp(30px, 4vw, 54px)",
+            fontWeight: 900,
+            letterSpacing: "0.16em",
+            color: "white",
+          }}
+        >
+          市場研究OS
         </h1>
-        <p className="mt-4 max-w-3xl text-sm leading-7 text-white/70 md:text-base">
-          下書き、画像ライブラリ、市場調査、売れる診断へここから移動します。
-          作った画像や背景は資産として蓄積し、次の下書きでも再利用する前提にします。
+        <p style={{ margin: "16px 0 0", maxWidth: 900, fontSize: 14, lineHeight: 1.9, color: "rgba(255,255,255,0.72)" }}>
+          既存機能は削除せず、表の入口だけを整理しています。下書き一覧・投稿済み・学習データ管理・旧分析画面はURLを維持したまま、
+          市場研究ラボ / 売れる診断 / 商品画像作成 / ライブラリ / 設定へ収納します。
         </p>
       </section>
 
-      <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {FEATURE_CARDS.map((item) => (
-          <FeatureCardView key={item.href} item={item} />
+      <section
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+          gap: 16,
+        }}
+      >
+        {FEATURE_CARDS.map((card) => (
+          <article
+            key={card.href}
+            style={{
+              minHeight: 238,
+              borderRadius: 28,
+              border: "1px solid rgba(255,255,255,0.16)",
+              background: "rgba(255,255,255,0.08)",
+              padding: 16,
+              color: "white",
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+            <Link href={card.href} style={{ color: "inherit", textDecoration: "none", display: "flex", flex: 1, flexDirection: "column" }}>
+              <div style={{ fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.22em", color: "rgba(210,255,255,0.58)" }}>
+                {card.accent}
+              </div>
+              <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", paddingTop: 18 }}>
+                <img
+                  src={card.image}
+                  alt={card.title}
+                  style={{
+                    width: 82,
+                    height: 82,
+                    maxWidth: 82,
+                    maxHeight: 82,
+                    objectFit: "contain",
+                    borderRadius: 18,
+                    display: "block",
+                    boxShadow: "0 12px 26px rgba(0,0,0,0.22)",
+                  }}
+                />
+              </div>
+              <h2 style={{ margin: "16px 0 0", fontSize: 20, fontWeight: 900, letterSpacing: "0.08em" }}>{card.title}</h2>
+              <p style={{ margin: "8px 0 0", fontSize: 12, lineHeight: 1.75, color: "rgba(255,255,255,0.66)" }}>{card.subtitle}</p>
+            </Link>
+
+            {card.links ? (
+              <div style={{ marginTop: 14, display: "flex", flexWrap: "wrap", gap: 8 }}>
+                {card.links.map((link) => (
+                  <Link
+                    key={link.href}
+                    href={link.href}
+                    style={{
+                      borderRadius: 9999,
+                      border: "1px solid rgba(255,255,255,0.16)",
+                      background: "rgba(0,0,0,0.22)",
+                      padding: "5px 10px",
+                      fontSize: 11,
+                      fontWeight: 900,
+                      color: "rgba(255,255,255,0.82)",
+                      textDecoration: "none",
+                    }}
+                  >
+                    {link.label}
+                  </Link>
+                ))}
+              </div>
+            ) : null}
+          </article>
         ))}
       </section>
     </div>

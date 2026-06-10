@@ -70,8 +70,23 @@ export default function FlowShell({ user, onLogout, children }: Props) {
   }, [effectiveUid]);
 
   const isActive = (href: string) => {
-    if (href === "/") return pathname === "/";
-    return pathname === href || pathname.startsWith(href + "/");
+    // 5つの表導線だけをアクティブ判定します。
+    // 非表示管理画面（/flow/sell-check/admin など）はURLを残しますが、
+    // 売れる診断タブ・市場研究ラボタブとして誤表示しないように分離します。
+    if (href === "/") return pathname === "/" || pathname === "/flow";
+    if (href === "/flow/market-research") return pathname === "/flow/market-research";
+    if (href === "/flow/sell-check") return pathname === "/flow/sell-check";
+    if (href === "/flow/drafts/new") {
+      return (
+        pathname === "/flow/drafts/new" ||
+        pathname.startsWith("/flow/drafts/") ||
+        pathname === "/flow/drafts" ||
+        pathname === "/flow/posted"
+      );
+    }
+    if (href === "/flow/library") return pathname === "/flow/library";
+    if (href === "/flow/brands") return pathname === "/flow/brands";
+    return pathname === href;
   };
 
   const Tab = ({ href, label }: { href: string; label: string }) => {
@@ -222,17 +237,10 @@ export default function FlowShell({ user, onLogout, children }: Props) {
                 }}
               >
                 <Tab href="/" label="トップ" />
-                <Tab href="/flow/drafts" label="下書き一覧" />
-                <Tab href="/flow/drafts/new" label="新規作成" />
-                <Tab href="/flow/library" label="画像ライブラリ" />
-                <Tab href="/flow/market-research" label="市場調査" />
+                <Tab href="/flow/market-research" label="市場研究ラボ" />
                 <Tab href="/flow/sell-check" label="売れる診断" />
-
-                {isAdmin ? (
-                  <Tab href="/flow/sell-check/admin" label="学習データ管理" />
-                ) : null}
-
-                <Tab href="/flow/posted" label="投稿済み" />
+                <Tab href="/flow/drafts/new" label="商品画像作成" />
+                <Tab href="/flow/library" label="ライブラリ" />
                 <Tab href="/flow/brands" label="設定" />
               </div>
             </div>

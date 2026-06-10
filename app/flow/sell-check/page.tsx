@@ -553,6 +553,40 @@ export default function SellCheckPage() {
 
   return (
     <div className="space-y-5">
+      <section className="rounded-[2rem] border border-white/15 bg-black/18 p-5 md:p-6">
+        <div className="text-xs font-black tracking-[0.32em] text-white/50">
+          SELL CHECK / STRUCTURE
+        </div>
+        <h2 className="mt-2 text-2xl font-black tracking-[0.12em] text-white">
+          DB判定 → 理論判定 → 統合判定
+        </h2>
+        <p className="mt-3 text-sm leading-7 text-white/65">
+          売れる診断は単独ツールではなく、市場研究ラボで蓄積したMarket DB・Learning DB・Theory DBを参照し、
+          既存SELL CHECKロジックを削除せずに最終判断を補助する画面です。
+        </p>
+        <div className="mt-5 grid gap-3 lg:grid-cols-3">
+          <div className="rounded-2xl border border-white/12 bg-white/[0.06] p-4">
+            <div className="text-sm font-black text-white">① DB判定</div>
+            <p className="mt-2 text-xs leading-6 text-white/62">
+              過去市場、類似市場、類似商品、成功事例、失敗事例、theoryDB内容を確認します。
+            </p>
+          </div>
+          <div className="rounded-2xl border border-white/12 bg-white/[0.06] p-4">
+            <div className="text-sm font-black text-white">② 理論判定</div>
+            <p className="mt-2 text-xs leading-6 text-white/62">
+              市場理論、デザイン理論、市場形成、市場存在性、不足情報を確認します。
+            </p>
+          </div>
+          <div className="rounded-2xl border border-white/12 bg-white/[0.06] p-4">
+            <div className="text-sm font-black text-white">③ 統合判定</div>
+            <p className="mt-2 text-xs leading-6 text-white/62">
+              DB判定＋理論判定＋商品画像を統合し、買い・見送り・保留、安全価格、攻め価格、利益予測、回転予測を確認します。
+            </p>
+          </div>
+        </div>
+      </section>
+
+
       <div className="border-b border-white/10 pb-4">
         <h1 className="text-2xl font-black tracking-wide">売れる診断</h1>
         <p className="mt-2 text-sm text-white/65">

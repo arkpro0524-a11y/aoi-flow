@@ -1,5 +1,5 @@
 // /app/flow/library/page.tsx
-// ユーザーごとの画像ライブラリ。
+// ユーザーごとのライブラリ。
 // 下書きごとに閉じ込めていた画像を、ユーザー単位で再利用できるようにします。
 // 既存の下書き・SELL CHECK・PRODUCT SELECTOR などの機能は削除せず、画像資産管理だけを追加します。
 
@@ -217,15 +217,52 @@ export default function ImageLibraryPage() {
     <div className="space-y-5">
       <section className="rounded-[2rem] border border-white/12 bg-black/18 p-5 md:p-7">
         <div className="text-xs font-black tracking-[0.35em] text-white/55">
-          AOI FLOW / IMAGE LIBRARY
+          AOI FLOW / KNOWLEDGE LIBRARY
         </div>
         <h1 className="mt-3 text-3xl font-black tracking-[0.12em] text-white md:text-4xl">
           画像ライブラリ
         </h1>
         <p className="mt-4 max-w-4xl text-sm leading-7 text-white/68">
-          一度作った背景画像や、別下書きでも使いたい画像をユーザー単位で保管します。
-          背景の選択は「新規作成」内の「商品/背景合成」から行います。
+          ライブラリは画像保管庫だけではなく、AOI FLOWの知識保管庫です。
+          市場カード、市場データ、学習データ、理論DB、成功事例、失敗事例、画像ライブラリを同じ場所から確認します。
         </p>
+      </section>
+
+      <section className="rounded-[2rem] border border-white/12 bg-black/18 p-5 md:p-6">
+        <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
+          <a href="/flow/market-research" className="rounded-2xl border border-white/12 bg-white/[0.06] p-4 text-white no-underline">
+            <div className="text-sm font-black">市場カード</div>
+            <p className="mt-2 text-xs leading-6 text-white/60">市場の要約情報と観測履歴</p>
+          </a>
+          <a href="/flow/market-research" className="rounded-2xl border border-white/12 bg-white/[0.06] p-4 text-white no-underline">
+            <div className="text-sm font-black">市場データ</div>
+            <p className="mt-2 text-xs leading-6 text-white/60">Market Research DB</p>
+          </a>
+          <a href="/flow/market-research" className="rounded-2xl border border-white/12 bg-white/[0.06] p-4 text-white no-underline">
+            <div className="text-sm font-black">学習データ</div>
+            <p className="mt-2 text-xs leading-6 text-white/60">Learning DB / 学習データ管理</p>
+          </a>
+          <a href="/flow/market-research" className="rounded-2xl border border-white/12 bg-white/[0.06] p-4 text-white no-underline">
+            <div className="text-sm font-black">理論DB</div>
+            <p className="mt-2 text-xs leading-6 text-white/60">市場理論・デザイン理論</p>
+          </a>
+          <a href="/flow/market-research" className="rounded-2xl border border-white/12 bg-white/[0.06] p-4 text-white no-underline">
+            <div className="text-sm font-black">成功事例</div>
+            <p className="mt-2 text-xs leading-6 text-white/60">売却・利益化できた事例</p>
+          </a>
+          <a href="/flow/market-research" className="rounded-2xl border border-white/12 bg-white/[0.06] p-4 text-white no-underline">
+            <div className="text-sm font-black">失敗事例</div>
+            <p className="mt-2 text-xs leading-6 text-white/60">見送り・売れなかった事例</p>
+          </a>
+          <div className="rounded-2xl border border-cyan-200/20 bg-cyan-200/[0.08] p-4 text-white">
+            <div className="text-sm font-black">画像ライブラリ</div>
+            <p className="mt-2 text-xs leading-6 text-white/60">下の既存画像保管機能をそのまま使用</p>
+          </div>
+          <a href="/flow/market-research" className="rounded-2xl border border-white/12 bg-white/[0.06] p-4 text-white no-underline">
+            <div className="text-sm font-black">学習データ管理</div>
+            <p className="mt-2 text-xs leading-6 text-white/60">市場研究ラボ内の収納表示へ移動</p>
+          </a>
+        </div>
       </section>
 
       <section className="rounded-[1.5rem] border border-white/12 bg-black/18 p-4">

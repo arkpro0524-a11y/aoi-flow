@@ -2,6 +2,7 @@
 "use client";
 
 import React from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import ImageTabPanel from "./components/ImageTabPanel";
@@ -268,6 +269,26 @@ export default function NewDraftPage() {
           }
         }
       `}</style>
+
+      <div className="mb-3 rounded-2xl border border-white/12 bg-black/25 p-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="mr-2 text-xs font-black tracking-[0.18em] text-white/55">
+            商品画像作成
+          </span>
+          <Link href="/flow/drafts/new" className="rounded-full border border-cyan-200/30 bg-cyan-200/12 px-3 py-1 text-xs font-black text-white no-underline">
+            新規作成
+          </Link>
+          <Link href="/flow/drafts" className="rounded-full border border-white/15 bg-white/8 px-3 py-1 text-xs font-black text-white/80 no-underline">
+            下書き一覧
+          </Link>
+          <Link href="/flow/posted" className="rounded-full border border-white/15 bg-white/8 px-3 py-1 text-xs font-black text-white/80 no-underline">
+            投稿済み
+          </Link>
+          <Link href="/flow/library" className="rounded-full border border-white/15 bg-white/8 px-3 py-1 text-xs font-black text-white/80 no-underline">
+            画像ライブラリ
+          </Link>
+        </div>
+      </div>
 
       <div className="pageWrap">
         <section className="leftCol min-h-0 flex flex-col gap-3">
