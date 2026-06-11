@@ -478,7 +478,16 @@ export default function SellCheckPage() {
           return;
         }
 
-        targetFile = await imageUrlToFile(selectedDraft.imageUrl);
+        try {
+          targetFile = await imageUrlToFile(selectedDraft.imageUrl);
+        } catch (imageError) {
+          // Safari や Firebase Storage の CORS 設定により、ブラウザ側で下書き画像を
+          // File 化できない場合があります。その場合でも診断を止めず、
+          // API 側へ imageUrl を渡してサーバー側で取得します。
+          console.warn("[sell-check] client draft image fetch failed; fallback to server-side imageUrl", imageError);
+          targetFile = null;
+        }
+
         usedImageUrl = selectedDraft.imageUrl;
         usedDraftId = selectedDraft.id;
         imageSource = "draft";
@@ -513,8 +522,12 @@ export default function SellCheckPage() {
         imageFiles.slice(0, 8).forEach((file) => {
           form.append("images", file);
         });
-      } else {
+      } else if (targetFile) {
         form.append("image", targetFile);
+      }
+
+      if (usedImageUrl) {
+        form.append("imageUrl", usedImageUrl);
       }
 
       if (usedDraftId) {

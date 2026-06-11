@@ -77,29 +77,35 @@ export async function GET(req: NextRequest) {
       );
     }
 
+    // Firestore の複合インデックス未作成環境でも画面を止めないため、
+    // uid だけで取得してから createdAt 降順ソートと 100件制限をアプリ側で行います。
+    // 既存コレクション・既存データ形式は変更しません。
     const snap = await getAdminDb()
       .collection("sellCheckOutcomeLogs")
       .where("uid", "==", uid)
-      .orderBy("createdAt", "desc")
-      .limit(100)
       .get();
 
-    const logs = snap.docs.map((doc) => {
-      const data = doc.data();
-
-      return {
-        id: doc.id,
-        ...data,
-        createdAt:
+    const logs = snap.docs
+      .map((doc) => {
+        const data = doc.data();
+        const createdAt =
           typeof data.createdAt?.toMillis === "function"
             ? data.createdAt.toMillis()
-            : 0,
-        updatedAt:
+            : Number(data.createdAt || 0);
+        const updatedAt =
           typeof data.updatedAt?.toMillis === "function"
             ? data.updatedAt.toMillis()
-            : 0,
-      };
-    });
+            : Number(data.updatedAt || 0);
+
+        return {
+          id: doc.id,
+          ...data,
+          createdAt: Number.isFinite(createdAt) ? createdAt : 0,
+          updatedAt: Number.isFinite(updatedAt) ? updatedAt : 0,
+        };
+      })
+      .sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0))
+      .slice(0, 100);
 
     return NextResponse.json({ ok: true, logs });
   } catch (error) {

@@ -87,6 +87,29 @@ async function fileToDataUrl(file: File): Promise<string> {
   return `data:${mime};base64,${base64}`;
 }
 
+async function imageUrlToServerFile(url: unknown): Promise<File | null> {
+  const trimmed = safeString(url);
+  if (!trimmed) return null;
+
+  try {
+    const res = await fetch(trimmed, { cache: "no-store" });
+    if (!res.ok) return null;
+
+    const blob = await res.blob();
+    if (!blob || blob.size === 0) return null;
+
+    const contentType = blob.type || res.headers.get("content-type") || "image/png";
+    const ext = contentType.includes("jpeg") || contentType.includes("jpg") ? "jpg" : "png";
+
+    return new File([blob], `draft-image-from-url-${Date.now()}.${ext}`, {
+      type: contentType,
+    });
+  } catch (error) {
+    console.error("[sell-check] draft image url fetch failed", error);
+    return null;
+  }
+}
+
 async function analyzeImageAndText(args: {
   imageDataUrls: string[];
   title: string;
@@ -436,14 +459,24 @@ export async function POST(req: NextRequest) {
   try {
     const form = await req.formData();
 
-    const imageFiles = [
+    const uploadedImageFiles = [
       ...form.getAll("images"),
       ...form.getAll("image"),
     ].filter((item): item is File => item instanceof File).slice(0, 8);
 
+    const imageFiles = [...uploadedImageFiles];
+
+    // 下書き画像をクライアント側 fetch できない環境（Safari/CORS/Storage設定）でも
+    // 診断を止めないため、imageUrl が渡された場合はサーバー側で画像を取得します。
+    // 既存の手動アップロード処理はそのまま維持します。
+    if (imageFiles.length === 0) {
+      const fileFromUrl = await imageUrlToServerFile(form.get("imageUrl"));
+      if (fileFromUrl) imageFiles.push(fileFromUrl);
+    }
+
     if (imageFiles.length === 0) {
       return NextResponse.json(
-        { ok: false, error: "画像がありません" },
+        { ok: false, error: "画像がありません。下書き画像を取得できない場合は手動アップロードで診断してください。" },
         { status: 400 }
       );
     }
