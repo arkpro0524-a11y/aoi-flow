@@ -201,7 +201,7 @@ export default function useDraftVideoActions(params: Params) {
       setVideoPickerValue((prev: any) => ({ ...prev, recommended: normalized as any }));
       await applyTopRecommendation({ force: false, recommended: normalized });
     } catch (e: any) {
-      console.error(e);
+      console.warn("[AOI FLOW handled]", e);
       setRecommendReason(`おすすめ取得に失敗：${e?.message || "不明"}`);
     } finally {
       inFlightRef.current[key] = false;
@@ -289,7 +289,7 @@ export default function useDraftVideoActions(params: Params) {
 
       showMsg(`動画を同期しました：完成${nonAi.length}件 / 撮影素材${sourceVideos.length}件`);
     } catch (e: any) {
-      console.error(e);
+      console.warn("[AOI FLOW handled]", e);
       showMsg(`同期に失敗しました\n\n原因: ${e?.message || "不明"}`);
     } finally {
       setBusy(false);

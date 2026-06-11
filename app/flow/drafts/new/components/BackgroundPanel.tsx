@@ -730,7 +730,7 @@ export default function BackgroundPanel({
         })
       );
     } catch (e: any) {
-      console.error(e);
+      console.warn("[AOI FLOW handled]", e);
       showMsg(`画像ライブラリの取得に失敗：${e?.message || "不明"}`);
     } finally {
       setLibraryBusy(false);
@@ -758,7 +758,7 @@ export default function BackgroundPanel({
       setAiBgReferenceUrl(url);
       showMsg("参考画像を読み込みました");
     } catch (e: any) {
-      console.error(e);
+      console.warn("[AOI FLOW handled]", e);
       showMsg(`参考画像の読み込みに失敗：${e?.message || "不明"}`);
     } finally {
       setAiBgReferenceBusy(false);
@@ -907,7 +907,7 @@ await saveDraft({
       setActivePhotoMode("template");
       showMsg("テンプレ背景を選択しました");
     } catch (e: any) {
-      console.error(e);
+      console.warn("[AOI FLOW handled]", e);
       showMsg(`テンプレ背景の選択に失敗：${e?.message || "不明"}`);
     }
   }
@@ -955,7 +955,7 @@ await saveDraft({
         showMsg("おすすめ候補は取得できましたが、表示対象がありませんでした");
       }
     } catch (e: any) {
-      console.error(e);
+      console.warn("[AOI FLOW handled]", e);
       showMsg(`おすすめ取得に失敗：${e?.message || "不明"}`);
     } finally {
       setTemplateRecommendBusy(false);
@@ -975,7 +975,7 @@ await saveDraft({
       setActivePhotoMode("template");
       showMsg("テンプレ背景を生成しました");
     } catch (e: any) {
-      console.error(e);
+      console.warn("[AOI FLOW handled]", e);
       showMsg(`テンプレ背景生成に失敗：${e?.message || "不明"}`);
     }
   }
@@ -1527,7 +1527,7 @@ await saveDraft({
                         await generateBackgroundImage(backgroundKeyword || "参考画像に近い販売背景", aiBgReferenceUrl);
                         showMsg("背景を生成しました");
                       } catch (e: any) {
-                        console.error(e);
+                        console.warn("[AOI FLOW handled]", e);
                         showMsg(`背景生成に失敗：${e?.message || "不明"}`);
                       }
                     }}

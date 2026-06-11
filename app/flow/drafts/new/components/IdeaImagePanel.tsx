@@ -80,7 +80,7 @@ export default function IdeaImagePanel({
                 await generateAiImage();
                 showMsg("使用シーン画像を生成しました");
               } catch (e: any) {
-                console.error(e);
+                console.warn("[AOI FLOW handled]", e);
                 showMsg(`生成失敗: ${e?.message || "不明"}`);
               }
             }}

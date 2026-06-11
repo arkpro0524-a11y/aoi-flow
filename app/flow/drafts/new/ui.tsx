@@ -163,7 +163,7 @@ export function Btn(props: {
       type="button"
       title={props.title}
       onClick={() => {
-        void Promise.resolve(props.onClick?.()).catch((e) => console.error(e));
+        void Promise.resolve(props.onClick?.()).catch((e) => console.warn("[AOI FLOW] handled button error:", e?.message || e));
       }}
       disabled={disabled}
       className={[

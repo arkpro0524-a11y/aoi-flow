@@ -305,6 +305,36 @@ async function cutoutToPngBlob(file: File): Promise<Blob> {
   return await res.blob();
 }
 
+
+async function cutoutUrlToPngBlob(imageUrl: string): Promise<Blob> {
+  const safeUrl = String(imageUrl || "").trim();
+
+  if (!safeUrl) {
+    throw new Error("元画像URLがありません");
+  }
+
+  const res = await fetch("/api/cutout", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ imageUrl: safeUrl }),
+  });
+
+  const contentType = String(res.headers.get("content-type") || "").toLowerCase();
+
+  if (!res.ok) {
+    if (contentType.includes("application/json")) {
+      const json = await res.json().catch(() => ({}));
+      throw new Error(json?.error || `透過失敗 (status ${res.status})`);
+    }
+
+    throw new Error(`透過失敗 (status ${res.status})`);
+  }
+
+  return await res.blob();
+}
+
 async function uploadPngBlobToStorage(_uid: string, draftId: string, blob: Blob) {
   if (!draftId) {
     throw new Error("下書きIDがありません（先に保存してください）");
@@ -1110,7 +1140,7 @@ const nextBackgroundY = clamp(
         topReason,
       };
     } catch (e: any) {
-      console.error(e);
+      console.warn("[AOI FLOW handled]", e);
       showMsg(`テンプレ背景おすすめ取得に失敗：${e?.message || "不明"}`);
       return [];
     } finally {
@@ -1385,7 +1415,7 @@ const nextBackgroundY = clamp(
 
       showMsg(`テンプレ背景を同期しました：${nextUrls.length}件`);
     } catch (e: any) {
-      console.error(e);
+      console.warn("[AOI FLOW handled]", e);
       showMsg(`テンプレ背景同期に失敗しました：${e?.message || "不明"}`);
     } finally {
       setBusy(false);
@@ -1452,7 +1482,7 @@ const nextBackgroundY = clamp(
 
       showMsg(`元画像 / 素材画像を同期しました：${nextUrls.length}件`);
     } catch (e: any) {
-      console.error(e);
+      console.warn("[AOI FLOW handled]", e);
       showMsg(`元画像 / 素材画像の同期に失敗しました：${e?.message || "不明"}`);
     } finally {
       setBusy(false);
@@ -1509,7 +1539,7 @@ const nextBackgroundY = clamp(
 
       showMsg(`合成画像を同期しました：${nextUrls.length}件`);
     } catch (e: any) {
-      console.error(e);
+      console.warn("[AOI FLOW handled]", e);
       showMsg(`合成画像の同期に失敗しました：${e?.message || "不明"}`);
     } finally {
       setBusy(false);
@@ -1566,7 +1596,7 @@ const nextBackgroundY = clamp(
 
       showMsg(`文字入り保存画像を同期しました：${nextUrls.length}件`);
     } catch (e: any) {
-      console.error(e);
+      console.warn("[AOI FLOW handled]", e);
       showMsg(`文字入り保存画像の同期に失敗しました：${e?.message || "不明"}`);
     } finally {
       setBusy(false);
@@ -1795,8 +1825,11 @@ async function renderToCanvasAndGetDataUrlSilent(): Promise<string | null> {
         throw new Error("下書きIDが作れませんでした");
       }
 
-      const file = await fetchUrlAsFile(base, "base_before_cutout");
-      const pngBlob = await cutoutToPngBlob(file);
+      // Safari では Firebase Storage URL をブラウザ側 fetch すると
+      // TypeError: Load failed になることがあります。
+      // そのためURL取得は /api/cutout 側（Node.js）で行い、
+      // ブラウザ側では Storage URL を直接 fetch しません。
+      const pngBlob = await cutoutUrlToPngBlob(base);
       const newBaseUrl = await uploadPngBlobToStorage(uid, ensuredDraftId, pngBlob);
 
       commitDraftPatch({
@@ -1823,7 +1856,7 @@ async function renderToCanvasAndGetDataUrlSilent(): Promise<string | null> {
 
       showMsg("✅ 元画像を透過して置き換えました");
     } catch (e: any) {
-      console.error(e);
+      console.warn("[AOI FLOW] cutout handled error:", e?.message || e);
       showMsg(`❌ 透過に失敗：${e?.message || "不明"}`);
     } finally {
       setCutoutBusy(false);
@@ -1925,7 +1958,7 @@ async function renderToCanvasAndGetDataUrlSilent(): Promise<string | null> {
         showMsg(`✅ 素材を追加しました：${uploadedMaterialUrls.length}枚`);
       }
     } catch (e: any) {
-      console.error(e);
+      console.warn("[AOI FLOW] upload handled error:", e?.message || e);
       showMsg(`❌ アップロード失敗：${e?.message || "不明"}`);
     } finally {
       setBusy(false);
@@ -2151,7 +2184,7 @@ async function renderToCanvasAndGetDataUrlSilent(): Promise<string | null> {
       setPreviewReason("使用シーン画像を生成しました（②に表示）");
       showMsg("使用シーン画像を保存しました（②に表示）");
     } catch (e: any) {
-      console.error(e);
+      console.warn("[AOI FLOW handled]", e);
       showMsg(`使用シーン生成に失敗しました\n\n原因: ${e?.message || "不明"}`);
     } finally {
       setBusy(false);
@@ -2296,7 +2329,7 @@ async function renderToCanvasAndGetDataUrlSilent(): Promise<string | null> {
 
       showMsg("ストーリー画像を保存しました（⑤に表示）");
     } catch (e: any) {
-      console.error(e);
+      console.warn("[AOI FLOW handled]", e);
       showMsg(`ストーリー生成に失敗しました\n\n原因: ${e?.message || "不明"}`);
     } finally {
       setBusy(false);
@@ -2360,7 +2393,7 @@ async function saveCompositeAsImageUrl() {
 
     showMsg("文字焼き込み保存画像を保存しました");
   } catch (e: any) {
-    console.error(e);
+    console.warn("[AOI FLOW handled]", e);
     showMsg(`❌ 保存に失敗：${e?.message || "不明"}`);
   } finally {
     setBusy(false);
@@ -2434,7 +2467,7 @@ async function saveCompositeTextImageFromCompositeSlot() {
 
     showMsg("④の文字焼き込み保存画像を保存しました");
   } catch (e: any) {
-    console.error(e);
+    console.warn("[AOI FLOW handled]", e);
     showMsg(`❌ ④文字焼き込み保存に失敗：${e?.message || "不明"}`);
   } finally {
     setBusy(false);
@@ -2583,7 +2616,7 @@ async function saveCompositeTextImageFromCompositeSlot() {
 
         await uploadBytes(stockRef2, blob);
       } catch (e) {
-        console.error("bg stock save failed", e);
+        console.warn("[AOI FLOW handled]", "bg stock save failed", e);
       }
 
       const meta = {
@@ -2940,7 +2973,7 @@ const compositePatch = {
 
       showMsg("✅ 切り抜き＋背景合成 完了（④に表示）");
     } catch (e: any) {
-      console.error(e);
+      console.warn("[AOI FLOW handled]", e);
       showMsg(`背景合成に失敗：${e?.message || "不明"}`);
     } finally {
       setBusy(false);
@@ -3061,7 +3094,7 @@ commitDraftPatch({
 
       showMsg(`背景を同期しました：${nextBgUrls.length}件（この下書きのみ）`);
     } catch (e: unknown) {
-      console.error(e);
+      console.warn("[AOI FLOW handled]", e);
       const message = e instanceof Error ? e.message : "不明";
       showMsg(`背景同期に失敗しました：${message}`);
     } finally {
@@ -3148,7 +3181,7 @@ commitDraftPatch({
 
       showMsg(`使用シーンを同期しました：${next.length}件`);
     } catch (e: any) {
-      console.error(e);
+      console.warn("[AOI FLOW handled]", e);
       showMsg(`同期失敗: ${e?.message || "不明"}`);
     } finally {
       setBusy(false);
@@ -3230,7 +3263,7 @@ commitDraftPatch({
 
       showMsg(`ストーリーを同期しました：${next.length}件`);
     } catch (e: any) {
-      console.error(e);
+      console.warn("[AOI FLOW handled]", e);
       showMsg(`同期失敗: ${e?.message || "不明"}`);
     } finally {
       setBusy(false);

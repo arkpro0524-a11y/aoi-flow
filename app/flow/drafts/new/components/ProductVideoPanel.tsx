@@ -399,7 +399,7 @@ function VideoBackgroundSelector(props: {
       await saveVideoBackground(url, `動画用AI背景：${k}`, "ai");
       showMsg("動画用背景を生成して選択しました");
     } catch (e: any) {
-      console.error(e);
+      console.warn("[AOI FLOW handled]", e);
       showMsg(`動画用背景生成に失敗：${e?.message || "不明"}`);
     } finally {
       setLocalBusy(false);
@@ -587,7 +587,7 @@ export default function ProductVideoPanel({
       });
       showMsg("選択した動画用背景で代表動画を合成しました");
     } catch (e: any) {
-      console.error(e);
+      console.warn("[AOI FLOW handled]", e);
       showMsg(`動画背景合成に失敗：${e?.message || "不明"}`);
     } finally {
       setVideoCompositeBusy(false);

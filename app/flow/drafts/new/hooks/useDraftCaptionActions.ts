@@ -472,7 +472,7 @@ export default function useDraftCaptionActions(params: Params) {
           : "キャプションを生成しました"
       );
     } catch (e: any) {
-      console.error(e);
+      console.warn("[AOI FLOW handled]", e);
       showMsg(`文章生成に失敗しました：${e?.message || "不明"}`);
     } finally {
       setBusy(false);

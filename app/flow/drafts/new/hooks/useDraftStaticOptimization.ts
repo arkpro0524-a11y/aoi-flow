@@ -120,7 +120,7 @@ export default function useDraftStaticOptimization(params: Params) {
 
       showMsg(`構図 ${v.id} を採用しました`);
     } catch (e: any) {
-      console.error(e);
+      console.warn("[AOI FLOW handled]", e);
       showMsg("構図の保存に失敗しました");
     }
   }

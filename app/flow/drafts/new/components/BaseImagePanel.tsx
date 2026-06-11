@@ -190,7 +190,7 @@ export default function BaseImagePanel(props: Props) {
       redrawCanvas();
       setEditorReady(true);
     } catch (e: any) {
-      console.error(e);
+      console.warn("[AOI FLOW] manual editor load handled error:", e?.message || e);
       showMsg(`手修正UIの読込に失敗: ${e?.message || "不明"}`);
       setEditorReady(false);
     } finally {
@@ -400,7 +400,7 @@ export default function BaseImagePanel(props: Props) {
       showMsg("✅ 手修正した透過画像を元画像として保存しました");
       setEditorOpen(false);
     } catch (e: any) {
-      console.error(e);
+      console.warn("[AOI FLOW handled]", e);
       showMsg(`手修正の保存に失敗: ${e?.message || "不明"}`);
     } finally {
       setEditorBusy(false);
@@ -483,7 +483,7 @@ export default function BaseImagePanel(props: Props) {
                     await onUploadImageFilesNew(files);
                     showMsg("アップロード開始しました");
                   } catch (e: any) {
-                    console.error("upload failed:", e);
+                    console.warn("[AOI FLOW] upload handled error:", e?.message || e);
                     showMsg(`アップロード失敗: ${e?.message || "不明"}`);
                   }
                 })();

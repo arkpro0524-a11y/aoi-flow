@@ -297,7 +297,7 @@ function SellCheckBridgeCard(props: {
 
       router.push(`/flow/sell-check?draftId=${encodeURIComponent(draftId)}`);
     } catch (e) {
-      console.error(e);
+      console.warn("[AOI FLOW handled]", e);
       showMsg("売れる診断への移動に失敗しました");
     }
   }

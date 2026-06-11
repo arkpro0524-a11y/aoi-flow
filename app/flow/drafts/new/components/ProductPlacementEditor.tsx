@@ -1637,7 +1637,7 @@ export default function ProductPlacementEditor({
         setMeasuredForegroundUrl(src);
         setIsForegroundMeasureReady(true);
       } catch (error) {
-        console.error(error);
+        console.warn("[AOI FLOW handled]", error);
 
         if (cancelled) return;
 
@@ -2041,6 +2041,374 @@ export default function ProductPlacementEditor({
           label="保存済み完成画像"
           onClick={() => setActivePreviewTab("final")}
         />
+      </div>
+
+      <div className="mt-3 rounded-2xl border border-cyan-300/20 bg-black/30 p-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="text-cyan-100 font-black" style={{ fontSize: 13 }}>
+              ①背景 → 座標固定 → ②商品 → ③影
+            </div>
+            <div className="mt-1 text-white/55" style={{ fontSize: 11, lineHeight: 1.6 }}>
+              ここが手修正UIです。背景を決めて座標固定し、その後に商品と影を調整します。
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <ModeButton
+              active={editingStep === "background"}
+              label="①背景"
+              disabled={busy}
+              onClick={() => {
+                setActivePreviewTab("edit");
+                setEditingStep("background");
+                setIsBackgroundLocked(false);
+              }}
+            />
+
+            <ModeButton
+              active={isBackgroundLocked}
+              label={isBackgroundLocked ? "座標固定済み" : "座標固定"}
+              disabled={busy || !previewBaseUrl}
+              onClick={() => {
+                void handleLockBackgroundCoordinates();
+              }}
+            />
+
+            <ModeButton
+              active={editingStep === "product"}
+              label="②商品"
+              disabled={busy || !canLiveEdit || !isBackgroundLocked}
+              onClick={() => {
+                setActivePreviewTab("edit");
+                setEditingStep("product");
+              }}
+            />
+
+            <ModeButton
+              active={editingStep === "shadow"}
+              label="③影"
+              disabled={busy || !canLiveEdit || !isBackgroundLocked}
+              onClick={() => {
+                setActivePreviewTab("edit");
+                setEditingStep("shadow");
+              }}
+            />
+          </div>
+        </div>
+
+        {activePreviewTab === "edit" ? (
+          <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-3">
+            {editingStep === "background" ? (
+              <div className="grid grid-cols-1 gap-3">
+                <SliderRow
+                  label="背景ズーム（編集プレビュー）"
+                  value={backgroundScaleUi}
+                  min={BG_SCALE_UI_MIN}
+                  max={BG_SCALE_UI_MAX}
+                  step={1}
+                  disabled={busy || !previewBaseUrl}
+                  help="背景だけを拡大・縮小します。まず背景を合わせてから座標固定してください。"
+                  onChange={(n) => {
+                    const next = clamp(uiBgScaleToSaved(n), 0.5, 4.4);
+                    setBackgroundScale(next);
+                  }}
+                  onCommit={() => {
+                    const next = clamp(backgroundScale, 0.5, 4.4);
+                    void onSavePlacement("background", {
+                      backgroundScale: next,
+                      backgroundX,
+                      backgroundY,
+                      activePhotoMode,
+                    });
+                  }}
+                />
+
+                <SliderRow
+                  label="背景の左右位置（編集プレビュー）"
+                  value={backgroundXUi}
+                  min={BG_POS_UI_MIN}
+                  max={BG_POS_UI_MAX}
+                  step={1}
+                  disabled={busy || !previewBaseUrl}
+                  help="100 が中央です。背景の左右位置を合わせます。"
+                  onChange={(n) => {
+                    const next = clamp(uiBgPosToSaved(n), -2, 2);
+                    setBackgroundX(next);
+                  }}
+                  onCommit={() => {
+                    const next = clamp(backgroundX, -2, 2);
+                    void onSavePlacement("background", {
+                      backgroundScale,
+                      backgroundX: next,
+                      backgroundY,
+                      activePhotoMode,
+                    });
+                  }}
+                />
+
+                <SliderRow
+                  label="背景の上下位置（編集プレビュー）"
+                  value={backgroundYUi}
+                  min={BG_POS_UI_MIN}
+                  max={BG_POS_UI_MAX}
+                  step={1}
+                  disabled={busy || !previewBaseUrl}
+                  help="100 が中央です。背景の上下位置を合わせます。"
+                  onChange={(n) => {
+                    const next = clamp(uiBgPosToSaved(n), -2, 2);
+                    setBackgroundY(next);
+                  }}
+                  onCommit={() => {
+                    const next = clamp(backgroundY, -2, 2);
+                    void onSavePlacement("background", {
+                      backgroundScale,
+                      backgroundX,
+                      backgroundY: next,
+                      activePhotoMode,
+                    });
+                  }}
+                />
+              </div>
+            ) : null}
+
+            {editingStep === "product" ? (
+              <div className="grid grid-cols-1 gap-3">
+                <SliderRow
+                  label="商品の大きさ"
+                  value={safeScale}
+                  min={PRODUCT_SCALE_UI_MIN}
+                  max={PRODUCT_SCALE_UI_MAX}
+                  step={1}
+                  disabled={busy || !canLiveEdit || !isBackgroundLocked}
+                  help="切り抜き商品の大きさを調整します。"
+                  onChange={(n) => {
+                    const next = uiScaleToSaved(
+                      clamp(n, PRODUCT_SCALE_UI_MIN, PRODUCT_SCALE_UI_MAX),
+                    );
+                    setPlacementScale(next);
+                  }}
+                  onCommit={() => {
+                    const next = clamp(
+                      placementScale,
+                      PRODUCT_SCALE_SAVED_MIN,
+                      PRODUCT_SCALE_SAVED_MAX,
+                    );
+                    void onSavePlacement("product", {
+                      scale: next,
+                      x: placementX,
+                      y: placementY,
+                      activePhotoMode,
+                    });
+                  }}
+                />
+
+                <SliderRow
+                  label="切り抜き画像の左右位置"
+                  value={safeX}
+                  min={PRODUCT_POS_UI_MIN}
+                  max={PRODUCT_POS_UI_MAX}
+                  step={1}
+                  disabled={busy || !canLiveEdit || !isBackgroundLocked}
+                  help="100 が中央です。商品の左右位置を調整します。"
+                  onChange={(n) => {
+                    const next = uiPosToSaved(
+                      clamp(n, PRODUCT_POS_UI_MIN, PRODUCT_POS_UI_MAX),
+                    );
+                    setPlacementX(next);
+                  }}
+                  onCommit={() => {
+                    const next = clamp(
+                      placementX,
+                      PRODUCT_POS_SAVED_MIN,
+                      PRODUCT_POS_SAVED_MAX,
+                    );
+                    void onSavePlacement("product", {
+                      scale: placementScale,
+                      x: next,
+                      y: placementY,
+                      activePhotoMode,
+                    });
+                  }}
+                />
+
+                <SliderRow
+                  label="切り抜き画像の上下位置"
+                  value={safeY}
+                  min={PRODUCT_POS_UI_MIN}
+                  max={PRODUCT_POS_UI_MAX}
+                  step={1}
+                  disabled={busy || !canLiveEdit || !isBackgroundLocked}
+                  help="100 が中央です。商品の上下位置を調整します。"
+                  onChange={(n) => {
+                    const next = uiPosToSaved(
+                      clamp(n, PRODUCT_POS_UI_MIN, PRODUCT_POS_UI_MAX),
+                    );
+                    setPlacementY(next);
+                  }}
+                  onCommit={() => {
+                    const next = clamp(
+                      placementY,
+                      PRODUCT_POS_SAVED_MIN,
+                      PRODUCT_POS_SAVED_MAX,
+                    );
+                    void onSavePlacement("product", {
+                      scale: placementScale,
+                      x: placementX,
+                      y: next,
+                      activePhotoMode,
+                    });
+                  }}
+                />
+              </div>
+            ) : null}
+
+            {editingStep === "shadow" ? (
+              <div className="grid grid-cols-1 gap-3">
+                <SliderRow
+                  label="影の濃さ"
+                  value={Math.round(safeShadowOpacity * 100)}
+                  min={0}
+                  max={100}
+                  step={1}
+                  disabled={busy || !canLiveEdit || !isBackgroundLocked}
+                  help="影の濃さを調整します。"
+                  onChange={(n) => {
+                    const next = clamp(n / 100, 0, 1);
+                    setShadowOpacity(next);
+                  }}
+                  onCommit={() => {
+                    const next = clamp(shadowOpacity, 0, 1);
+                    void onSavePlacement("shadow", {
+                      shadowOpacity: next,
+                      shadowBlur,
+                      shadowScale,
+                      shadowOffsetX,
+                      shadowOffsetY,
+                      activePhotoMode,
+                    });
+                  }}
+                />
+
+                <SliderRow
+                  label="影のぼかし"
+                  value={safeShadowBlur}
+                  min={SHADOW_BLUR_MIN}
+                  max={SHADOW_BLUR_MAX}
+                  step={1}
+                  disabled={busy || !canLiveEdit || !isBackgroundLocked}
+                  help="数字が大きいほど影が柔らかく広がります。"
+                  onChange={(n) => {
+                    const next = clamp(n, SHADOW_BLUR_MIN, SHADOW_BLUR_MAX);
+                    setShadowBlur(next);
+                  }}
+                  onCommit={() => {
+                    const next = clamp(shadowBlur, SHADOW_BLUR_MIN, SHADOW_BLUR_MAX);
+                    void onSavePlacement("shadow", {
+                      shadowOpacity,
+                      shadowBlur: next,
+                      shadowScale,
+                      shadowOffsetX,
+                      shadowOffsetY,
+                      activePhotoMode,
+                    });
+                  }}
+                />
+
+                <SliderRow
+                  label="影の広がり"
+                  value={Math.round(safeShadowScale * 100)}
+                  min={Math.round(SHADOW_SCALE_MIN * 100)}
+                  max={Math.round(SHADOW_SCALE_MAX * 100)}
+                  step={1}
+                  disabled={busy || !canLiveEdit || !isBackgroundLocked}
+                  help="数字が大きいほど影の横幅が広がります。"
+                  onChange={(n) => {
+                    const next = clamp(n / 100, SHADOW_SCALE_MIN, SHADOW_SCALE_MAX);
+                    setShadowScale(next);
+                  }}
+                  onCommit={() => {
+                    const next = clamp(shadowScale, SHADOW_SCALE_MIN, SHADOW_SCALE_MAX);
+                    void onSavePlacement("shadow", {
+                      shadowOpacity,
+                      shadowBlur,
+                      shadowScale: next,
+                      shadowOffsetX,
+                      shadowOffsetY,
+                      activePhotoMode,
+                    });
+                  }}
+                />
+
+                <SliderRow
+                  label="影の左右位置（大きく移動）"
+                  value={savedShadowOffsetToUi(safeShadowOffsetX)}
+                  min={SHADOW_OFFSET_UI_MIN}
+                  max={SHADOW_OFFSET_UI_MAX}
+                  step={1}
+                  disabled={busy || !canLiveEdit || !isBackgroundLocked}
+                  help="影の左右位置を調整します。"
+                  onChange={(n) => {
+                    const next = clamp(
+                      uiShadowOffsetToSaved(n),
+                      SHADOW_OFFSET_COARSE_MIN,
+                      SHADOW_OFFSET_COARSE_MAX,
+                    );
+                    setShadowOffsetX(next);
+                  }}
+                  onCommit={() => {
+                    const next = clamp(
+                      shadowOffsetX,
+                      SHADOW_OFFSET_COARSE_MIN,
+                      SHADOW_OFFSET_COARSE_MAX,
+                    );
+                    void onSavePlacement("shadow", {
+                      shadowOpacity,
+                      shadowBlur,
+                      shadowScale,
+                      shadowOffsetX: next,
+                      shadowOffsetY,
+                      activePhotoMode,
+                    });
+                  }}
+                />
+
+                <SliderRow
+                  label="影の上下位置（大きく移動）"
+                  value={savedShadowOffsetToUi(safeShadowOffsetY)}
+                  min={SHADOW_OFFSET_UI_MIN}
+                  max={SHADOW_OFFSET_UI_MAX}
+                  step={1}
+                  disabled={busy || !canLiveEdit || !isBackgroundLocked}
+                  help="影の上下位置を調整します。"
+                  onChange={(n) => {
+                    const next = clamp(
+                      uiShadowOffsetToSaved(n),
+                      SHADOW_OFFSET_COARSE_MIN,
+                      SHADOW_OFFSET_COARSE_MAX,
+                    );
+                    setShadowOffsetY(next);
+                  }}
+                  onCommit={() => {
+                    const next = clamp(
+                      shadowOffsetY,
+                      SHADOW_OFFSET_COARSE_MIN,
+                      SHADOW_OFFSET_COARSE_MAX,
+                    );
+                    void onSavePlacement("shadow", {
+                      shadowOpacity,
+                      shadowBlur,
+                      shadowScale,
+                      shadowOffsetX,
+                      shadowOffsetY: next,
+                      activePhotoMode,
+                    });
+                  }}
+                />
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </div>
 
       <div className="placementPreviewFixed">

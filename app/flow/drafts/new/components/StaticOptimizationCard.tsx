@@ -74,7 +74,7 @@ function CardBtn(props: {
       type="button"
       disabled={disabled}
       onClick={() => {
-        void Promise.resolve(props.onClick?.()).catch((e) => console.error(e));
+        void Promise.resolve(props.onClick?.()).catch((e) => console.warn("[AOI FLOW handled]", e));
       }}
       className={[
         base,
