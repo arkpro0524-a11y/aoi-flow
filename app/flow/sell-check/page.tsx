@@ -478,15 +478,11 @@ export default function SellCheckPage() {
           return;
         }
 
-        try {
-          targetFile = await imageUrlToFile(selectedDraft.imageUrl);
-        } catch (imageError) {
-          // Safari や Firebase Storage の CORS 設定により、ブラウザ側で下書き画像を
-          // File 化できない場合があります。その場合でも診断を止めず、
-          // API 側へ imageUrl を渡してサーバー側で取得します。
-          console.warn("[sell-check] client draft image fetch failed; fallback to server-side imageUrl", imageError);
-          targetFile = null;
-        }
+        // 下書き画像はブラウザ側で fetch → File 化すると、Safari/CORS/Storage署名URLの期限で
+        // 「Load failed」になり診断そのものが止まることがあります。
+        // ここでは既存の手動アップロード処理は維持しつつ、下書き画像は imageUrl をAPIへ渡し、
+        // サーバー側で取得します。サーバー側でも取得できない場合はAPIがテキスト診断へフォールバックします。
+        targetFile = null;
 
         usedImageUrl = selectedDraft.imageUrl;
         usedDraftId = selectedDraft.id;
@@ -934,6 +930,27 @@ export default function SellCheckPage() {
                 </div>
               </div>
 
+              {result.scoreBreakdown ? (
+                <ResultBlock title="総合点内訳">
+                  <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+                    <MiniScoreCard label="価格" value={result.scoreBreakdown.priceScore} />
+                    <MiniScoreCard label="状態" value={result.scoreBreakdown.conditionScore} />
+                    <MiniScoreCard label="画像" value={result.scoreBreakdown.imageScore} />
+                    <MiniScoreCard label="説明文" value={result.scoreBreakdown.textScore} />
+                    <MiniScoreCard label="類似価格" value={result.scoreBreakdown.learnedPriceScore} />
+                    <MiniScoreCard label="市場価値" value={result.scoreBreakdown.marketScore} />
+                  </div>
+
+                  <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
+                    <InfoCard label="在庫圧補正" value={`-${result.scoreBreakdown.pressurePenalty}点`} />
+                    <InfoCard label="補正前スコア" value={`${result.scoreBreakdown.rawScore}/100`} />
+                    <InfoCard label="最終スコア" value={`${result.scoreBreakdown.finalScore}/100`} />
+                  </div>
+
+                  <BulletList items={result.scoreBreakdown.reasons} />
+                </ResultBlock>
+              ) : null}
+
               {result.decisionModeLabel ? (
                 <ResultBlock title="判定モード">
                   <div className="text-lg font-black text-white">
@@ -1140,6 +1157,24 @@ export default function SellCheckPage() {
                     <InfoCard label="販売中中央値" value={formatYen(result.similarData.medianActivePrice)} />
                     <InfoCard label="在庫圧" value={result.similarData.marketPressure} />
                   </div>
+
+                  {result.similarMatchAnalysis ? (
+                    <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-4">
+                      <div className="text-sm font-black text-white">一致度詳細</div>
+                      <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">
+                        <InfoCard label="最大一致重み" value={`${result.similarMatchAnalysis.maxWeight}`} />
+                        <InfoCard label="平均一致重み" value={`${result.similarMatchAnalysis.averageWeight}`} />
+                        <InfoCard label="強一致件数" value={`${result.similarMatchAnalysis.strongMatchCount}`} />
+                        <InfoCard label="ブランド情報あり" value={`${result.similarMatchAnalysis.brandMatchCount}`} />
+                        <InfoCard label="型番情報あり" value={`${result.similarMatchAnalysis.modelMatchCount}`} />
+                        <InfoCard label="商品種別あり" value={`${result.similarMatchAnalysis.productTypeMatchCount}`} />
+                        <InfoCard label="素材情報あり" value={`${result.similarMatchAnalysis.materialMatchCount}`} />
+                        <InfoCard label="年代情報あり" value={`${result.similarMatchAnalysis.eraMatchCount}`} />
+                      </div>
+                      <BulletList items={result.similarMatchAnalysis.reasons} />
+                      <GuideList title="一致度の注意" items={result.similarMatchAnalysis.warnings} red />
+                    </div>
+                  ) : null}
                 </ResultBlock>
               ) : null}
 

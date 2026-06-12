@@ -237,6 +237,34 @@ export type SellCheckTextAnalysis = {
   rareReasons?: string[];
 };
 
+export type SellCheckScoreBreakdown = {
+  priceScore: number;
+  conditionScore: number;
+  imageScore: number;
+  textScore: number;
+  learnedPriceScore: number;
+  marketScore: number;
+  pressurePenalty: number;
+  rawScore: number;
+  finalScore: number;
+  reasons: string[];
+};
+
+export type SellCheckSimilarMatchAnalysis = {
+  matchLevel: "weak" | "category" | "keyword" | "brand" | "model" | "rare";
+  maxWeight: number;
+  averageWeight: number;
+  strongMatchCount: number;
+  modelMatchCount: number;
+  brandMatchCount: number;
+  productTypeMatchCount: number;
+  materialMatchCount: number;
+  eraMatchCount: number;
+  keywordMatchCount: number;
+  reasons: string[];
+  warnings: string[];
+};
+
 export type SellCheckSimilarData = {
   similarCount: number;
   similarSoldCount: number;
@@ -259,6 +287,8 @@ export type SellCheckSimilarData = {
   matchLevel: "weak" | "category" | "keyword" | "brand" | "model" | "rare";
 
   activeSources: SellCheckSource[];
+
+  matchAnalysis?: SellCheckSimilarMatchAnalysis;
 };
 
 export type SellCheckSmallSampleAnalysis = {
@@ -297,6 +327,8 @@ export type SellCheckResult = {
   textAnalysis?: SellCheckTextAnalysis;
   marketAnalysis?: SellCheckMarketAnalysis;
   similarData?: SellCheckSimilarData;
+  scoreBreakdown?: SellCheckScoreBreakdown;
+  similarMatchAnalysis?: SellCheckSimilarMatchAnalysis;
 
   /**
    * 仕入れ判断OS用の追加分析。

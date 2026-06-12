@@ -16,6 +16,8 @@ import type {
   SellCheckMarketType,
   SellCheckSmallSampleAnalysis,
   SellCheckDecisionMode,
+  SellCheckScoreBreakdown,
+  SellCheckSimilarMatchAnalysis,
 } from "@/lib/types/sellCheck";
 import { buildResearchGuide } from "@/lib/sellCheck/researchGuide";
 import { calculateProfitAnalysis } from "@/lib/sellCheck/profit";
@@ -79,6 +81,12 @@ function safeScore(n: unknown, fallback = 50): number {
   const v = Number(n);
   if (!Number.isFinite(v)) return fallback;
   return clampScore(v);
+}
+
+function scoreWithFloor(value: unknown, fallback: number, floor: number): number {
+  const raw = Number(value);
+  const base = Number.isFinite(raw) && raw > 0 ? clampScore(raw) : fallback;
+  return clampScore(Math.max(base, floor));
 }
 
 function median(values: number[]): number | undefined {
@@ -283,6 +291,18 @@ function calcTheorySignals(textAnalysis?: SellCheckTextAnalysis) {
     "プラスチック",
   ];
 
+  const creatorWords = [
+    "jon herbert",
+    "john herbert",
+    "john hine",
+    "john hine studios",
+    "デザイナー",
+    "作家",
+    "工房",
+    "スタジオ",
+    "シリーズ",
+  ];
+
   const demandWords = [
     "人気",
     "定番",
@@ -303,6 +323,7 @@ function calcTheorySignals(textAnalysis?: SellCheckTextAnalysis) {
   const collectorHit = countPatternHits(words, collectorWords);
   const materialHit = countPatternHits(words, materialWords);
   const demandHit = countPatternHits(words, demandWords);
+  const creatorHit = countPatternHits(words, creatorWords);
   const rareHit = countRareKeywordHits(words);
 
   return {
@@ -313,12 +334,14 @@ function calcTheorySignals(textAnalysis?: SellCheckTextAnalysis) {
     collectorHit,
     materialHit,
     demandHit,
+    creatorHit,
     rareHit,
     hasAge: ageHit > 0,
     hasRarity: rarityHit > 0,
     hasCollector: collectorHit > 0,
     hasMaterial: materialHit > 0,
     hasDemand: demandHit > 0,
+    hasCreator: creatorHit > 0,
     hasShowa: hasAnyNormalized(words, ["昭和", "昭和レトロ"]),
   };
 }
@@ -345,50 +368,25 @@ function calcMarketAnalysis(
   const pressurePenalty = pressure === "high" ? 15 : pressure === "normal" ? 4 : 0;
   const pressureBonus = pressure === "low" ? 8 : 0;
 
-  const rarityScore = safeScore(
-    textAnalysis?.rarityScore,
-    35 + signals.rareHit * 8 + signals.rarityHit * 10 + signals.ageHit * 5
-  );
+  const rarityBase = 35 + signals.rareHit * 8 + signals.rarityHit * 10 + signals.ageHit * 5 + signals.creatorHit * 4;
+  const demandBase = 42 + signals.demandHit * 8 + signals.collectorHit * 5 + signals.creatorHit * 4 + signals.keywordCount * 2;
+  const brandBase = textAnalysis?.brandName || textAnalysis?.maker || textAnalysis?.seriesName || textAnalysis?.modelName || signals.hasCreator
+    ? 58 + signals.collectorHit * 4 + signals.creatorHit * 8
+    : 42;
+  const collectorBase = 30 + signals.collectorHit * 11 + signals.ageHit * 5 + signals.rarityHit * 5 + signals.creatorHit * 7;
+  const ageBase = signals.hasShowa ? 82 + signals.rarityHit * 3 : 35 + signals.ageHit * 12;
+  const trendBase = 45 + signals.demandHit * 7 + signals.collectorHit * 3 + signals.creatorHit * 3;
+  const supplyBase = 40 + signals.rarityHit * 10 + signals.ageHit * 5 + signals.collectorHit * 3 + signals.creatorHit * 4 - pressurePenalty + pressureBonus;
+  const keywordBase = 35 + signals.keywordCount * 5 + signals.rareHit * 5 + signals.collectorHit * 4 + signals.creatorHit * 5;
 
-  const demandScore = safeScore(
-    textAnalysis?.demandScore,
-    42 + signals.demandHit * 8 + signals.collectorHit * 5 + signals.keywordCount * 2
-  );
-
-  const brandPowerScore = safeScore(
-    textAnalysis?.brandPowerScore,
-    textAnalysis?.brandName || textAnalysis?.maker ? 62 + signals.collectorHit * 4 : 42
-  );
-
-  const collectorScore = safeScore(
-    textAnalysis?.collectorScore,
-    30 + signals.collectorHit * 11 + signals.ageHit * 5 + signals.rarityHit * 5
-  );
-
-  const ageValueScore = safeScore(
-    textAnalysis?.ageValueScore,
-    signals.hasShowa ? 82 + signals.rarityHit * 3 : 35 + signals.ageHit * 12
-  );
-
-  const trendScore = safeScore(
-    textAnalysis?.trendScore,
-    45 + signals.demandHit * 7 + signals.collectorHit * 3
-  );
-
-  const marketSupplyScore = safeScore(
-    textAnalysis?.marketSupplyScore,
-    40 +
-      signals.rarityHit * 10 +
-      signals.ageHit * 5 +
-      signals.collectorHit * 3 -
-      pressurePenalty +
-      pressureBonus
-  );
-
-  const keywordStrength = safeScore(
-    textAnalysis?.keywordStrength,
-    35 + signals.keywordCount * 5 + signals.rareHit * 5 + signals.collectorHit * 4
-  );
+  const rarityScore = scoreWithFloor(textAnalysis?.rarityScore, rarityBase, Math.min(68, rarityBase));
+  const demandScore = scoreWithFloor(textAnalysis?.demandScore, demandBase, Math.min(66, demandBase));
+  const brandPowerScore = scoreWithFloor(textAnalysis?.brandPowerScore, brandBase, Math.min(70, brandBase));
+  const collectorScore = scoreWithFloor(textAnalysis?.collectorScore, collectorBase, Math.min(72, collectorBase));
+  const ageValueScore = scoreWithFloor(textAnalysis?.ageValueScore, ageBase, Math.min(75, ageBase));
+  const trendScore = scoreWithFloor(textAnalysis?.trendScore, trendBase, Math.min(65, trendBase));
+  const marketSupplyScore = scoreWithFloor(textAnalysis?.marketSupplyScore, supplyBase, Math.min(68, supplyBase));
+  const keywordStrength = scoreWithFloor(textAnalysis?.keywordStrength, keywordBase, Math.min(74, keywordBase));
 
   const rareReasons = Array.isArray(textAnalysis?.rareReasons)
     ? textAnalysis!.rareReasons!.filter(Boolean).slice(0, 10)
@@ -412,6 +410,10 @@ function calcMarketAnalysis(
     pushUnique(rareReasons, "需要・人気につながる語句を検出しました");
   }
 
+  if (signals.hasCreator) {
+    pushUnique(rareReasons, "作家・デザイナー・シリーズ名を価値シグナルとして検出しました");
+  }
+
   if (activeCount > 0) {
     pushUnique(rareReasons, `販売中データ ${activeCount}件を市場在庫として参考にしています`);
   }
@@ -430,13 +432,38 @@ function calcMarketAnalysis(
 
   const soldCount = similarData?.similarSoldCount ?? 0;
   const matchLevel = similarData?.matchLevel ?? "weak";
+  const matchAnalysis = similarData?.matchAnalysis;
+  const strongMatchCount = matchAnalysis?.strongMatchCount ?? 0;
+  const maxMatchWeight = matchAnalysis?.maxWeight ?? 0;
+  const averageMatchWeight = matchAnalysis?.averageWeight ?? 0;
+
+  // 類似データの信頼度は「件数」だけで上げない。
+  // 件数が多くても強一致が0件なら、別商品混入の可能性があるため high を禁止する。
+  const hasHighQualitySimilarity =
+    strongMatchCount >= 2 ||
+    maxMatchWeight >= 65 ||
+    (strongMatchCount >= 1 && averageMatchWeight >= 24);
+
+  const hasMediumQualitySimilarity =
+    strongMatchCount >= 1 ||
+    maxMatchWeight >= 36 ||
+    averageMatchWeight >= 18 ||
+    matchLevel === "brand" ||
+    matchLevel === "keyword";
 
   const dataConfidence: SellCheckMarketAnalysis["dataConfidence"] =
-    soldCount >= 5 || matchLevel === "rare" || matchLevel === "model"
+    soldCount >= 5 && hasHighQualitySimilarity
       ? "high"
-      : soldCount >= 1 || matchLevel === "brand" || matchLevel === "keyword"
+      : soldCount >= 1 && hasMediumQualitySimilarity
       ? "medium"
       : "low";
+
+  if (soldCount >= 5 && !hasHighQualitySimilarity) {
+    pushUnique(
+      rareReasons,
+      "類似件数はありますが強一致が少ないため、信頼度は安全側に補正しています"
+    );
+  }
 
   return {
     rarityScore,
@@ -629,6 +656,64 @@ function calcMarketPressure(args: { activeCount: number; soldCount: number }) {
   return { pressure: "low" as const, ratio };
 }
 
+function buildSimilarMatchAnalysis(
+  weightedLogs: WeightedLog[],
+  matchLevel: SellCheckSimilarData["matchLevel"]
+): SellCheckSimilarMatchAnalysis {
+  const maxWeight = weightedLogs[0]?.weight ?? 0;
+  const averageWeight =
+    weightedLogs.length > 0
+      ? Math.round(weightedLogs.reduce((sum, x) => sum + x.weight, 0) / weightedLogs.length)
+      : 0;
+
+  const strongMatchCount = weightedLogs.filter((x) => x.weight >= 50).length;
+  const modelMatchCount = weightedLogs.filter((x) => Boolean(x.log.modelName)).length;
+  const brandMatchCount = weightedLogs.filter((x) => Boolean(x.log.brandName || x.log.maker)).length;
+  const productTypeMatchCount = weightedLogs.filter((x) => Boolean(x.log.productType)).length;
+  const materialMatchCount = weightedLogs.filter((x) => Boolean(x.log.material || x.log.materialType)).length;
+  const eraMatchCount = weightedLogs.filter((x) => Boolean(x.log.era)).length;
+  const keywordMatchCount = weightedLogs.filter((x) => Array.isArray(x.log.extractedKeywords) && x.log.extractedKeywords.length > 0).length;
+
+  const reasons: string[] = [];
+  const warnings: string[] = [];
+
+  if (maxWeight >= 65) reasons.push("同一商品・強い固有名詞に近い類似データを検出しました");
+  else if (maxWeight >= 50) reasons.push("型番・作品名・商品種別が近い類似データを検出しました");
+  else if (maxWeight >= 36) reasons.push("ブランド・メーカー・シリーズの近さを主軸に類似判定しています");
+  else if (maxWeight >= 24) reasons.push("キーワード一致を主軸にした弱めの類似判定です");
+  else if (maxWeight >= 10) reasons.push("カテゴリ・状態が近いデータを参考値として使っています");
+  else reasons.push("強い類似根拠は不足しています");
+
+  if (brandMatchCount > 0) reasons.push(`ブランド・メーカー情報を持つ類似データ：${brandMatchCount}件`);
+  if (modelMatchCount > 0) reasons.push(`型番・モデル情報を持つ類似データ：${modelMatchCount}件`);
+  if (productTypeMatchCount > 0) reasons.push(`商品種別情報を持つ類似データ：${productTypeMatchCount}件`);
+  if (materialMatchCount > 0) reasons.push(`素材情報を持つ類似データ：${materialMatchCount}件`);
+  if (eraMatchCount > 0) reasons.push(`年代情報を持つ類似データ：${eraMatchCount}件`);
+
+  if (matchLevel === "category" || matchLevel === "keyword" || matchLevel === "weak") {
+    warnings.push("同一商品断定ではありません。売却中央値はそのまま信じず、商品名・作品名・状態別に再確認してください");
+  }
+
+  if (strongMatchCount === 0 && weightedLogs.length >= 10) {
+    warnings.push("件数は多いですが、強一致データが少ないため、別商品混入の可能性があります");
+  }
+
+  return {
+    matchLevel,
+    maxWeight,
+    averageWeight,
+    strongMatchCount,
+    modelMatchCount,
+    brandMatchCount,
+    productTypeMatchCount,
+    materialMatchCount,
+    eraMatchCount,
+    keywordMatchCount,
+    reasons: reasons.filter((x, i, arr) => arr.indexOf(x) === i),
+    warnings: warnings.filter((x, i, arr) => arr.indexOf(x) === i),
+  };
+}
+
 function buildSimilarData(weightedLogs: WeightedLog[]): SellCheckSimilarData {
   const soldWeighted = weightedLogs.filter((x) => x.log.sold === true);
   const activeWeighted = weightedLogs.filter((x) => x.log.sold !== true);
@@ -671,6 +756,8 @@ function buildSimilarData(weightedLogs: WeightedLog[]): SellCheckSimilarData {
     soldCount: soldPrices.length,
   });
 
+  const matchAnalysis = buildSimilarMatchAnalysis(weightedLogs, matchLevel);
+
   return {
     similarCount: weightedLogs.length,
     similarSoldCount: soldPrices.length,
@@ -688,6 +775,7 @@ function buildSimilarData(weightedLogs: WeightedLog[]): SellCheckSimilarData {
     marketPressure: pressure.pressure,
     matchLevel,
     activeSources: uniqueSources(activeWeighted.map((x) => x.log)),
+    matchAnalysis,
   };
 }
 
@@ -723,11 +811,73 @@ function imageScore(
   return 68;
 }
 
+
+function correctedDescriptionQuality(textAnalysis?: SellCheckTextAnalysis): number {
+  if (!textAnalysis) return 55;
+
+  const aiScore = safeScore(textAnalysis.descriptionQualityScore, 50);
+  const textParts = [
+    textAnalysis.brandName,
+    textAnalysis.modelName,
+    textAnalysis.material,
+    textAnalysis.productType,
+    textAnalysis.characterName,
+    textAnalysis.seriesName,
+    textAnalysis.maker,
+    textAnalysis.era,
+    textAnalysis.collectorGenre,
+    textAnalysis.materialType,
+    ...(Array.isArray(textAnalysis.extractedKeywords) ? textAnalysis.extractedKeywords : []),
+  ]
+    .map((x) => String(x ?? "").trim())
+    .filter(Boolean);
+
+  let structureScore = 18;
+  if (textAnalysis.brandName || textAnalysis.maker) structureScore += 14;
+  if (textAnalysis.modelName || textAnalysis.seriesName || textAnalysis.characterName) structureScore += 14;
+  if (textAnalysis.material || textAnalysis.materialType) structureScore += 10;
+  if (textAnalysis.productType) structureScore += 8;
+  if (textAnalysis.era) structureScore += 8;
+  if (textParts.length >= 5) structureScore += 10;
+  if (textParts.length >= 8) structureScore += 6;
+
+  const keywordText = normalizeSearchText(textParts.join(" "));
+  const hasSizeOrDetail = /cm|ｍｍ|mm|高さ|幅|奥行|サイズ|約\d|\d{2,}/i.test(keywordText);
+  if (hasSizeOrDetail) structureScore += 6;
+
+  const corrected = clampScore(structureScore);
+
+  if (aiScore <= 15 && corrected >= 50) return corrected;
+  if (aiScore < corrected) return clampScore(corrected * 0.85 + aiScore * 0.15);
+
+  return aiScore;
+}
+
+function normalizeTextAnalysisForScoring(textAnalysis?: SellCheckTextAnalysis): SellCheckTextAnalysis | undefined {
+  if (!textAnalysis) return undefined;
+
+  const correctedQuality = correctedDescriptionQuality(textAnalysis);
+  const textReasons = Array.isArray(textAnalysis.textReasons) ? [...textAnalysis.textReasons] : [];
+
+  if (correctedQuality > safeScore(textAnalysis.descriptionQualityScore, 50)) {
+    pushUnique(
+      textReasons,
+      `説明文品質を構造補正しました（AI評価 ${safeScore(textAnalysis.descriptionQualityScore, 50)}/100 → ${correctedQuality}/100）`
+    );
+  }
+
+  return {
+    ...textAnalysis,
+    descriptionQualityScore: correctedQuality,
+    textReasons,
+  };
+}
+
 function textScore(textAnalysis?: SellCheckTextAnalysis): number {
   if (!textAnalysis) return 55;
 
   const conditionRisk = safeScore(textAnalysis.conditionRiskScore, 50);
-  const descriptionQuality = safeScore(textAnalysis.descriptionQualityScore, 50);
+  const descriptionQuality = correctedDescriptionQuality(textAnalysis);
 
   return clampScore(descriptionQuality * 0.7 + (100 - conditionRisk) * 0.3);
 }
@@ -1187,6 +1337,85 @@ function buildSmallSampleAnalysis(args: {
   };
 }
 
+function buildScoreBreakdown(args: {
+  priceScoreValue: number;
+  conditionScoreValue: number;
+  imageScoreValue: number;
+  textScoreValue: number;
+  learnedPriceScoreValue: number;
+  marketScoreValue: number;
+  pressurePenalty: number;
+  rawScore: number;
+  finalScore: number;
+  guard: ConfidenceGuard;
+}): SellCheckScoreBreakdown {
+  const reasons: string[] = [
+    `価格点 ${args.priceScoreValue}/100 ×15%`,
+    `状態点 ${args.conditionScoreValue}/100 ×12%`,
+    `画像点 ${args.imageScoreValue}/100 ×15%`,
+    `説明文点 ${args.textScoreValue}/100 ×12%`,
+    `類似価格点 ${args.learnedPriceScoreValue}/100 ×21%`,
+    `市場価値点 ${args.marketScoreValue}/100 ×25%`,
+  ];
+
+  if (args.pressurePenalty > 0) reasons.push(`在庫圧ペナルティ -${args.pressurePenalty}点`);
+  if (args.guard.isLowConfidence && args.finalScore < args.rawScore) {
+    reasons.push(`低信頼補正で ${args.rawScore}/100 → ${args.finalScore}/100 に上限調整`);
+  }
+
+  return {
+    priceScore: args.priceScoreValue,
+    conditionScore: args.conditionScoreValue,
+    imageScore: args.imageScoreValue,
+    textScore: args.textScoreValue,
+    learnedPriceScore: args.learnedPriceScoreValue,
+    marketScore: args.marketScoreValue,
+    pressurePenalty: args.pressurePenalty,
+    rawScore: args.rawScore,
+    finalScore: args.finalScore,
+    reasons,
+  };
+}
+
+function alignRotationLearningWithFinalSpeed(args: {
+  rotationLearningAnalysis: ReturnType<typeof buildRotationLearningAnalysis>;
+  sellSpeed: SellCheckSellSpeed;
+  marketType: SellCheckMarketType;
+  similarData: SellCheckSimilarData;
+}) {
+  const base = args.rotationLearningAnalysis;
+  const reasons = [...base.reasons];
+
+  if (args.sellSpeed === "slow" || args.sellSpeed === "collector_wait") {
+    pushUnique(reasons, "総合診断の売れ行き目安に合わせ、回転表示を安全側に統一しました");
+
+    return {
+      ...base,
+      rotationLevel: "slow" as const,
+      rotationLabel: "回転学習：遅い",
+      expectedDaysToSellLabel:
+        args.sellSpeed === "collector_wait" || args.marketType === "low_rotation"
+          ? "目安：1〜3か月以上"
+          : "目安：2〜8週間",
+      reasons: reasons.filter((x, i, arr) => arr.indexOf(x) === i),
+    };
+  }
+
+  if (args.sellSpeed === "normal" && base.rotationLevel === "fast") {
+    pushUnique(reasons, "総合診断が通常ペースのため、1〜14日表示を避けて安全側に補正しました");
+
+    return {
+      ...base,
+      rotationLevel: "normal" as const,
+      rotationLabel: "回転学習：通常",
+      expectedDaysToSellLabel: "目安：2〜6週間",
+      reasons: reasons.filter((x, i, arr) => arr.indexOf(x) === i),
+    };
+  }
+
+  return base;
+}
+
 function buildScoreExplanation(args: {
   score: number;
   rank: "A" | "B" | "C" | "D";
@@ -1272,29 +1501,30 @@ export function calculateSellCheckResult(args: {
   platformFeeRate?: number;
 }): SellCheckResult {
   const price = fallbackPrice(args.price);
+  const textAnalysis = normalizeTextAnalysisForScoring(args.textAnalysis);
 
-  const provisionalMarketAnalysis = calcMarketAnalysis(args.textAnalysis);
+  const provisionalMarketAnalysis = calcMarketAnalysis(textAnalysis);
 
   const weightedLogs = getWeightedSimilarLogs({
     logs: args.learned.logs,
     price,
     category: args.category,
     condition: args.condition,
-    textAnalysis: args.textAnalysis,
+    textAnalysis: textAnalysis,
     imageAnalysis: args.imageAnalysis,
     marketAnalysis: provisionalMarketAnalysis,
   });
 
   const similarData = buildSimilarData(weightedLogs);
-  const theoryProfile = buildTheoryProfile(args.textAnalysis);
+  const theoryProfile = buildTheoryProfile(textAnalysis);
 
   const marketAnalysis = applyTheoryProfileToMarketAnalysis({
-    marketAnalysis: calcMarketAnalysis(args.textAnalysis, similarData),
+    marketAnalysis: calcMarketAnalysis(textAnalysis, similarData),
     theoryProfile,
   });
 
   const marketStructureAnalysis = buildMarketStructureAnalysis({
-    textAnalysis: args.textAnalysis,
+    textAnalysis: textAnalysis,
     similarData,
     theoryProfile,
   });
@@ -1304,19 +1534,22 @@ export function calculateSellCheckResult(args: {
     inputPrice: price,
   });
 
-  const rotationLearningAnalysis = buildRotationLearningAnalysis({
-    similarData,
-    logs: args.learned.logs,
-  });
+  const priceScoreValue = priceBaseScore(price);
+  const conditionScoreValue = conditionScore(args.condition);
+  const imageScoreValue = imageScore(args.imageMeta, args.imageAnalysis);
+  const textScoreValue = textScore(textAnalysis);
+  const learnedPriceScoreValue = learnedPriceScore(price, similarData);
+  const marketScoreValue = marketScore(marketAnalysis);
+  const pressurePenalty = similarData.marketPressure === "high" ? 5 : 0;
 
   const rawScore = clampScore(
-    priceBaseScore(price) * 0.15 +
-      conditionScore(args.condition) * 0.12 +
-      imageScore(args.imageMeta, args.imageAnalysis) * 0.15 +
-      textScore(args.textAnalysis) * 0.12 +
-      learnedPriceScore(price, similarData) * 0.21 +
-      marketScore(marketAnalysis) * 0.25 -
-      (similarData.marketPressure === "high" ? 5 : 0)
+    priceScoreValue * 0.15 +
+      conditionScoreValue * 0.12 +
+      imageScoreValue * 0.15 +
+      textScoreValue * 0.12 +
+      learnedPriceScoreValue * 0.21 +
+      marketScoreValue * 0.25 -
+      pressurePenalty
   );
 
   const guard = buildConfidenceGuard({
@@ -1347,11 +1580,34 @@ export function calculateSellCheckResult(args: {
   const speed = sellSpeed({ score, marketType: mType, similarData });
   const confidence = confidenceLevel(guard, marketAnalysis);
 
+  const scoreBreakdown = buildScoreBreakdown({
+    priceScoreValue,
+    conditionScoreValue,
+    imageScoreValue,
+    textScoreValue,
+    learnedPriceScoreValue,
+    marketScoreValue,
+    pressurePenalty,
+    rawScore,
+    finalScore: score,
+    guard,
+  });
+
+  const rotationLearningAnalysis = alignRotationLearningWithFinalSpeed({
+    rotationLearningAnalysis: buildRotationLearningAnalysis({
+      similarData,
+      logs: args.learned.logs,
+    }),
+    sellSpeed: speed,
+    marketType: mType,
+    similarData,
+  });
+
   const smallSampleAnalysis = buildSmallSampleAnalysis({
     learned: args.learned,
     weightedLogs,
     similarData,
-    textAnalysis: args.textAnalysis,
+    textAnalysis: textAnalysis,
   });
 
   const decisionMode: SellCheckDecisionMode =
@@ -1369,7 +1625,7 @@ export function calculateSellCheckResult(args: {
       : "構造推論型：理論DBと商品特徴から仮説判断";
 
   const researchGuide = buildResearchGuide({
-    textAnalysis: args.textAnalysis,
+    textAnalysis: textAnalysis,
     similarData,
   });
 
@@ -1424,6 +1680,19 @@ export function calculateSellCheckResult(args: {
     reasons,
     `${score}/100 は即売確率ではなく、価格・画像・説明文・市場価値・類似データを合わせた総合診断スコアです`
   );
+
+  scoreBreakdown.reasons.forEach((reason) => {
+    pushUnique(reasons, `総合点内訳：${reason}`);
+  });
+
+  if (similarData.matchAnalysis) {
+    similarData.matchAnalysis.reasons.forEach((reason) => {
+      pushUnique(reasons, `一致度詳細：${reason}`);
+    });
+    similarData.matchAnalysis.warnings.forEach((warning) => {
+      pushUnique(reasons, `一致度注意：${warning}`);
+    });
+  }
 
   pushUnique(reasons, `ランク意味：${rankLabel(rank)}`);
   pushUnique(reasons, `売れ行き目安：${sellSpeedLabel(speed)}`);
@@ -1493,63 +1762,63 @@ export function calculateSellCheckResult(args: {
     }
   }
 
-  if (args.textAnalysis) {
-    if (args.textAnalysis.brandName) {
-      pushUnique(reasons, `ブランド名「${args.textAnalysis.brandName}」を類似判定に使っています`);
+  if (textAnalysis) {
+    if (textAnalysis.brandName) {
+      pushUnique(reasons, `ブランド名「${textAnalysis.brandName}」を類似判定に使っています`);
     }
 
-    if (args.textAnalysis.maker) {
-      pushUnique(reasons, `メーカー「${args.textAnalysis.maker}」を類似判定に使っています`);
+    if (textAnalysis.maker) {
+      pushUnique(reasons, `メーカー「${textAnalysis.maker}」を類似判定に使っています`);
     }
 
-    if (args.textAnalysis.characterName) {
-      pushUnique(reasons, `作品名・キャラクター「${args.textAnalysis.characterName}」を類似判定に使っています`);
+    if (textAnalysis.characterName) {
+      pushUnique(reasons, `作品名・キャラクター「${textAnalysis.characterName}」を類似判定に使っています`);
     }
 
-    if (args.textAnalysis.seriesName) {
-      pushUnique(reasons, `シリーズ「${args.textAnalysis.seriesName}」を類似判定に使っています`);
+    if (textAnalysis.seriesName) {
+      pushUnique(reasons, `シリーズ「${textAnalysis.seriesName}」を類似判定に使っています`);
     }
 
-    if (args.textAnalysis.productType) {
-      pushUnique(reasons, `商品種別「${args.textAnalysis.productType}」を類似判定に使っています`);
+    if (textAnalysis.productType) {
+      pushUnique(reasons, `商品種別「${textAnalysis.productType}」を類似判定に使っています`);
     }
 
-    if (args.textAnalysis.era) {
-      pushUnique(reasons, `年代「${args.textAnalysis.era}」を類似判定に使っています`);
+    if (textAnalysis.era) {
+      pushUnique(reasons, `年代「${textAnalysis.era}」を類似判定に使っています`);
     }
 
-    if (args.textAnalysis.collectorGenre) {
-      pushUnique(reasons, `コレクター分類「${args.textAnalysis.collectorGenre}」を類似判定に使っています`);
+    if (textAnalysis.collectorGenre) {
+      pushUnique(reasons, `コレクター分類「${textAnalysis.collectorGenre}」を類似判定に使っています`);
     }
 
-    if (args.textAnalysis.materialType) {
-      pushUnique(reasons, `素材分類「${args.textAnalysis.materialType}」を類似判定に使っています`);
+    if (textAnalysis.materialType) {
+      pushUnique(reasons, `素材分類「${textAnalysis.materialType}」を類似判定に使っています`);
     }
 
-    if (args.textAnalysis.modelName) {
-      pushUnique(reasons, `型番・モデル名「${args.textAnalysis.modelName}」を類似判定に使っています`);
+    if (textAnalysis.modelName) {
+      pushUnique(reasons, `型番・モデル名「${textAnalysis.modelName}」を類似判定に使っています`);
     }
 
-    if (args.textAnalysis.material) {
-      pushUnique(reasons, `素材「${args.textAnalysis.material}」を類似判定に使っています`);
+    if (textAnalysis.material) {
+      pushUnique(reasons, `素材「${textAnalysis.material}」を類似判定に使っています`);
     }
 
-    if (args.textAnalysis.extractedKeywords.length > 0) {
+    if (textAnalysis.extractedKeywords.length > 0) {
       pushUnique(
         reasons,
-        `検索キーワード「${args.textAnalysis.extractedKeywords.slice(0, 8).join(" / ")}」を類似判定に使っています`
+        `検索キーワード「${textAnalysis.extractedKeywords.slice(0, 8).join(" / ")}」を類似判定に使っています`
       );
     }
 
-    if (args.textAnalysis.descriptionQualityScore < 55) {
+    if (textAnalysis.descriptionQualityScore < 55) {
       pushUnique(improvements, "説明文にブランド・型番・サイズ・状態・付属品を追記する");
     }
 
-    if (args.textAnalysis.conditionRiskScore >= 70) {
+    if (textAnalysis.conditionRiskScore >= 70) {
       pushUnique(improvements, "状態リスクが高いため、マイナス点を隠さず明記する");
     }
 
-    args.textAnalysis.textReasons.forEach((reason) => {
+    textAnalysis.textReasons.forEach((reason) => {
       pushUnique(reasons, `説明文評価：${reason}`);
     });
   }
@@ -1666,9 +1935,11 @@ export function calculateSellCheckResult(args: {
     learnedSampleCount: args.learned.totalCount,
     targetSummary: `${categoryLabel(args.category)} / ${conditionLabel(args.condition)} / ${price.toLocaleString()}円`,
     imageAnalysis: args.imageAnalysis,
-    textAnalysis: args.textAnalysis,
+    textAnalysis: textAnalysis,
     marketAnalysis,
     similarData,
+    scoreBreakdown,
+    similarMatchAnalysis: similarData.matchAnalysis,
 
     decisionMode,
     decisionModeLabel,

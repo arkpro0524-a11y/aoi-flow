@@ -341,21 +341,34 @@ function buildTextAnalysis(args: {
   };
 }
 
-function buildImageAnalysis(ai: any): SellCheckImageAnalysis {
-  const brightnessScore = safeScore(ai.brightnessScore);
-  const compositionScore = safeScore(ai.compositionScore);
-  const backgroundScore = safeScore(ai.backgroundScore);
-  const damageRiskScore = safeScore(ai.damageRiskScore);
+function buildImageAnalysis(ai: any, hasImage: boolean): SellCheckImageAnalysis {
+  // 画像が取得できなかった場合だけ低評価にします。
+  // 画像があるのにAIが 0〜5 の極端値を返した場合は、
+  // 「背景がある＝即ゼロ」のような壊れた評価を避けるため、実務用の下限を置きます。
+  if (!hasImage) {
+    return {
+      brightnessScore: 35,
+      compositionScore: 35,
+      backgroundScore: 35,
+      damageRiskScore: 55,
+      overallImageScore: 35,
+      imageReasons: ["画像を取得できなかったため、画像評価は低信頼として扱いました"],
+    };
+  }
 
-  const overallImageScore = safeScore(
-    ai.overallImageScore,
-    Math.round(
-      brightnessScore * 0.28 +
-        compositionScore * 0.28 +
-        backgroundScore * 0.22 +
-        (100 - damageRiskScore) * 0.22
-    )
+  const brightnessScore = Math.max(40, safeScore(ai.brightnessScore, 60));
+  const compositionScore = Math.max(45, safeScore(ai.compositionScore, 62));
+  const backgroundScore = Math.max(40, safeScore(ai.backgroundScore, 58));
+  const damageRiskScore = Math.min(75, safeScore(ai.damageRiskScore, 35));
+
+  const calculatedOverall = Math.round(
+    brightnessScore * 0.28 +
+      compositionScore * 0.3 +
+      backgroundScore * 0.22 +
+      (100 - damageRiskScore) * 0.2
   );
+
+  const overallImageScore = Math.max(40, safeScore(ai.overallImageScore, calculatedOverall));
 
   return {
     brightnessScore,
@@ -363,7 +376,9 @@ function buildImageAnalysis(ai: any): SellCheckImageAnalysis {
     backgroundScore,
     damageRiskScore,
     overallImageScore,
-    imageReasons: safeStringArray(ai.imageReasons),
+    imageReasons: safeStringArray(ai.imageReasons).length > 0
+      ? safeStringArray(ai.imageReasons)
+      : ["画像ありとして、明るさ・構図・背景・傷リスクを実務レンジで評価しました"],
   };
 }
 
@@ -474,12 +489,9 @@ export async function POST(req: NextRequest) {
       if (fileFromUrl) imageFiles.push(fileFromUrl);
     }
 
-    if (imageFiles.length === 0) {
-      return NextResponse.json(
-        { ok: false, error: "画像がありません。下書き画像を取得できない場合は手動アップロードで診断してください。" },
-        { status: 400 }
-      );
-    }
+    // 画像URLの取得に失敗しても、商品名・説明文・価格条件がある場合は診断を止めません。
+    // 画像評価だけを低信頼として扱い、SELL CHECK本体・利益計算・DB判定は続行します。
+    const hasUsableImage = imageFiles.length > 0;
 
     const price = normalizePrice(form.get("price"));
     const category = normalizeCategory(form.get("category"));
@@ -512,12 +524,16 @@ export async function POST(req: NextRequest) {
     });
 
     const imageMeta: SellCheckImageMeta = {
-      hasImage: true,
-      fileName: imageFiles.map((file) => file.name || "uploaded-image").join(", "),
+      hasImage: hasUsableImage,
+      fileName: hasUsableImage
+        ? imageFiles.map((file) => file.name || "uploaded-image").join(", ")
+        : "image-url-fetch-failed",
       fileSize: imageFiles.reduce((sum, file) => sum + (file.size || 0), 0),
     };
 
-    const imageDataUrls = await Promise.all(imageFiles.map((file) => fileToDataUrl(file)));
+    const imageDataUrls = hasUsableImage
+      ? await Promise.all(imageFiles.map((file) => fileToDataUrl(file)))
+      : [];
 
     const ai = await analyzeImageAndText({
       imageDataUrls,
@@ -528,7 +544,7 @@ export async function POST(req: NextRequest) {
       condition,
     });
 
-    const imageAnalysis = buildImageAnalysis(ai);
+    const imageAnalysis = buildImageAnalysis(ai, hasUsableImage);
     const textAnalysis = buildTextAnalysis({
       ai,
       title,
@@ -586,8 +602,10 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     console.error(error);
 
+    const message = error instanceof Error ? error.message : "診断失敗";
+
     return NextResponse.json(
-      { ok: false, error: "診断失敗" },
+      { ok: false, error: message || "診断失敗" },
       { status: 500 }
     );
   }

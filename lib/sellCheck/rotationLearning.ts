@@ -46,15 +46,32 @@ export function buildRotationLearningAnalysis(args: {
 
   let rotationLevel: "fast" | "normal" | "slow" | "unknown" = "unknown";
 
-  if (soldCount >= 5 && pressure !== "high") {
+  const matchAnalysis = similarData.matchAnalysis;
+  const strongMatchCount = matchAnalysis?.strongMatchCount ?? 0;
+  const maxMatchWeight = matchAnalysis?.maxWeight ?? 0;
+  const averageMatchWeight = matchAnalysis?.averageWeight ?? 0;
+  const hasStrongRotationEvidence =
+    strongMatchCount >= 2 ||
+    maxMatchWeight >= 65 ||
+    (strongMatchCount >= 1 && averageMatchWeight >= 24);
+  const hasUsableRotationEvidence =
+    strongMatchCount >= 1 ||
+    maxMatchWeight >= 36 ||
+    averageMatchWeight >= 18;
+
+  if (soldCount >= 5 && pressure !== "high" && hasStrongRotationEvidence) {
     rotationLevel = "fast";
-    reasons.push("売却済みデータが一定数あり、回転しやすい市場として扱います");
-  } else if (soldCount >= 3) {
+    reasons.push("売却済みデータと強めの類似根拠があり、回転しやすい市場として扱います");
+  } else if (soldCount >= 3 && hasUsableRotationEvidence) {
     rotationLevel = "normal";
-    reasons.push("売却済みデータが最低限あり、通常回転市場として扱います");
+    reasons.push("売却済みデータはありますが、強一致が限定的なため通常回転として扱います");
   } else if (soldCount >= 1 || activeCount <= 2) {
     rotationLevel = "slow";
-    reasons.push("売却済みデータが少なく、低回転市場として扱います");
+    reasons.push("売却済みデータまたは低在庫傾向はありますが、強一致が少ないため低回転寄りに扱います");
+  }
+
+  if (soldCount >= 5 && !hasStrongRotationEvidence) {
+    reasons.push("件数だけでは即売根拠にせず、強一致不足を反映して安全側に補正しています");
   }
 
   if (pressure === "high") {
