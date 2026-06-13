@@ -326,6 +326,44 @@ export default function NewDraftPage() {
           justify-content: center;
         }
 
+        @media (max-width: 899px) {
+          .topPreviewShell {
+            position: sticky;
+            top: 0;
+            z-index: 30;
+          }
+
+          .previewStage {
+            min-height: 260px;
+            padding: 10px;
+          }
+
+          .topPreviewCanvas {
+            height: min(48vh, 360px);
+            min-height: 240px;
+          }
+
+          .pageWrap {
+            flex-direction: row;
+            overflow-x: auto;
+            overflow-y: visible;
+            scroll-snap-type: x mandatory;
+            -webkit-overflow-scrolling: touch;
+            padding-bottom: 10px;
+          }
+
+          .leftCol,
+          .rightCol {
+            min-width: 88vw;
+            scroll-snap-align: start;
+          }
+
+          .rightScroll {
+            max-height: none;
+            overflow: visible;
+          }
+        }
+
         .topPreviewCanvas {
           position: relative;
           width: min(100%, 760px);
@@ -428,7 +466,7 @@ export default function NewDraftPage() {
       </div>
 
       <div
-        className="mb-3 rounded-3xl border border-cyan-100/20 bg-black/25 p-3 shadow-2xl shadow-cyan-950/20"
+        className="topPreviewShell mb-3 rounded-3xl border border-cyan-100/20 bg-black/25 p-3 shadow-2xl shadow-cyan-950/20"
       >
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -630,7 +668,7 @@ export default function NewDraftPage() {
                   />
                   <SelectBtn
                     selected={workTab === "composite"}
-                    label="合成"
+                    label="商品/背景合成"
                     onClick={() => setWorkTab("composite")}
                     disabled={c.busy}
                   />

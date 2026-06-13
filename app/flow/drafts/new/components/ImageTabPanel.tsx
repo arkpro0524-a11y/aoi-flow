@@ -6,8 +6,6 @@ import { useRouter } from "next/navigation";
 
 import BaseImagePanel from "./BaseImagePanel";
 import BackgroundPanel from "./BackgroundPanel";
-import IdeaImagePanel from "./IdeaImagePanel";
-import StoryImagePanel from "./StoryImagePanel";
 
 import type {
   DraftDoc,
@@ -664,26 +662,8 @@ export default function ImageTabPanel({
         compositePreviewMode={compositePreviewMode}
         setCompositePreviewMode={setCompositePreviewMode}
         hideLowerPreview
+        singleMode
       />
-
-          <IdeaImagePanel
-            d={d}
-            uid={uid}
-            busy={busy}
-            canGenerate={canGenerate}
-            generateAiImage={onGenerateAiImage}
-            syncIdeaImagesFromStorage={onSyncIdeaImagesFromStorage}
-            clearIdeaHistory={onClearIdeaHistory}
-            setD={setD}
-            saveDraft={saveDraft}
-            showMsg={showMsg}
-          />
-
-          <StoryImagePanel
-            storyImageUrl={storyDisplayUrl}
-            onGenerateStoryImage={onGenerateStoryImage}
-            busy={busy}
-          />
         </>
       ) : null}
 
@@ -774,6 +754,7 @@ export default function ImageTabPanel({
         compositePreviewMode={compositePreviewMode}
         setCompositePreviewMode={setCompositePreviewMode}
         hideLowerPreview
+        singleMode
       />
       ) : null}
     </div>

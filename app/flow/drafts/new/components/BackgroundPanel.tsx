@@ -50,10 +50,11 @@ type UserLibraryBackground = {
 
 type Props = {
   /**
-   * 上位レイアウトから「背景」タブ/「合成」タブを直接開きたい場合に使います。
-   * 既存の内部タブ構造は残しつつ、初期表示だけを切り替えます。
+   * 上位レイアウトから「背景」タブ/「商品/背景合成」タブを直接開きたい場合に使います。
+   * 商品画像作成の親タブ側で分離するため、singleMode=true の時は内部タブボタンを隠します。
    */
   initialInnerTab?: InnerTab;
+  singleMode?: boolean;
 
   serverPlacementMeta?: {
     canvas?: number;
@@ -586,6 +587,7 @@ function inferPhotoModeFromPreset(preset: ImageUsePreset): ProductPhotoMode {
 
 export default function BackgroundPanel({
   initialInnerTab = "background",
+  singleMode = false,
   serverPlacementMeta,
   bgDisplayUrl,
   backgroundKeyword,
@@ -1096,18 +1098,20 @@ await saveDraft({
       </summary>
 
       <div className="flex flex-col gap-3 p-3 pt-0">
-        <div className="flex flex-wrap items-center gap-2">
-          <TopTabButton
-            active={innerTab === "background"}
-            label="背景生成"
-            onClick={() => setInnerTab("background")}
-          />
-          <TopTabButton
-            active={innerTab === "composite"}
-            label="商品/背景合成"
-            onClick={() => setInnerTab("composite")}
-          />
-        </div>
+        {!singleMode ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <TopTabButton
+              active={innerTab === "background"}
+              label="背景生成"
+              onClick={() => setInnerTab("background")}
+            />
+            <TopTabButton
+              active={innerTab === "composite"}
+              label="商品/背景合成"
+              onClick={() => setInnerTab("composite")}
+            />
+          </div>
+        ) : null}
 
         {innerTab === "background" ? (
           <>
