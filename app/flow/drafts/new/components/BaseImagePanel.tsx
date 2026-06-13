@@ -30,6 +30,13 @@ type Props = {
   onSaveDraft: () => Promise<void> | void;
   showMsg: (msg: string) => void;
   setD: React.Dispatch<React.SetStateAction<DraftDoc>>;
+
+  /**
+   * 上部の共通 EDIT PREVIEW にプレビューを集約した時、
+   * 下部操作枠では重複する確認画像を隠します。
+   * 手修正キャンバスや候補一覧は操作そのものなので残します。
+   */
+  hideTopPreview?: boolean;
 };
 
 type EditMode = "erase" | "restore";
@@ -85,6 +92,7 @@ export default function BaseImagePanel(props: Props) {
     onSaveDraft,
     showMsg,
     setD,
+    hideTopPreview = false,
   } = props;
 
   const [editorOpen, setEditorOpen] = React.useState(false);
@@ -448,8 +456,9 @@ export default function BaseImagePanel(props: Props) {
       </summary>
 
       <div className="p-3 pt-0">
-        <div className="fixedPreview">
-          {d.baseImageUrl ? (
+        {!hideTopPreview ? (
+          <div className="fixedPreview">
+            {d.baseImageUrl ? (
             <img
               src={overlayPreviewDataUrl || d.baseImageUrl || ""}
               alt="base"
@@ -467,8 +476,13 @@ export default function BaseImagePanel(props: Props) {
             >
               元画像がありません（アップロード→保存）
             </div>
-          )}
-        </div>
+            )}
+          </div>
+        ) : (
+          <div className="mb-3 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-white/55" style={{ fontSize: 12, lineHeight: 1.6 }}>
+            プレビューは上部の EDIT PREVIEW に集約しました。ここではアップロード・透過・文字焼き込みだけを操作します。
+          </div>
+        )}
 
         <div className="controlScroll">
           <div className="mt-3">

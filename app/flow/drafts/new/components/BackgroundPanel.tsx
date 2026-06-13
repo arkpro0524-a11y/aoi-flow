@@ -20,6 +20,7 @@ type SellDirection = "sales" | "branding" | "trust" | "story";
 type BgScene = "studio" | "lifestyle" | "scale" | "detail";
 
 type InnerTab = "background" | "composite";
+type CompositePreviewMode = "edit" | "final";
 type ImageUsePreset = "ec" | "sns" | "usage";
 
 type TemplateRecommendItem = {
@@ -48,6 +49,12 @@ type UserLibraryBackground = {
 };
 
 type Props = {
+  /**
+   * 上位レイアウトから「背景」タブ/「合成」タブを直接開きたい場合に使います。
+   * 既存の内部タブ構造は残しつつ、初期表示だけを切り替えます。
+   */
+  initialInnerTab?: InnerTab;
+
   serverPlacementMeta?: {
     canvas?: number;
     placementInput?: {
@@ -196,6 +203,14 @@ type Props = {
   canRedo: boolean;
   onUndo: () => Promise<void> | void;
   onRedo: () => Promise<void> | void;
+
+  /**
+   * 上部の共通 EDIT PREVIEW にプレビューを集約した時、
+   * 背景生成/合成タブ内の重複プレビューを隠します。
+   */
+  hideLowerPreview?: boolean;
+  compositePreviewMode?: CompositePreviewMode;
+  setCompositePreviewMode?: React.Dispatch<React.SetStateAction<CompositePreviewMode>>;
 
   onSavePlacement: (
     step: "background" | "product" | "shadow",
@@ -570,6 +585,7 @@ function inferPhotoModeFromPreset(preset: ImageUsePreset): ProductPhotoMode {
 }
 
 export default function BackgroundPanel({
+  initialInnerTab = "background",
   serverPlacementMeta,
   bgDisplayUrl,
   backgroundKeyword,
@@ -660,8 +676,15 @@ export default function BackgroundPanel({
   onUndo,
   onRedo,
   onSavePlacement,
+  hideLowerPreview = false,
+  compositePreviewMode = "edit",
+  setCompositePreviewMode,
 }: Props) {
-  const [innerTab, setInnerTab] = useState<InnerTab>("background");
+  const [innerTab, setInnerTab] = useState<InnerTab>(initialInnerTab);
+
+  useEffect(() => {
+    setInnerTab(initialInnerTab);
+  }, [initialInnerTab]);
 
   const [templateRecommendBusy, setTemplateRecommendBusy] = useState(false);
   const [templateRecommendTopReason, setTemplateRecommendTopReason] = useState("");
@@ -1088,7 +1111,8 @@ await saveDraft({
 
         {innerTab === "background" ? (
           <>
-            <div className="backgroundFixedPreview">
+            {!hideLowerPreview ? (
+              <div className="backgroundFixedPreview">
               <div className="mb-2 flex items-center justify-between gap-2">
                 <div className="text-white/80 font-bold" style={{ fontSize: 12 }}>
                   現在の背景生成プレビュー
@@ -1128,7 +1152,12 @@ await saveDraft({
               <div className="mt-2 text-white/50" style={{ fontSize: 11, lineHeight: 1.5 }}>
                 ここは背景を生成して確認する場所です。背景を使う選択は「商品/背景合成」タブで行います。
               </div>
-            </div>
+              </div>
+            ) : (
+              <div className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-white/55" style={{ fontSize: 12, lineHeight: 1.6 }}>
+                背景プレビューは上部の EDIT PREVIEW に集約しました。ここでは用途設定・テンプレ背景・AI背景生成だけを操作します。
+              </div>
+            )}
 
             <div className="backgroundControlScroll flex flex-col gap-3">
               <div className="rounded-2xl border border-white/10 bg-black/15 p-3">
@@ -1584,6 +1613,8 @@ await saveDraft({
           <div className="flex flex-col gap-3">
             <ProductPlacementEditor
               serverPlacementMeta={serverPlacementMeta}
+              compositePreviewMode={compositePreviewMode}
+              setCompositePreviewMode={setCompositePreviewMode}
               baseImageUrl={d.baseImageUrl}
               foregroundImageUrl={d.foregroundImageUrl}
               bgImageUrl={String(d.bgImageUrl || "").trim()}
@@ -1647,6 +1678,7 @@ await saveDraft({
               onSavePlacement={onSavePlacement}
               busy={busy}
               showMsg={showMsg}
+              hideMainPreview={hideLowerPreview}
             />
 
             <div className="flex flex-wrap gap-2">

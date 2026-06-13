@@ -22,6 +22,7 @@ type ProductCategory = "furniture" | "goods" | "apparel" | "small" | "other";
 type ProductSize = "large" | "medium" | "small";
 type GroundingType = "floor" | "table" | "hanging" | "wall";
 type BgScene = "studio" | "lifestyle" | "scale" | "detail";
+type CompositePreviewMode = "edit" | "final";
 
 type TemplateRecommendItem = {
   url: string;
@@ -76,6 +77,9 @@ type LibraryBackgroundItem = {
   source: "template" | "bg-stock" | "uploaded";
 };
 type Props = {
+  compositePreviewMode?: CompositePreviewMode;
+  setCompositePreviewMode?: React.Dispatch<React.SetStateAction<CompositePreviewMode>>;
+
   serverPlacementMeta?: {
     canvas?: number;
     placementInput?: {
@@ -1046,6 +1050,8 @@ export default function ProductPlacementEditor({
   templateRecommended = [],
   templateRecommendTopReason = "",
   isCompositeFresh = false,
+  compositePreviewMode = "edit",
+  setCompositePreviewMode,
   serverPlacementMeta = null,
 
   productCategory = "other",
@@ -1854,6 +1860,7 @@ export default function ProductPlacementEditor({
 
     setCompositeImageRefreshKey(Date.now());
     setActivePreviewTab("final");
+    setCompositePreviewMode?.("final");
   }
 
   async function handleLockBackgroundCoordinates() {
@@ -1879,6 +1886,36 @@ export default function ProductPlacementEditor({
     showMsg?.(
       "背景座標を固定しました。②商品へ進めます。合成は④合成で実行します",
     );
+  }
+
+
+  function handleSelectEditStep(next: "background" | "product" | "shadow") {
+    if (next !== "background" && !isBackgroundLocked) {
+      showMsg?.("先に①背景を調整して、座標固定を押してください");
+      return;
+    }
+
+    setEditingStep(next);
+    setActivePreviewTab("edit");
+                            setCompositePreviewMode?.("edit");
+    setCompositePreviewMode?.("edit");
+  }
+
+  function handleSelectCompositePreview(next: CompositePreviewMode) {
+    setActivePreviewTab(next);
+    setCompositePreviewMode?.(next);
+
+    if (next === "edit") {
+      showMsg?.("上部プレビューを合成前の編集画面に切り替えました");
+      return;
+    }
+
+    if (!savedCompositeUrl) {
+      showMsg?.("合成後画像はまだありません。④合成で作成してください");
+      return;
+    }
+
+    showMsg?.("上部プレビューを合成後の完成画像に切り替えました");
   }
 
   async function handleResetAdjustments() {
@@ -1912,6 +1949,8 @@ export default function ProductPlacementEditor({
 
     setEditingStep("background");
     setActivePreviewTab("edit");
+                            setCompositePreviewMode?.("edit");
+    setCompositePreviewMode?.("edit");
     setIsBackgroundLocked(false);
 
     showMsg?.("調整をリセットしました。保存・合成は④合成で実行します");
@@ -2000,6 +2039,40 @@ export default function ProductPlacementEditor({
 
       <div className="mt-3 flex flex-wrap gap-2">
         <Btn
+          variant={editingStep === "background" ? "primary" : "secondary"}
+          disabled={busy}
+          onClick={() => handleSelectEditStep("background")}
+        >
+          ①背景
+        </Btn>
+
+        <Btn
+          variant={isBackgroundLocked ? "primary" : "secondary"}
+          disabled={busy || !previewBaseUrl}
+          onClick={() => {
+            void handleLockBackgroundCoordinates();
+          }}
+        >
+          座標固定
+        </Btn>
+
+        <Btn
+          variant={editingStep === "product" ? "primary" : "secondary"}
+          disabled={busy || !isBackgroundLocked}
+          onClick={() => handleSelectEditStep("product")}
+        >
+          ②商品
+        </Btn>
+
+        <Btn
+          variant={editingStep === "shadow" ? "primary" : "secondary"}
+          disabled={busy || !isBackgroundLocked}
+          onClick={() => handleSelectEditStep("shadow")}
+        >
+          ③影
+        </Btn>
+
+        <Btn
           variant="secondary"
           disabled={!canRecomposeWithMeasuredForeground || busy}
           onClick={handleRecompose}
@@ -2024,653 +2097,75 @@ export default function ProductPlacementEditor({
             await onSaveCompositeTextImageFromCompositeSlot?.();
             setCompositeTextImageRefreshKey(Date.now());
             setActivePreviewTab("final");
+            setCompositePreviewMode?.("final");
           }}
         >
           ④-2 文字焼き込み保存
         </Btn>
       </div>
 
-      <div className="mt-3 flex gap-2">
-        <PreviewTabButton
-          active={activePreviewTab === "edit"}
-          label="編集プレビュー"
-          onClick={() => setActivePreviewTab("edit")}
-        />
-        <PreviewTabButton
-          active={activePreviewTab === "final"}
-          label="保存済み完成画像"
-          onClick={() => setActivePreviewTab("final")}
-        />
-      </div>
-
-      <div className="mt-3 rounded-2xl border border-cyan-300/20 bg-black/30 p-3">
+      <div className="mt-3 rounded-2xl border border-white/10 bg-black/15 p-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <div className="text-cyan-100 font-black" style={{ fontSize: 13 }}>
-              ①背景 → 座標固定 → ②商品 → ③影
+            <div className="text-white/80 font-bold" style={{ fontSize: 12 }}>
+              上部プレビュー切替
             </div>
-            <div className="mt-1 text-white/55" style={{ fontSize: 11, lineHeight: 1.6 }}>
-              ここが手修正UIです。背景を決めて座標固定し、その後に商品と影を調整します。
+            <div className="mt-1 text-white/50" style={{ fontSize: 11, lineHeight: 1.6 }}>
+              合成前で調整し、④合成後に合成後プレビューで確認します。
             </div>
           </div>
 
           <div className="flex flex-wrap gap-2">
-            <ModeButton
-              active={editingStep === "background"}
-              label="①背景"
+            <Btn
+              variant={compositePreviewMode === "edit" ? "primary" : "secondary"}
               disabled={busy}
-              onClick={() => {
-                setActivePreviewTab("edit");
-                setEditingStep("background");
-                setIsBackgroundLocked(false);
-              }}
-            />
+              onClick={() => handleSelectCompositePreview("edit")}
+            >
+              合成前プレビュー
+            </Btn>
 
-            <ModeButton
-              active={isBackgroundLocked}
-              label={isBackgroundLocked ? "座標固定済み" : "座標固定"}
-              disabled={busy || !previewBaseUrl}
-              onClick={() => {
-                void handleLockBackgroundCoordinates();
-              }}
-            />
-
-            <ModeButton
-              active={editingStep === "product"}
-              label="②商品"
-              disabled={busy || !canLiveEdit || !isBackgroundLocked}
-              onClick={() => {
-                setActivePreviewTab("edit");
-                setEditingStep("product");
-              }}
-            />
-
-            <ModeButton
-              active={editingStep === "shadow"}
-              label="③影"
-              disabled={busy || !canLiveEdit || !isBackgroundLocked}
-              onClick={() => {
-                setActivePreviewTab("edit");
-                setEditingStep("shadow");
-              }}
-            />
+            <Btn
+              variant={compositePreviewMode === "final" ? "primary" : "secondary"}
+              disabled={busy || !savedCompositeUrl}
+              onClick={() => handleSelectCompositePreview("final")}
+            >
+              合成後プレビュー
+            </Btn>
           </div>
         </div>
 
-        {activePreviewTab === "edit" ? (
-          <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-3">
-            {editingStep === "background" ? (
-              <div className="grid grid-cols-1 gap-3">
-                <SliderRow
-                  label="背景ズーム（編集プレビュー）"
-                  value={backgroundScaleUi}
-                  min={BG_SCALE_UI_MIN}
-                  max={BG_SCALE_UI_MAX}
-                  step={1}
-                  disabled={busy || !previewBaseUrl}
-                  help="背景だけを拡大・縮小します。まず背景を合わせてから座標固定してください。"
-                  onChange={(n) => {
-                    const next = clamp(uiBgScaleToSaved(n), 0.5, 4.4);
-                    setBackgroundScale(next);
-                  }}
-                  onCommit={() => {
-                    const next = clamp(backgroundScale, 0.5, 4.4);
-                    void onSavePlacement("background", {
-                      backgroundScale: next,
-                      backgroundX,
-                      backgroundY,
-                      activePhotoMode,
-                    });
-                  }}
-                />
-
-                <SliderRow
-                  label="背景の左右位置（編集プレビュー）"
-                  value={backgroundXUi}
-                  min={BG_POS_UI_MIN}
-                  max={BG_POS_UI_MAX}
-                  step={1}
-                  disabled={busy || !previewBaseUrl}
-                  help="100 が中央です。背景の左右位置を合わせます。"
-                  onChange={(n) => {
-                    const next = clamp(uiBgPosToSaved(n), -2, 2);
-                    setBackgroundX(next);
-                  }}
-                  onCommit={() => {
-                    const next = clamp(backgroundX, -2, 2);
-                    void onSavePlacement("background", {
-                      backgroundScale,
-                      backgroundX: next,
-                      backgroundY,
-                      activePhotoMode,
-                    });
-                  }}
-                />
-
-                <SliderRow
-                  label="背景の上下位置（編集プレビュー）"
-                  value={backgroundYUi}
-                  min={BG_POS_UI_MIN}
-                  max={BG_POS_UI_MAX}
-                  step={1}
-                  disabled={busy || !previewBaseUrl}
-                  help="100 が中央です。背景の上下位置を合わせます。"
-                  onChange={(n) => {
-                    const next = clamp(uiBgPosToSaved(n), -2, 2);
-                    setBackgroundY(next);
-                  }}
-                  onCommit={() => {
-                    const next = clamp(backgroundY, -2, 2);
-                    void onSavePlacement("background", {
-                      backgroundScale,
-                      backgroundX,
-                      backgroundY: next,
-                      activePhotoMode,
-                    });
-                  }}
-                />
-              </div>
-            ) : null}
-
-            {editingStep === "product" ? (
-              <div className="grid grid-cols-1 gap-3">
-                <SliderRow
-                  label="商品の大きさ"
-                  value={safeScale}
-                  min={PRODUCT_SCALE_UI_MIN}
-                  max={PRODUCT_SCALE_UI_MAX}
-                  step={1}
-                  disabled={busy || !canLiveEdit || !isBackgroundLocked}
-                  help="切り抜き商品の大きさを調整します。"
-                  onChange={(n) => {
-                    const next = uiScaleToSaved(
-                      clamp(n, PRODUCT_SCALE_UI_MIN, PRODUCT_SCALE_UI_MAX),
-                    );
-                    setPlacementScale(next);
-                  }}
-                  onCommit={() => {
-                    const next = clamp(
-                      placementScale,
-                      PRODUCT_SCALE_SAVED_MIN,
-                      PRODUCT_SCALE_SAVED_MAX,
-                    );
-                    void onSavePlacement("product", {
-                      scale: next,
-                      x: placementX,
-                      y: placementY,
-                      activePhotoMode,
-                    });
-                  }}
-                />
-
-                <SliderRow
-                  label="切り抜き画像の左右位置"
-                  value={safeX}
-                  min={PRODUCT_POS_UI_MIN}
-                  max={PRODUCT_POS_UI_MAX}
-                  step={1}
-                  disabled={busy || !canLiveEdit || !isBackgroundLocked}
-                  help="100 が中央です。商品の左右位置を調整します。"
-                  onChange={(n) => {
-                    const next = uiPosToSaved(
-                      clamp(n, PRODUCT_POS_UI_MIN, PRODUCT_POS_UI_MAX),
-                    );
-                    setPlacementX(next);
-                  }}
-                  onCommit={() => {
-                    const next = clamp(
-                      placementX,
-                      PRODUCT_POS_SAVED_MIN,
-                      PRODUCT_POS_SAVED_MAX,
-                    );
-                    void onSavePlacement("product", {
-                      scale: placementScale,
-                      x: next,
-                      y: placementY,
-                      activePhotoMode,
-                    });
-                  }}
-                />
-
-                <SliderRow
-                  label="切り抜き画像の上下位置"
-                  value={safeY}
-                  min={PRODUCT_POS_UI_MIN}
-                  max={PRODUCT_POS_UI_MAX}
-                  step={1}
-                  disabled={busy || !canLiveEdit || !isBackgroundLocked}
-                  help="100 が中央です。商品の上下位置を調整します。"
-                  onChange={(n) => {
-                    const next = uiPosToSaved(
-                      clamp(n, PRODUCT_POS_UI_MIN, PRODUCT_POS_UI_MAX),
-                    );
-                    setPlacementY(next);
-                  }}
-                  onCommit={() => {
-                    const next = clamp(
-                      placementY,
-                      PRODUCT_POS_SAVED_MIN,
-                      PRODUCT_POS_SAVED_MAX,
-                    );
-                    void onSavePlacement("product", {
-                      scale: placementScale,
-                      x: placementX,
-                      y: next,
-                      activePhotoMode,
-                    });
-                  }}
-                />
-              </div>
-            ) : null}
-
-            {editingStep === "shadow" ? (
-              <div className="grid grid-cols-1 gap-3">
-                <SliderRow
-                  label="影の濃さ"
-                  value={Math.round(safeShadowOpacity * 100)}
-                  min={0}
-                  max={100}
-                  step={1}
-                  disabled={busy || !canLiveEdit || !isBackgroundLocked}
-                  help="影の濃さを調整します。"
-                  onChange={(n) => {
-                    const next = clamp(n / 100, 0, 1);
-                    setShadowOpacity(next);
-                  }}
-                  onCommit={() => {
-                    const next = clamp(shadowOpacity, 0, 1);
-                    void onSavePlacement("shadow", {
-                      shadowOpacity: next,
-                      shadowBlur,
-                      shadowScale,
-                      shadowOffsetX,
-                      shadowOffsetY,
-                      activePhotoMode,
-                    });
-                  }}
-                />
-
-                <SliderRow
-                  label="影のぼかし"
-                  value={safeShadowBlur}
-                  min={SHADOW_BLUR_MIN}
-                  max={SHADOW_BLUR_MAX}
-                  step={1}
-                  disabled={busy || !canLiveEdit || !isBackgroundLocked}
-                  help="数字が大きいほど影が柔らかく広がります。"
-                  onChange={(n) => {
-                    const next = clamp(n, SHADOW_BLUR_MIN, SHADOW_BLUR_MAX);
-                    setShadowBlur(next);
-                  }}
-                  onCommit={() => {
-                    const next = clamp(shadowBlur, SHADOW_BLUR_MIN, SHADOW_BLUR_MAX);
-                    void onSavePlacement("shadow", {
-                      shadowOpacity,
-                      shadowBlur: next,
-                      shadowScale,
-                      shadowOffsetX,
-                      shadowOffsetY,
-                      activePhotoMode,
-                    });
-                  }}
-                />
-
-                <SliderRow
-                  label="影の広がり"
-                  value={Math.round(safeShadowScale * 100)}
-                  min={Math.round(SHADOW_SCALE_MIN * 100)}
-                  max={Math.round(SHADOW_SCALE_MAX * 100)}
-                  step={1}
-                  disabled={busy || !canLiveEdit || !isBackgroundLocked}
-                  help="数字が大きいほど影の横幅が広がります。"
-                  onChange={(n) => {
-                    const next = clamp(n / 100, SHADOW_SCALE_MIN, SHADOW_SCALE_MAX);
-                    setShadowScale(next);
-                  }}
-                  onCommit={() => {
-                    const next = clamp(shadowScale, SHADOW_SCALE_MIN, SHADOW_SCALE_MAX);
-                    void onSavePlacement("shadow", {
-                      shadowOpacity,
-                      shadowBlur,
-                      shadowScale: next,
-                      shadowOffsetX,
-                      shadowOffsetY,
-                      activePhotoMode,
-                    });
-                  }}
-                />
-
-                <SliderRow
-                  label="影の左右位置（大きく移動）"
-                  value={savedShadowOffsetToUi(safeShadowOffsetX)}
-                  min={SHADOW_OFFSET_UI_MIN}
-                  max={SHADOW_OFFSET_UI_MAX}
-                  step={1}
-                  disabled={busy || !canLiveEdit || !isBackgroundLocked}
-                  help="影の左右位置を調整します。"
-                  onChange={(n) => {
-                    const next = clamp(
-                      uiShadowOffsetToSaved(n),
-                      SHADOW_OFFSET_COARSE_MIN,
-                      SHADOW_OFFSET_COARSE_MAX,
-                    );
-                    setShadowOffsetX(next);
-                  }}
-                  onCommit={() => {
-                    const next = clamp(
-                      shadowOffsetX,
-                      SHADOW_OFFSET_COARSE_MIN,
-                      SHADOW_OFFSET_COARSE_MAX,
-                    );
-                    void onSavePlacement("shadow", {
-                      shadowOpacity,
-                      shadowBlur,
-                      shadowScale,
-                      shadowOffsetX: next,
-                      shadowOffsetY,
-                      activePhotoMode,
-                    });
-                  }}
-                />
-
-                <SliderRow
-                  label="影の上下位置（大きく移動）"
-                  value={savedShadowOffsetToUi(safeShadowOffsetY)}
-                  min={SHADOW_OFFSET_UI_MIN}
-                  max={SHADOW_OFFSET_UI_MAX}
-                  step={1}
-                  disabled={busy || !canLiveEdit || !isBackgroundLocked}
-                  help="影の上下位置を調整します。"
-                  onChange={(n) => {
-                    const next = clamp(
-                      uiShadowOffsetToSaved(n),
-                      SHADOW_OFFSET_COARSE_MIN,
-                      SHADOW_OFFSET_COARSE_MAX,
-                    );
-                    setShadowOffsetY(next);
-                  }}
-                  onCommit={() => {
-                    const next = clamp(
-                      shadowOffsetY,
-                      SHADOW_OFFSET_COARSE_MIN,
-                      SHADOW_OFFSET_COARSE_MAX,
-                    );
-                    void onSavePlacement("shadow", {
-                      shadowOpacity,
-                      shadowBlur,
-                      shadowScale,
-                      shadowOffsetX,
-                      shadowOffsetY: next,
-                      activePhotoMode,
-                    });
-                  }}
-                />
-              </div>
-            ) : null}
-          </div>
-        ) : null}
+        <div className="mt-2 flex flex-wrap gap-2">
+          <SmallBadge
+            active={editingStep === "background"}
+            label={editingStep === "background" ? "調整中：背景" : "背景"}
+          />
+          <SmallBadge
+            active={isBackgroundLocked}
+            label={isBackgroundLocked ? "座標固定済み" : "座標未固定"}
+          />
+          <SmallBadge
+            active={editingStep === "product"}
+            label={editingStep === "product" ? "調整中：商品" : "商品"}
+          />
+          <SmallBadge
+            active={editingStep === "shadow"}
+            label={editingStep === "shadow" ? "調整中：影" : "影"}
+          />
+          <SmallBadge
+            active={Boolean(savedCompositeUrl)}
+            label={savedCompositeUrl ? "合成後あり" : "合成後未作成"}
+          />
+        </div>
       </div>
 
-      <div className="placementPreviewFixed">
-        {activePreviewTab === "edit" && (
-          <div className="mt-3 overflow-hidden rounded-2xl border border-white/10 bg-black/25">
-            <div
-              className="border-b border-white/10 px-3 py-2 text-white/72"
-              style={{ fontSize: 12 }}
-            >
-              編集プレビュー
-            </div>
-
-            <div
-              className="px-3 py-2 text-white/52"
-              style={{ fontSize: 11, lineHeight: 1.6 }}
-            >
-              ここは配置調整専用です。商品の大きさ・位置・影・背景位置をここで合わせます。
-            </div>
-
-            <div
-              className="relative w-full"
-              style={{
-                width: "100%",
-                height: "min(72vw, 520px)",
-                maxHeight: "58vh",
-                aspectRatio: "1 / 1",
-                background: "rgba(255,255,255,0.03)",
-                containerType: "inline-size",
-              }}
-            >
-              {previewBaseUrl ? (
-                <img
-                  src={previewBaseUrl}
-                  alt="preview base"
-                  style={backgroundPreviewStyle}
-                  onLoad={(e) => {
-                    const img = e.currentTarget;
-                    const naturalWidth = Number(img.naturalWidth || 0);
-                    const naturalHeight = Number(img.naturalHeight || 0);
-
-                    if (naturalWidth > 0 && naturalHeight > 0) {
-                      setBackgroundNaturalSize((prev) => {
-                        if (
-                          prev.width === naturalWidth &&
-                          prev.height === naturalHeight
-                        ) {
-                          return prev;
-                        }
-
-                        return {
-                          width: naturalWidth,
-                          height: naturalHeight,
-                        };
-                      });
-                    }
-                  }}
-                />
-              ) : (
-                <div
-                  className="absolute inset-0 flex items-center justify-center text-white/40"
-                  style={{ fontSize: 12 }}
-                >
-                  背景がありません
-                </div>
-              )}
-
-              <div
-                className="absolute inset-0"
-                style={{
-                  background:
-                    "linear-gradient(to bottom, rgba(255,255,255,0.03), rgba(0,0,0,0.06))",
-                }}
-              />
-
-              {shouldShowProductOverlay ? (
-                <>
-                  {previewGeometry.shadowRect.opacity > 0 ? (
-                    <svg
-                      viewBox={`0 0 ${previewGeometry.canvas} ${previewGeometry.canvas}`}
-                      preserveAspectRatio="none"
-                      style={shadowSvgStyle}
-                    >
-                      <defs>
-                        <filter id="preview-ground-shadow-blur">
-                          <feGaussianBlur
-                            stdDeviation={previewGeometry.shadowRect.blurPx}
-                          />
-                        </filter>
-                      </defs>
-
-                      <ellipse
-                        cx={
-                          previewGeometry.shadowRect.leftPx +
-                          previewGeometry.shadowRect.widthPx / 2
-                        }
-                        cy={
-                          previewGeometry.shadowRect.topPx +
-                          previewGeometry.shadowRect.heightPx / 2
-                        }
-                        rx={previewGeometry.shadowRect.widthPx / 2}
-                        ry={previewGeometry.shadowRect.heightPx / 2}
-                        fill={`rgba(0,0,0,${previewGeometry.shadowRect.opacity})`}
-                        filter="url(#preview-ground-shadow-blur)"
-                      />
-                    </svg>
-                  ) : null}
-
-                  <img
-                    src={displayForegroundUrl}
-                    alt="product preview"
-                    style={productStyle}
-                  />
-                </>
-              ) : null}
-
-              {hasOverlayText ? (
-                <div style={overlayPreviewStyle}>
-                  <div className="relative w-full">
-                    {overlayBackgroundEnabled ? (
-                      <div style={overlayBandStyle} />
-                    ) : null}
-
-                    <div style={overlayTextWrapStyle}>
-                      {overlayLines.map((line, index) => (
-                        <div
-                          key={`overlay-line-${index}-${line}`}
-                          style={overlayLineStyle}
-                        >
-                          {line}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              ) : null}
-
-              {!shouldShowProductOverlay && !displayForegroundUrl ? (
-                <div
-                  className="absolute inset-0 flex items-center justify-center text-white/50"
-                  style={{ fontSize: 12 }}
-                >
-                  前景画像がありません
-                </div>
-              ) : null}
-
-              {!shouldShowProductOverlay &&
-              !!displayForegroundUrl &&
-              activePhotoMode === AI_BG_MODE &&
-              !!savedCompositeUrl &&
-              !String(bgImageUrl || "").trim() ? (
-                <div
-                  className="absolute left-3 top-3 rounded-lg border border-white/10 bg-black/45 px-2 py-1 text-white/65"
-                  style={{ fontSize: 11 }}
-                >
-                  背景のみが無いため、編集はできません。完成画像は保存済み完成画像タブで確認できます。
-                </div>
-              ) : null}
-
-              <div className="pointer-events-none absolute inset-0 border border-white/10" />
-              <div
-                className="pointer-events-none absolute left-1/2 top-0 h-full w-px bg-white/10"
-                style={{ transform: "translateX(-0.5px)" }}
-              />
-              <div
-                className="pointer-events-none absolute left-0 top-1/2 h-px w-full bg-white/10"
-                style={{ transform: "translateY(-0.5px)" }}
-              />
-            </div>
-          </div>
-        )}
-
-        {activePreviewTab === "final" && (
-          <div className="mt-3 rounded-2xl border border-white/10 bg-black/25 overflow-hidden">
-            <div
-              className="border-b border-white/10 px-3 py-2 text-white/72"
-              style={{ fontSize: 12 }}
-            >
-              保存済み完成画像
-            </div>
-
-            <div
-              className="px-3 py-2 text-white/52"
-              style={{ fontSize: 11, lineHeight: 1.6 }}
-            >
-              ここは確認専用です。背景選択・商品サイズ・影の調整は表示しません。
-            </div>
-
-            <div className="grid grid-cols-1 gap-3 p-3 lg:grid-cols-2">
-              <div className="overflow-hidden rounded-2xl border border-white/10 bg-black/20">
-                <div
-                  className="border-b border-white/10 px-3 py-2 text-white/75"
-                  style={{ fontSize: 12 }}
-                >
-                  通常合成画像
-                </div>
-
-                <div
-                  className="relative w-full"
-                  style={{
-                    aspectRatio: "1 / 1",
-                    background: "rgba(255,255,255,0.03)",
-                  }}
-                >
-                  {savedCompositeUrl ? (
-                    <img
-                      src={savedCompositeDisplayUrl}
-                      alt="saved composite"
-                      className="absolute inset-0 h-full w-full object-contain"
-                    />
-                  ) : (
-                    <div
-                      className="absolute inset-0 flex items-center justify-center px-4 text-center text-white/40"
-                      style={{ fontSize: 12, lineHeight: 1.7 }}
-                    >
-                      まだ通常合成画像はありません。編集プレビューで④合成を押すと、ここに保存済み画像だけを表示します。
-                    </div>
-                  )}
-
-                  <div className="pointer-events-none absolute inset-0 border border-white/10" />
-                </div>
-              </div>
-
-              <div className="overflow-hidden rounded-2xl border border-white/10 bg-black/20">
-                <div
-                  className="border-b border-white/10 px-3 py-2 text-white/75"
-                  style={{ fontSize: 12 }}
-                >
-                  文字焼き込み保存画像
-                </div>
-
-                <div
-                  className="relative w-full"
-                  style={{
-                    aspectRatio: "1 / 1",
-                    background: "rgba(255,255,255,0.03)",
-                  }}
-                >
-                  {savedCompositeTextUrl ? (
-                    <img
-                      src={savedCompositeTextDisplayUrl}
-                      alt="saved composite text"
-                      className="absolute inset-0 h-full w-full object-contain"
-                    />
-                  ) : (
-                    <div
-                      className="absolute inset-0 flex items-center justify-center px-4 text-center text-white/40"
-                      style={{ fontSize: 12, lineHeight: 1.7 }}
-                    >
-                      まだ文字焼き込み保存画像はありません。
-                    </div>
-                  )}
-
-                  <div className="pointer-events-none absolute inset-0 border border-white/10" />
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
+      <div
+        className="mt-3 rounded-xl border border-cyan-300/15 bg-cyan-300/5 px-3 py-2 text-cyan-50/75"
+        style={{ fontSize: 12, lineHeight: 1.7 }}
+      >
+        プレビューは上部の EDIT PREVIEW に統合しました。ここでは背景選択・位置・サイズ・影・座標固定・合成保存だけを操作します。
       </div>
 
-      {activePreviewTab === "edit" && (
-        <div className="placementControlScroll">
+      <div className="placementControlScroll">
           <div className="mt-3 rounded-2xl border border-white/10 bg-black/15 p-3">
             <div className="flex items-center justify-between gap-3">
               <div className="text-white/72" style={{ fontSize: 12 }}>
@@ -2729,6 +2224,7 @@ export default function ProductPlacementEditor({
                             setIsBackgroundLocked(false);
                             setEditingStep("background");
                             setActivePreviewTab("edit");
+                            setCompositePreviewMode?.("edit");
                           }}
                           className="rounded-xl border px-3 py-3 text-left transition hover:bg-white/5"
                           style={{
@@ -2807,6 +2303,7 @@ export default function ProductPlacementEditor({
                             setIsBackgroundLocked(false);
                             setEditingStep("background");
                             setActivePreviewTab("edit");
+                            setCompositePreviewMode?.("edit");
                           }}
                           className="rounded-xl border px-3 py-3 text-left transition hover:bg-white/5"
                           style={{
@@ -2858,6 +2355,7 @@ export default function ProductPlacementEditor({
                   setIsBackgroundLocked(false);
                   setEditingStep("background");
                   setActivePreviewTab("edit");
+                            setCompositePreviewMode?.("edit");
                 }}
                 labelForSource={() => "テンプレ背景"}
               />
@@ -2874,6 +2372,7 @@ export default function ProductPlacementEditor({
                   setIsBackgroundLocked(false);
                   setEditingStep("background");
                   setActivePreviewTab("edit");
+                            setCompositePreviewMode?.("edit");
                 }}
                 labelForSource={() => "AI生成背景"}
               />
@@ -2890,6 +2389,7 @@ export default function ProductPlacementEditor({
                   setIsBackgroundLocked(false);
                   setEditingStep("background");
                   setActivePreviewTab("edit");
+                            setCompositePreviewMode?.("edit");
                 }}
                 labelForSource={() => "手動アップロード"}
               />
@@ -3398,7 +2898,6 @@ export default function ProductPlacementEditor({
             </div>
           </div>
         </div>
-      )}
     </div>
   );
 }

@@ -49,7 +49,18 @@ type TemplateRecommendResultForPanel = {
   recommended?: TemplateRecommendItemForPanel[];
 };
 
+type WorkPanel = "material" | "background" | "composite";
+type CompositePreviewMode = "edit" | "final";
+
 type Props = {
+  /**
+   * 画面上部の大きなタブから、画像系のどの操作枠を表示するかを受け取ります。
+   * 既存機能を消さず、表示を分けるためのレイアウト制御だけに使います。
+   */
+  activePanel?: WorkPanel;
+  compositePreviewMode?: CompositePreviewMode;
+  setCompositePreviewMode?: React.Dispatch<React.SetStateAction<CompositePreviewMode>>;
+
   serverPlacementMeta?: {
     canvas?: number;
     placementInput?: {
@@ -389,6 +400,9 @@ function SellCheckBridgeCard(props: {
 }
 
 export default function ImageTabPanel({
+  activePanel = "material",
+  compositePreviewMode = "edit",
+  setCompositePreviewMode,
   d,
   uid,
   busy,
@@ -528,36 +542,44 @@ export default function ImageTabPanel({
 
   return (
     <div className="flex flex-col gap-3">
-      <SellCheckBridgeCard
-        d={d}
-        busy={busy}
-        saveDraft={saveDraft}
-        showMsg={showMsg}
-      />
+      {activePanel === "material" ? (
+        <>
+          <SellCheckBridgeCard
+            d={d}
+            busy={busy}
+            saveDraft={saveDraft}
+            showMsg={showMsg}
+          />
 
-      <BaseImagePanel
-        d={d}
-        uid={uid}
-        busy={busy}
-        cutoutBusy={cutoutBusy}
-        cutoutReason={cutoutReason}
-        overlayPreviewDataUrl={overlayPreviewDataUrl}
-        baseCandidates={baseCandidates}
-        currentSlot={currentSlot}
-        formStyle={formStyle}
-        defaultTextOverlay={defaultTextOverlay}
-        onUploadImageFilesNew={onUploadImageFilesNew}
-        onCutoutCurrentBaseToReplace={onCutoutCurrentBaseToReplace}
-        onPromoteMaterialToBase={onPromoteMaterialToBase}
-        onRemoveBaseOrMaterialImage={onRemoveBaseOrMaterialImage}
-        onSyncBaseAndMaterialImagesFromStorage={onSyncBaseAndMaterialImagesFromStorage}
-        onSaveCompositeAsImageUrl={onSaveCompositeAsImageUrl}
-        onSaveDraft={onSaveDraft}
-        showMsg={showMsg}
-        setD={setD}
-      />
+          <BaseImagePanel
+            d={d}
+            uid={uid}
+            busy={busy}
+            cutoutBusy={cutoutBusy}
+            cutoutReason={cutoutReason}
+            overlayPreviewDataUrl={overlayPreviewDataUrl}
+            baseCandidates={baseCandidates}
+            currentSlot={currentSlot}
+            formStyle={formStyle}
+            defaultTextOverlay={defaultTextOverlay}
+            onUploadImageFilesNew={onUploadImageFilesNew}
+            onCutoutCurrentBaseToReplace={onCutoutCurrentBaseToReplace}
+            onPromoteMaterialToBase={onPromoteMaterialToBase}
+            onRemoveBaseOrMaterialImage={onRemoveBaseOrMaterialImage}
+            onSyncBaseAndMaterialImagesFromStorage={onSyncBaseAndMaterialImagesFromStorage}
+            onSaveCompositeAsImageUrl={onSaveCompositeAsImageUrl}
+            onSaveDraft={onSaveDraft}
+            showMsg={showMsg}
+            setD={setD}
+            hideTopPreview
+          />
+        </>
+      ) : null}
 
+      {activePanel === "background" ? (
+        <>
       <BackgroundPanel
+        initialInnerTab={activePanel === "composite" ? "composite" : "background"}
         bgDisplayUrl={bgDisplayUrl}
         backgroundKeyword={backgroundKeyword}
         setBackgroundKeyword={setBackgroundKeyword}
@@ -599,21 +621,17 @@ export default function ImageTabPanel({
         bgScene={bgScene}
         setBgScene={setBgScene}
         aiImageUrl={String(
-          // 保存済み完成画像タブでは、AI背景ではなく「④合成後の完成画像」を最優先で表示します。
-          // 以前は aiImageUrl を先に見ていたため、AI背景だけが表示され、商品合成後の画像が隠れることがありました。
           (d as any).compositeImageUrl ||
             (d as any).imageUrl ||
             (d as any).aiImageUrl ||
             ""
         )}
         isCompositeFresh={isCompositeFresh}
-activePhotoMode={activePhotoMode}
-setActivePhotoMode={setActivePhotoMode}
-
-sizeTemplateType={sizeTemplateType}
-setSizeTemplateType={setSizeTemplateType}
-
-placementScale={placementScale}
+        activePhotoMode={activePhotoMode}
+        setActivePhotoMode={setActivePhotoMode}
+        sizeTemplateType={sizeTemplateType}
+        setSizeTemplateType={setSizeTemplateType}
+        placementScale={placementScale}
         setPlacementScale={setPlacementScale}
         placementX={placementX}
         setPlacementX={setPlacementX}
@@ -643,26 +661,121 @@ placementScale={placementScale}
         onRedo={onRedo}
         onSavePlacement={onSavePlacement}
         serverPlacementMeta={serverPlacementMeta}
+        compositePreviewMode={compositePreviewMode}
+        setCompositePreviewMode={setCompositePreviewMode}
+        hideLowerPreview
       />
 
-      <IdeaImagePanel
-        d={d}
+          <IdeaImagePanel
+            d={d}
+            uid={uid}
+            busy={busy}
+            canGenerate={canGenerate}
+            generateAiImage={onGenerateAiImage}
+            syncIdeaImagesFromStorage={onSyncIdeaImagesFromStorage}
+            clearIdeaHistory={onClearIdeaHistory}
+            setD={setD}
+            saveDraft={saveDraft}
+            showMsg={showMsg}
+          />
+
+          <StoryImagePanel
+            storyImageUrl={storyDisplayUrl}
+            onGenerateStoryImage={onGenerateStoryImage}
+            busy={busy}
+          />
+        </>
+      ) : null}
+
+      {activePanel === "composite" ? (
+      <BackgroundPanel
+        initialInnerTab={activePanel === "composite" ? "composite" : "background"}
+        bgDisplayUrl={bgDisplayUrl}
+        backgroundKeyword={backgroundKeyword}
+        setBackgroundKeyword={setBackgroundKeyword}
         uid={uid}
         busy={busy}
-        canGenerate={canGenerate}
-        generateAiImage={onGenerateAiImage}
-        syncIdeaImagesFromStorage={onSyncIdeaImagesFromStorage}
-        clearIdeaHistory={onClearIdeaHistory}
+        d={d}
+        textOverlay={textOverlay}
+        compositeTextImageUrl={compositeTextImageUrl}
+        onSaveCompositeTextImageFromCompositeSlot={onSaveCompositeTextImageFromCompositeSlot}
+        templateBgUrl={templateBgUrl}
+        templateBgUrls={templateBgUrls}
+        generateBackgroundImage={onGenerateBackgroundImage}
+        replaceBackgroundAndSaveToAiImage={onReplaceBackgroundAndSaveToAiImage}
+        syncBgImagesFromStorage={onSyncBgImagesFromStorage}
+        syncTemplateBgImagesFromStorage={onSyncTemplateBgImagesFromStorage}
+        syncCompositeImagesFromStorage={onSyncCompositeImagesFromStorage}
+        syncCompositeTextImagesFromStorage={onSyncCompositeTextImagesFromStorage}
+        clearBgHistory={onClearBgHistory}
+        onRemoveTemplateBgImage={onRemoveTemplateBgImage}
+        onRemoveAiBgImage={onRemoveAiBgImage}
+        onRemoveCompositeImage={onRemoveCompositeImage}
+        onRemoveCompositeTextImage={onRemoveCompositeTextImage}
+        generateTemplateBackground={generateTemplateBackground}
+        fetchTemplateRecommendations={fetchTemplateRecommendations}
+        selectTemplateBackground={selectTemplateBackground}
+        setBgImageUrl={setBgImageUrl}
         setD={setD}
         saveDraft={saveDraft}
+        formStyle={formStyle}
         showMsg={showMsg}
+        productCategory={productCategory}
+        setProductCategory={setProductCategory}
+        productSize={productSize}
+        setProductSize={setProductSize}
+        groundingType={groundingType}
+        setGroundingType={setGroundingType}
+        sellDirection={sellDirection}
+        setSellDirection={setSellDirection}
+        bgScene={bgScene}
+        setBgScene={setBgScene}
+        aiImageUrl={String(
+          (d as any).compositeImageUrl ||
+            (d as any).imageUrl ||
+            (d as any).aiImageUrl ||
+            ""
+        )}
+        isCompositeFresh={isCompositeFresh}
+        activePhotoMode={activePhotoMode}
+        setActivePhotoMode={setActivePhotoMode}
+        sizeTemplateType={sizeTemplateType}
+        setSizeTemplateType={setSizeTemplateType}
+        placementScale={placementScale}
+        setPlacementScale={setPlacementScale}
+        placementX={placementX}
+        setPlacementX={setPlacementX}
+        placementY={placementY}
+        setPlacementY={setPlacementY}
+        shadowOpacity={shadowOpacity}
+        setShadowOpacity={setShadowOpacity}
+        shadowBlur={shadowBlur}
+        setShadowBlur={setShadowBlur}
+        shadowScale={shadowScale}
+        setShadowScale={setShadowScale}
+        shadowOffsetX={shadowOffsetX}
+        setShadowOffsetX={setShadowOffsetX}
+        shadowOffsetY={shadowOffsetY}
+        setShadowOffsetY={setShadowOffsetY}
+        backgroundScale={backgroundScale}
+        setBackgroundScale={setBackgroundScale}
+        backgroundX={backgroundX}
+        setBackgroundX={setBackgroundX}
+        backgroundY={backgroundY}
+        setBackgroundY={setBackgroundY}
+        editingStep={editingStep}
+        setEditingStep={setEditingStep}
+        canUndo={canUndo}
+        canRedo={canRedo}
+        onUndo={onUndo}
+        onRedo={onRedo}
+        onSavePlacement={onSavePlacement}
+        serverPlacementMeta={serverPlacementMeta}
+        compositePreviewMode={compositePreviewMode}
+        setCompositePreviewMode={setCompositePreviewMode}
+        hideLowerPreview
       />
-
-      <StoryImagePanel
-        storyImageUrl={storyDisplayUrl}
-        onGenerateStoryImage={onGenerateStoryImage}
-        busy={busy}
-      />
+      ) : null}
     </div>
   );
 }

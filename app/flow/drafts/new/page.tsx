@@ -26,6 +26,8 @@ type ProductCategory = "furniture" | "goods" | "apparel" | "small" | "other";
 type ProductSize = "large" | "medium" | "small";
 type GroundingType = "floor" | "table" | "hanging" | "wall";
 type SellDirection = "sales" | "branding" | "trust" | "story";
+type WorkTab = "material" | "background" | "composite" | "video";
+type CompositePreviewMode = "edit" | "final";
 
 const PURPOSE_LABEL: Record<ImagePurpose, string> = {
   sales: "売上",
@@ -77,6 +79,8 @@ export default function NewDraftPage() {
   const router = useRouter();
   const sp = useSearchParams();
   const id = sp.get("id");
+  const [workTab, setWorkTab] = React.useState<WorkTab>("material");
+  const [compositePreviewMode, setCompositePreviewMode] = React.useState<CompositePreviewMode>("edit");
 
   const c = useDraftEditorController({
     id,
@@ -199,6 +203,94 @@ export default function NewDraftPage() {
       ? String(c.templateBgUrl ?? "")
       : String(c.bgDisplayUrl ?? "");
 
+  /**
+   * 上部プレビューに出す画像を、現在選択中の操作タブに合わせて切り替えます。
+   *
+   * 重要:
+   * - 下の操作欄に散らばっていた「確認用プレビュー」を、画面上部へ集約する
+   * - 下側は操作項目として使い、上側は常に結果確認エリアとして使う
+   * - API / Firestore / 保存構造は変更しない
+   */
+  const materialPreviewUrl = String(
+    c.d.baseImageUrl ||
+      c.d.imageUrl ||
+      c.d.imageIdeaUrl ||
+      ""
+  ).trim();
+
+  const backgroundPreviewUrl = String(
+    bgDisplayUrl ||
+      c.templateBgUrl ||
+      c.d.bgImageUrl ||
+      ""
+  ).trim();
+
+  const compositeFinalPreviewUrl = String(
+    (c.d as any).compositeTextImageUrl ||
+      (c.d as any).compositeImageUrl ||
+      c.d.aiImageUrl ||
+      ""
+  ).trim();
+
+  const compositePreviewUrl = compositePreviewMode === "final" ? compositeFinalPreviewUrl : "";
+
+  const foregroundPreviewUrl = String(
+    (c.d as any).foregroundImageUrl ||
+      c.d.baseImageUrl ||
+      c.d.imageUrl ||
+      ""
+  ).trim();
+
+  const videoPreviewUrl = String(
+    c.d.nonAiVideoUrl ||
+      (c.d as any)?.cmVideo?.url ||
+      (c.d as any)?.cmApplied?.runwayVideoUrl ||
+      ""
+  ).trim();
+
+  const fallbackPreviewUrl = String(
+    compositeFinalPreviewUrl ||
+      backgroundPreviewUrl ||
+      materialPreviewUrl ||
+      c.d.aiImageUrl ||
+      c.d.imageIdeaUrl ||
+      ""
+  ).trim();
+
+  const previewLabel =
+    workTab === "material"
+      ? materialPreviewUrl
+        ? "素材プレビュー"
+        : "素材未設定"
+      : workTab === "background"
+        ? backgroundPreviewUrl
+          ? activePhotoMode === "template"
+            ? "テンプレ背景プレビュー"
+            : "AI背景プレビュー"
+          : "背景未設定"
+        : workTab === "composite"
+          ? compositePreviewMode === "edit"
+            ? "合成前編集プレビュー"
+            : compositeFinalPreviewUrl
+              ? (c.d as any).compositeTextImageUrl
+                ? "文字入り完成画像"
+                : "合成完成画像"
+              : "合成後未作成"
+          : videoPreviewUrl
+            ? "動画プレビュー"
+            : "動画未作成";
+
+  const topPreviewHelp =
+    workTab === "material"
+      ? "画像アップロード・透過・文字焼き込みの確認画面です。"
+      : workTab === "background"
+        ? "テンプレ背景・AI背景の確認画面です。背景生成結果はここで確認します。"
+        : workTab === "composite"
+          ? compositePreviewMode === "edit"
+            ? "合成前プレビューです。下の合成タブで背景・商品・影を調整します。"
+            : "合成後プレビューです。下の合成タブの④合成で更新した最終画像を確認します。"
+          : "静止画から動画・ブランドCMの確認画面です。";
+
   return (
     <>
       <style jsx>{`
@@ -227,6 +319,51 @@ export default function NewDraftPage() {
           width: 100%;
         }
 
+        .previewStage {
+          min-height: 420px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+
+        .topPreviewCanvas {
+          position: relative;
+          width: min(100%, 760px);
+          height: min(64vh, 560px);
+          min-height: 360px;
+          overflow: hidden;
+          border-radius: 18px;
+          border: 1px solid rgba(255, 255, 255, 0.12);
+          background: rgba(0, 0, 0, 0.24);
+        }
+
+        .topPreviewImage {
+          position: absolute;
+          inset: 0;
+          width: 100%;
+          height: 100%;
+          object-fit: contain;
+        }
+
+        .topPreviewBackground {
+          position: absolute;
+          inset: 0;
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
+        }
+
+        .topPreviewForeground {
+          position: absolute;
+          left: 50%;
+          top: 50%;
+          max-width: 70%;
+          max-height: 70%;
+          object-fit: contain;
+          transform: translate(-50%, -50%);
+          filter: drop-shadow(0 20px 28px rgba(0, 0, 0, 0.24));
+        }
+
         @media (min-width: 900px) {
           .pageWrap {
             flex-direction: row;
@@ -235,11 +372,11 @@ export default function NewDraftPage() {
           }
 
           .leftCol {
-            width: 48%;
+            width: 42%;
           }
 
           .rightCol {
-            width: 52%;
+            width: 58%;
             position: relative;
             top: auto;
             height: auto;
@@ -287,6 +424,103 @@ export default function NewDraftPage() {
           <Link href="/flow/library" className="rounded-full border border-white/15 bg-white/8 px-3 py-1 text-xs font-black text-white/80 no-underline">
             画像ライブラリ
           </Link>
+        </div>
+      </div>
+
+      <div
+        className="mb-3 rounded-3xl border border-cyan-100/20 bg-black/25 p-3 shadow-2xl shadow-cyan-950/20"
+      >
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="text-xs font-black tracking-[0.18em] text-cyan-100/60">
+              EDIT PREVIEW
+            </div>
+            <div className="mt-1 text-sm font-black text-white/90">
+              編集プレビュー画面
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <Chip>{previewLabel}</Chip>
+            <Chip>{`元=${c.d.baseImageUrl ? "✓" : "—"} / 背景=${bgDisplayUrl ? "✓" : "—"} / 合成=${c.d.aiImageUrl || (c.d as any).compositeImageUrl ? "✓" : "—"} / 動画=${c.d.nonAiVideoUrl ? "✓" : "—"}`}</Chip>
+          </div>
+        </div>
+
+        <div className="previewStage rounded-3xl border border-white/10 bg-black/30 p-4">
+          {workTab === "video" && videoPreviewUrl ? (
+            <div className="topPreviewCanvas">
+              <video
+                src={videoPreviewUrl}
+                controls
+                playsInline
+                className="absolute inset-0 h-full w-full object-contain"
+              />
+            </div>
+          ) : workTab === "composite" ? (
+            <div className="topPreviewCanvas">
+              {compositePreviewUrl ? (
+                <img
+                  src={compositePreviewUrl}
+                  alt="AOI FLOW composite preview"
+                  className="topPreviewImage"
+                  draggable={false}
+                />
+              ) : backgroundPreviewUrl || foregroundPreviewUrl ? (
+                <>
+                  {backgroundPreviewUrl ? (
+                    <img
+                      src={backgroundPreviewUrl}
+                      alt="AOI FLOW background preview"
+                      className="topPreviewBackground"
+                      style={{
+                        transform: `scale(${backgroundScale}) translate(${backgroundX * 12}%, ${backgroundY * 12}%)`,
+                      }}
+                      draggable={false}
+                    />
+                  ) : (
+                    <div className="absolute inset-0 bg-black/30" />
+                  )}
+
+                  {foregroundPreviewUrl ? (
+                    <img
+                      src={foregroundPreviewUrl}
+                      alt="AOI FLOW product preview"
+                      className="topPreviewForeground"
+                      style={{
+                        left: `${placementX * 100}%`,
+                        top: `${placementY * 100}%`,
+                        transform: `translate(-50%, -50%) scale(${placementScale})`,
+                      }}
+                      draggable={false}
+                    />
+                  ) : null}
+                </>
+              ) : (
+                <div className="absolute inset-0 flex items-center justify-center px-4 text-center text-sm text-white/55">
+                  合成プレビューに使う商品画像または背景がありません。
+                </div>
+              )}
+            </div>
+          ) : (workTab === "background" ? backgroundPreviewUrl : materialPreviewUrl || fallbackPreviewUrl) ? (
+            <div className="topPreviewCanvas">
+              <img
+                src={workTab === "background" ? backgroundPreviewUrl : materialPreviewUrl || fallbackPreviewUrl}
+                alt="AOI FLOW editing preview"
+                className="topPreviewImage"
+                draggable={false}
+              />
+            </div>
+          ) : (
+            <div className="text-center text-sm text-white/55" style={{ lineHeight: 1.8 }}>
+              まだプレビュー画像がありません。
+              <br />
+              下の「素材」タブから画像をアップロードしてください。
+            </div>
+          )}
+        </div>
+
+        <div className="mt-3 rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-white/58">
+          {topPreviewHelp}
         </div>
       </div>
 
@@ -383,22 +617,37 @@ export default function NewDraftPage() {
 
                 <div className="flex items-center gap-2 whitespace-nowrap">
                   <SelectBtn
-                    selected={c.rightTab === "image"}
-                    label="元画像｜背景(合成・動画用)"
-                    onClick={() => c.setRightTab("image")}
+                    selected={workTab === "material"}
+                    label="素材"
+                    onClick={() => setWorkTab("material")}
                     disabled={c.busy}
                   />
                   <SelectBtn
-                    selected={c.rightTab === "video"}
+                    selected={workTab === "background"}
+                    label="背景"
+                    onClick={() => setWorkTab("background")}
+                    disabled={c.busy}
+                  />
+                  <SelectBtn
+                    selected={workTab === "composite"}
+                    label="合成"
+                    onClick={() => setWorkTab("composite")}
+                    disabled={c.busy}
+                  />
+                  <SelectBtn
+                    selected={workTab === "video"}
                     label="動画"
-                    onClick={() => c.setRightTab("video")}
+                    onClick={() => setWorkTab("video")}
                     disabled={c.busy}
                   />
                 </div>
               </div>
 
-              {c.rightTab === "image" ? (
+              {workTab !== "video" ? (
                 <ImageTabPanel
+                  activePanel={workTab === "composite" ? "composite" : workTab === "background" ? "background" : "material"}
+                  compositePreviewMode={compositePreviewMode}
+                  setCompositePreviewMode={setCompositePreviewMode}
                   d={c.d}
                   uid={c.uid}
                   busy={c.busy}
@@ -508,7 +757,7 @@ export default function NewDraftPage() {
                 />
               ) : null}
 
-              {c.rightTab === "video" ? (
+              {workTab === "video" ? (
                 <div className="mt-3 flex flex-col gap-3">
                   <div
                     className="rounded-2xl border border-white/10 bg-black/20"
