@@ -210,6 +210,13 @@ type Props = {
 
   busy?: boolean;
   showMsg?: (msg: string) => void;
+
+  /**
+   * 上部 EDIT PREVIEW にプレビューを集約する場合、
+   * 下部の大きなメインプレビューだけを非表示にするためのフラグです。
+   * 操作ボタン・座標固定・合成前/合成後切替は残します。
+   */
+  hideMainPreview?: boolean;
 };
 
 function clamp(n: number, min: number, max: number) {
