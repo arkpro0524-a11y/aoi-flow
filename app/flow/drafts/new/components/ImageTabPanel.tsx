@@ -579,7 +579,7 @@ export default function ImageTabPanel({
       {activePanel === "background" ? (
         <>
       <BackgroundPanel
-        initialInnerTab={activePanel === "composite" ? "composite" : "background"}
+        initialInnerTab="background"
         bgDisplayUrl={bgDisplayUrl}
         backgroundKeyword={backgroundKeyword}
         setBackgroundKeyword={setBackgroundKeyword}
@@ -689,7 +689,7 @@ export default function ImageTabPanel({
 
       {activePanel === "composite" ? (
       <BackgroundPanel
-        initialInnerTab={activePanel === "composite" ? "composite" : "background"}
+        initialInnerTab="composite"
         bgDisplayUrl={bgDisplayUrl}
         backgroundKeyword={backgroundKeyword}
         setBackgroundKeyword={setBackgroundKeyword}
