@@ -10,12 +10,13 @@ export type NonAiVideoInput = {
   seconds: 5 | 10;
   size: { w: number; h: number };
   motion: {
-    tempo: "slow" | "normal" | "sharp";
-    reveal: "early" | "delayed" | "last";
-    intensity: "calm" | "balanced" | "strong";
+    tempo: "slow" | "normal" | "sharp" | "fast";
+    reveal: "early" | "delayed" | "last" | "late";
+    intensity: "calm" | "balanced" | "strong" | "subtle";
     attitude: "humble" | "neutral" | "assertive";
-    rhythm: "with_pause" | "continuous";
+    rhythm: "with_pause" | "continuous" | "wave" | "beat";
   };
+  videoType?: "auto_ad" | "spin" | "zoom" | "pan" | "showcase" | "reel";
   textLines?: string[];
 };
 
@@ -23,15 +24,93 @@ function easeInOut(t: number) {
   return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
 }
 
+async function toCanvasSafeUrl(url: string): Promise<string> {
+  const safeUrl = String(url || "").trim();
+
+  if (!safeUrl) throw new Error("画像URLが空です");
+  if (safeUrl.startsWith("blob:") || safeUrl.startsWith("data:")) return safeUrl;
+  if (!/^https?:\/\//i.test(safeUrl)) return safeUrl;
+
+  const res = await fetch("/api/proxy-image", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url: safeUrl }),
+  });
+
+  const blob = await res.blob().catch(() => null);
+
+  if (!res.ok || !blob || blob.size === 0) {
+    throw new Error(`画像の読み込みに失敗しました: ${safeUrl}`);
+  }
+
+  return URL.createObjectURL(blob);
+}
+
 async function loadImage(url: string): Promise<HTMLImageElement> {
   const img = new Image();
   img.crossOrigin = "anonymous";
-  img.src = url;
+  img.src = await toCanvasSafeUrl(url);
   await new Promise<void>((ok, ng) => {
     img.onload = () => ok();
-    img.onerror = () => ng(new Error("failed to load image"));
+    img.onerror = () => ng(new Error(`画像の読み込みに失敗しました: ${url}`));
   });
   return img;
+}
+
+
+function coverRect(img: HTMLImageElement, w: number, h: number, scale = 1) {
+  // 画像をキャンバス全体に自然に敷き詰めるための基本計算。
+  // ここを共通化すると、縦長/横長どちらの写真でも左右に変な揺れが出にくくなる。
+  const base = Math.max(w / img.width, h / img.height) * scale;
+  const dw = img.width * base;
+  const dh = img.height * base;
+  return { dw, dh, dx: (w - dw) / 2, dy: (h - dh) / 2 };
+}
+
+function containRect(img: HTMLImageElement, w: number, h: number, scale = 1) {
+  // 商品単体の透明PNGなどは切らずに見せたいので contain を使う。
+  const base = Math.min(w / img.width, h / img.height) * scale;
+  const dw = img.width * base;
+  const dh = img.height * base;
+  return { dw, dh, dx: (w - dw) / 2, dy: (h - dh) / 2 };
+}
+
+function drawCoverImage(
+  ctx: CanvasRenderingContext2D,
+  img: HTMLImageElement,
+  w: number,
+  h: number,
+  scale: number,
+  offsetX: number,
+  offsetY: number,
+  rotation = 0
+) {
+  const r = coverRect(img, w, h, scale);
+  ctx.save();
+  ctx.translate(w / 2, h / 2);
+  ctx.rotate(rotation);
+  ctx.drawImage(img, -r.dw / 2 + offsetX, -r.dh / 2 + offsetY, r.dw, r.dh);
+  ctx.restore();
+}
+
+function drawContainImage(
+  ctx: CanvasRenderingContext2D,
+  img: HTMLImageElement,
+  w: number,
+  h: number,
+  scale: number,
+  offsetX: number,
+  offsetY: number,
+  rotation = 0,
+  flipScaleX = 1
+) {
+  const r = containRect(img, w, h, scale);
+  ctx.save();
+  ctx.translate(w / 2 + offsetX, h / 2 + offsetY);
+  ctx.rotate(rotation);
+  ctx.scale(flipScaleX, 1);
+  ctx.drawImage(img, -r.dw / 2, -r.dh / 2, r.dw, r.dh);
+  ctx.restore();
 }
 
 function pickMimeType(): string {
@@ -119,15 +198,51 @@ export async function generateNonAiVideoWebm(input: NonAiVideoInput): Promise<Bl
 
     ctx.clearRect(0, 0, w, h);
 
-    // Ken Burns
-    const scale = 1 + move * tt;
-    const sw = w / scale;
-    const sh = h / scale;
+    // 背景を薄く敷く。透明PNGや商品単体を回転させた時でも、真っ黒画面にならないようにする。
+    const bg = ctx.createLinearGradient(0, 0, w, h);
+    bg.addColorStop(0, "#071525");
+    bg.addColorStop(1, "#0f2a3f");
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, w, h);
 
-    const panX = (Math.sin(tt * Math.PI * 2) * 0.5 + 0.5) * (img.width - sw);
-    const panY = (Math.cos(tt * Math.PI * 2) * 0.5 + 0.5) * (img.height - sh);
+    const oneImage = imageCount === 1;
+    const videoType = input.videoType ?? "auto_ad";
 
-    ctx.drawImage(img, panX, panY, sw, sh, 0, 0, w, h);
+    if (oneImage && videoType === "spin") {
+      // 単品Spin：左右に揺らすだけではなく、画像そのものを中心から回す。
+      // 商品切り抜きPNGでも破綻しにくいように contain で描画する。
+      const angle = tt * Math.PI * 2;
+      const flip = 0.72 + 0.28 * Math.abs(Math.cos(angle));
+      drawContainImage(ctx, img, w, h, 0.82, 0, 0, angle, flip);
+    } else if (oneImage && videoType === "zoom") {
+      // 単品Zoom：商品へ自然に寄る。
+      const scale = 1.0 + move * 1.7 * tt;
+      drawContainImage(ctx, img, w, h, scale, 0, 0, 0);
+    } else if (oneImage && videoType === "pan") {
+      // 単品Pan：横揺れではなく、ゆっくり斜め移動＋微拡大。
+      const scale = 1.06 + move * tt;
+      const ox = (tt - 0.5) * w * 0.12;
+      const oy = (0.5 - tt) * h * 0.06;
+      drawCoverImage(ctx, img, w, h, scale, ox, oy, 0);
+    } else {
+      // Canva風のKen Burns。複数画像では各写真が自然に拡大・移動しながら切り替わる。
+      const direction = imageIndex % 2 === 0 ? 1 : -1;
+      const scale = 1.04 + move * tt;
+      const ox = direction * (tt - 0.5) * w * 0.08;
+      const oy = -direction * (tt - 0.5) * h * 0.05;
+      const rot = oneImage ? direction * (tt - 0.5) * 0.035 : direction * (tt - 0.5) * 0.02;
+      drawCoverImage(ctx, img, w, h, scale, ox, oy, rot);
+
+      // 複数画像の切替時は軽くフェード。
+      if (!oneImage && localT < 0.12 && imageIndex > 0) {
+        ctx.fillStyle = `rgba(0,0,0,${(0.12 - localT) / 0.12 * 0.28})`;
+        ctx.fillRect(0, 0, w, h);
+      }
+      if (!oneImage && localT > 0.88 && imageIndex < imageCount - 1) {
+        ctx.fillStyle = `rgba(0,0,0,${(localT - 0.88) / 0.12 * 0.28})`;
+        ctx.fillRect(0, 0, w, h);
+      }
+    }
 
     // 雰囲気レイヤー
     ctx.fillStyle = `rgba(0,0,0,${alpha})`;

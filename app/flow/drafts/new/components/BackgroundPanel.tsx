@@ -922,10 +922,6 @@ export default function BackgroundPanel({
 await saveDraft({
   templateBgUrl: picked,
   activePhotoMode: "template",
-
-  // 動画合成でも同じ背景を使うため、動画用背景として明示保存します
-  videoBackgroundImageUrl: picked,
-  videoBackgroundLabel: "テンプレ背景",
 } as any);
       }
 
@@ -1020,10 +1016,6 @@ await saveDraft({
 await saveDraft({
   bgImageUrl: picked,
   activePhotoMode: "ai_bg",
-
-  // 動画合成でも同じ背景を使うため、動画用背景として明示保存します
-  videoBackgroundImageUrl: picked,
-  videoBackgroundLabel: "AI背景",
 } as any);
 
     setActivePhotoMode("ai_bg");

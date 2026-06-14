@@ -320,7 +320,7 @@ export default function NewDraftPage() {
         }
 
         .previewStage {
-          min-height: 420px;
+          min-height: 260px;
           display: flex;
           align-items: center;
           justify-content: center;
@@ -334,13 +334,13 @@ export default function NewDraftPage() {
           }
 
           .previewStage {
-            min-height: 260px;
+            min-height: 220px;
             padding: 10px;
           }
 
           .topPreviewCanvas {
-            height: min(48vh, 360px);
-            min-height: 240px;
+            height: min(34vh, 260px);
+            min-height: 180px;
           }
 
           .pageWrap {
@@ -367,8 +367,8 @@ export default function NewDraftPage() {
         .topPreviewCanvas {
           position: relative;
           width: min(100%, 760px);
-          height: min(64vh, 560px);
-          min-height: 360px;
+          height: min(38vh, 320px);
+          min-height: 220px;
           overflow: hidden;
           border-radius: 18px;
           border: 1px solid rgba(255, 255, 255, 0.12);
