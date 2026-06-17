@@ -563,31 +563,175 @@ export default function NewDraftPage() {
           }
         }
 
-        @media (max-width: 820px) {
+        @media (max-width: 980px) {
+          .studioRoot {
+            width: 100%;
+            max-width: 100vw;
+            overflow-x: hidden;
+            gap: 12px;
+          }
+
           .studioHero {
             padding: 14px;
             border-radius: 22px;
           }
 
+          .studioHeader {
+            display: grid;
+            grid-template-columns: 1fr;
+          }
+
+          .studioTitle {
+            font-size: 24px;
+            line-height: 1.18;
+          }
+
+          .studioLead {
+            font-size: 12px;
+            line-height: 1.65;
+          }
+
+          .statusChips {
+            justify-content: flex-start;
+          }
+
           .stepRail {
             display: flex;
             overflow-x: auto;
+            overflow-y: hidden;
             padding-bottom: 6px;
             scroll-snap-type: x mandatory;
+            -webkit-overflow-scrolling: touch;
           }
 
           .stepButton {
-            min-width: 190px;
+            min-width: 158px;
+            min-height: 62px;
+            padding: 10px;
             scroll-snap-align: start;
           }
 
+          .stepLabel {
+            font-size: 12px;
+          }
+
+          .stepNote {
+            font-size: 10px;
+            margin-top: 5px;
+          }
+
+          .studioGrid {
+            grid-template-columns: minmax(0, 1fr);
+            gap: 12px;
+          }
+
+          .studioCard {
+            border-radius: 18px;
+            padding: 10px;
+          }
+
+          .studioCardTitle {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 8px;
+          }
+
           .previewStage {
-            min-height: 220px;
+            min-height: 200px;
+            padding: 8px;
           }
 
           .topPreviewCanvas {
-            height: min(36vh, 300px);
-            min-height: 210px;
+            width: 100%;
+            height: min(34vh, 280px);
+            min-height: 190px;
+          }
+
+          .statusGrid {
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+          }
+
+          .mainOperationPanel {
+            width: 100%;
+            max-width: 100%;
+            overflow-x: hidden;
+          }
+
+          .mainOperationPanel :global(section),
+          .mainOperationPanel :global(div),
+          .mainOperationPanel :global(form),
+          .mainOperationPanel :global(label) {
+            max-width: 100%;
+          }
+
+          .mainOperationPanel :global([style*="grid-template-columns"]),
+          .mainOperationPanel :global([class*="grid"]) {
+            min-width: 0;
+          }
+
+          .mainOperationPanel :global(input),
+          .mainOperationPanel :global(textarea),
+          .mainOperationPanel :global(select),
+          .mainOperationPanel :global(button) {
+            max-width: 100%;
+          }
+        }
+
+
+        @media (max-width: 980px) {
+          .studioRoot,
+          .studioHero,
+          .studioGrid,
+          .studioCard,
+          .mainOperationPanel {
+            width: 100% !important;
+            max-width: 100% !important;
+            min-width: 0 !important;
+          }
+
+          .mainOperationPanel :global([style*="display: grid"]),
+          .mainOperationPanel :global([style*="grid-template-columns"]),
+          .mainOperationPanel :global(.grid) {
+            grid-template-columns: minmax(0, 1fr) !important;
+          }
+
+          .mainOperationPanel :global([style*="width:"]),
+          .mainOperationPanel :global([style*="min-width"]),
+          .mainOperationPanel :global([style*="max-width"]) {
+            max-width: 100% !important;
+            min-width: 0 !important;
+          }
+
+          .mainOperationPanel :global(img),
+          .mainOperationPanel :global(video),
+          .mainOperationPanel :global(canvas) {
+            max-width: 100% !important;
+            height: auto;
+          }
+
+          .mainOperationPanel :global(.flex) {
+            flex-wrap: wrap;
+          }
+        }
+
+        @media (max-width: 480px) {
+          .studioHero,
+          .studioCard {
+            border-radius: 16px;
+          }
+
+          .stepButton {
+            min-width: 145px;
+          }
+
+          .previewStage {
+            min-height: 170px;
+          }
+
+          .topPreviewCanvas {
+            min-height: 160px;
+            height: 240px;
           }
         }
       `}</style>

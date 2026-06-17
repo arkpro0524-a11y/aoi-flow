@@ -10,6 +10,10 @@ export const metadata = {
 
 // ✅ ここに移動（これが正解）
 export const viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  viewportFit: "cover",
   themeColor: "#0A1020",
 };
 

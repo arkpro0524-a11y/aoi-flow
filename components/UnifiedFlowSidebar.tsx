@@ -146,6 +146,7 @@ export default function UnifiedFlowSidebar(props: Props) {
 
   return (
     <aside
+      className="unifiedFlowSidebar"
       style={{
         position: "fixed",
         left: 0,
@@ -163,7 +164,7 @@ export default function UnifiedFlowSidebar(props: Props) {
         color: "white",
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 12, paddingBottom: 22 }}>
+      <div className="unifiedFlowSidebarBrand" style={{ display: "flex", alignItems: "center", gap: 12, paddingBottom: 22 }}>
         <img
           src="/logo-aoi-flow2.png"
           alt="AOI FLOW"
@@ -182,7 +183,7 @@ export default function UnifiedFlowSidebar(props: Props) {
 
       <div style={{ height: 1, background: "rgba(255,255,255,0.09)", margin: "0 -16px 16px" }} />
 
-      <nav style={{ display: "grid", gap: 7 }}>
+      <nav className="unifiedFlowSidebarNav" style={{ display: "grid", gap: 7 }}>
         <NavLink href="/flow" icon="⌂" label="トップ" active={isTop} />
 
         <SectionTitle>市場研究</SectionTitle>
@@ -218,7 +219,7 @@ export default function UnifiedFlowSidebar(props: Props) {
         <NavLink href="/flow/brands" icon="⚙" label="設定" active={isSettings} />
       </nav>
 
-      <div style={{ marginTop: "auto", display: "grid", gap: 12 }}>
+      <div className="unifiedFlowSidebarBottom" style={{ marginTop: "auto", display: "grid", gap: 12 }}>
         <button
           type="button"
           onClick={() => void props.onLogout?.()}
@@ -235,6 +236,95 @@ export default function UnifiedFlowSidebar(props: Props) {
           ログアウト
         </button>
       </div>
+
+      <style jsx global>{`
+        @media (max-width: 980px) {
+          .unifiedFlowSidebar {
+            position: sticky !important;
+            top: 0 !important;
+            bottom: auto !important;
+            width: 100% !important;
+            max-width: 100vw !important;
+            height: auto !important;
+            min-height: 0 !important;
+            padding: 10px 10px 8px !important;
+            border-right: none !important;
+            border-bottom: 1px solid rgba(255,255,255,0.10) !important;
+            z-index: 50 !important;
+            display: block !important;
+            overflow: visible !important;
+          }
+
+          .unifiedFlowSidebarBrand {
+            padding-bottom: 8px !important;
+            gap: 9px !important;
+          }
+
+          .unifiedFlowSidebarBrand img {
+            width: 38px !important;
+            height: 38px !important;
+            border-radius: 10px !important;
+          }
+
+          .unifiedFlowSidebarBrand div div:first-child {
+            font-size: 17px !important;
+            line-height: 1.05 !important;
+          }
+
+          .unifiedFlowSidebarBrand div div:last-child {
+            font-size: 10px !important;
+            margin-top: 2px !important;
+          }
+
+          .unifiedFlowSidebarNav {
+            display: flex !important;
+            gap: 8px !important;
+            overflow-x: auto !important;
+            overflow-y: hidden !important;
+            padding: 4px 0 8px !important;
+            -webkit-overflow-scrolling: touch !important;
+            scroll-snap-type: x proximity;
+          }
+
+          .unifiedFlowSidebarNav > a,
+          .unifiedFlowSidebarNav > button {
+            flex: 0 0 auto !important;
+            min-height: 38px !important;
+            width: auto !important;
+            white-space: nowrap !important;
+            padding: 0 12px !important;
+            font-size: 12px !important;
+            scroll-snap-align: start;
+          }
+
+          .unifiedFlowSidebarNav > div {
+            flex: 0 0 auto !important;
+            display: flex !important;
+            gap: 7px !important;
+            padding-left: 0 !important;
+            margin-top: 0 !important;
+            align-items: center !important;
+          }
+
+          .unifiedFlowSidebarNav > div[style*="font-size"] {
+            display: none !important;
+          }
+
+          .unifiedFlowSidebarNav > div a,
+          .unifiedFlowSidebarNav > div button {
+            flex: 0 0 auto !important;
+            min-height: 34px !important;
+            width: auto !important;
+            white-space: nowrap !important;
+            padding: 0 10px !important;
+            font-size: 11px !important;
+          }
+
+          .unifiedFlowSidebarBottom {
+            display: none !important;
+          }
+        }
+      `}</style>
     </aside>
   );
 }
