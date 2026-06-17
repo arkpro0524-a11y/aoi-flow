@@ -501,69 +501,7 @@ export default function MarketResearchPage() {
 
       <UnifiedFlowSidebar onLogout={() => void logout()} marketPanel={marketPanel} onSelectMarketPanel={setMarketPanel} />
 
-      <main className="flowMarketMain" style={{ position: "relative", zIndex: 1 }}>
-        <style jsx global>{`
-          .flowMarketMain {
-            margin-left: 244px;
-            padding: 20px 28px 36px;
-            width: calc(100% - 244px);
-            max-width: calc(100vw - 244px);
-            overflow-x: clip;
-          }
-
-          @media (max-width: 980px) {
-            .flowMarketMain {
-              margin-left: 0;
-              width: 100%;
-              max-width: 100vw;
-              padding: 12px 10px 24px;
-              overflow-x: hidden;
-            }
-
-            .flowMarketMain header {
-              grid-template-columns: minmax(0, 1fr) !important;
-              gap: 12px !important;
-              min-height: 0 !important;
-            }
-
-            .flowMarketMain header h1 {
-              font-size: 24px !important;
-              line-height: 1.18 !important;
-              word-break: keep-all !important;
-            }
-
-            .flowMarketMain header > div:nth-child(2) {
-              width: 100% !important;
-              max-width: 100% !important;
-            }
-
-            .flowMarketMain section {
-              grid-template-columns: minmax(0, 1fr) !important;
-              gap: 10px !important;
-            }
-
-            .flowMarketMain input,
-            .flowMarketMain textarea,
-            .flowMarketMain button {
-              max-width: 100% !important;
-            }
-
-            .flowMarketMain,
-            .flowMarketMain > * {
-              max-width: 100% !important;
-              min-width: 0 !important;
-            }
-
-            .flowMarketMain [style*="grid-template-columns"] {
-              grid-template-columns: minmax(0, 1fr) !important;
-            }
-
-            .flowMarketMain [style*="width:"] {
-              max-width: 100% !important;
-            }
-
-          }
-        `}</style>
+      <main style={{ position: "relative", zIndex: 1, marginLeft: 244, padding: "20px 28px 36px" }}>
         <TopBar />
 
         <section style={{ display: "grid", gridTemplateColumns: "repeat(6, minmax(0, 1fr))", gap: 12, marginTop: 10 }}>
