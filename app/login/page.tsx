@@ -28,7 +28,7 @@ export default function LoginPage() {
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => {
-      if (u) router.replace("/");
+      if (u) router.replace("/flow");
     });
 
     return () => unsub();
@@ -44,7 +44,7 @@ export default function LoginPage() {
 
       await signInWithPopup(auth, provider);
 
-      router.replace("/");
+      router.replace("/flow");
     } catch (e: any) {
       const msg =
         e?.code === "auth/popup-closed-by-user"

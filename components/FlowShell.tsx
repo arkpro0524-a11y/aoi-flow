@@ -73,7 +73,7 @@ export default function FlowShell({ user, onLogout, children }: Props) {
     // 5つの表導線だけをアクティブ判定します。
     // 非表示管理画面（/flow/sell-check/admin など）はURLを残しますが、
     // 売れる診断タブ・市場研究ラボタブとして誤表示しないように分離します。
-    if (href === "/") return pathname === "/" || pathname === "/flow";
+    if (href === "/flow") return pathname === "/flow";
     if (href === "/flow/market-research") return pathname === "/flow/market-research";
     if (href === "/flow/sell-check") return pathname === "/flow/sell-check";
     if (href === "/flow/drafts/new") {
@@ -236,7 +236,7 @@ export default function FlowShell({ user, onLogout, children }: Props) {
                   boxShadow: "inset 0 0 20px rgba(255,255,255,0.04)",
                 }}
               >
-                <Tab href="/" label="トップ" />
+                <Tab href="/flow" label="トップ" />
                 <Tab href="/flow/market-research" label="市場研究ラボ" />
                 <Tab href="/flow/sell-check" label="売れる診断" />
                 <Tab href="/flow/drafts/new" label="商品画像作成" />

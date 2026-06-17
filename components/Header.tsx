@@ -13,7 +13,7 @@ export default function Header() {
   return (
     <header className="sticky top-0 z-20 bg-black/20 backdrop-blur">
       <div className="mx-auto flex w-full max-w-5xl items-center justify-between px-4 py-4">
-        <Link href="/" className="flex items-center gap-3">
+        <Link href="/flow" className="flex items-center gap-3">
           <div className="grid h-9 w-9 place-items-center rounded-2xl bg-white/10 text-sm font-semibold">
             A
           </div>

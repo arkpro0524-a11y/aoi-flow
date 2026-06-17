@@ -343,6 +343,74 @@ function SmallBadge({ active, label }: { active: boolean; label: string }) {
   );
 }
 
+
+function BackgroundThumbButton({
+  url,
+  title,
+  subtitle,
+  active,
+  disabled,
+  onClick,
+}: {
+  url: string;
+  title: string;
+  subtitle?: string;
+  active: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  /*
+    背景選択用の小型サムネイルです。
+    既存の選択処理はそのまま使い、表示だけを固定サイズ化します。
+    これにより、背景画像が元サイズで広がってレイアウトを壊すことを防ぎます。
+  */
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className={[
+        "group relative w-[84px] overflow-hidden rounded-xl border p-1 text-left transition",
+        "hover:-translate-y-0.5 hover:bg-white/10",
+        active
+          ? "border-cyan-300/75 bg-cyan-300/10 shadow-[0_0_18px_rgba(34,211,238,0.22)]"
+          : "border-white/10 bg-black/20 hover:border-white/25",
+        disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer",
+      ].join(" ")}
+      title={subtitle ? `${title} / ${subtitle}` : title}
+      aria-label={`${title}を選択`}
+    >
+      <span className="block aspect-square w-full overflow-hidden rounded-lg border border-white/10 bg-black/30">
+        <img
+          src={url}
+          alt={title}
+          loading="lazy"
+          decoding="async"
+          className="h-full w-full object-cover"
+          draggable={false}
+        />
+      </span>
+
+      <span className="mt-1 block min-w-0 px-0.5">
+        <span className="block truncate text-[10px] font-black leading-4 text-white/82">
+          {title}
+        </span>
+        {subtitle ? (
+          <span className="block truncate text-[9px] leading-3 text-white/45">
+            {subtitle}
+          </span>
+        ) : null}
+      </span>
+
+      {active ? (
+        <span className="absolute right-1.5 top-1.5 rounded-full border border-cyan-100/60 bg-cyan-300/95 px-1.5 py-0.5 text-[9px] font-black text-slate-950">
+          選択中
+        </span>
+      ) : null}
+    </button>
+  );
+}
+
 function PresetButton({
   active,
   label,
@@ -1130,7 +1198,7 @@ await saveDraft({
                   alt="selected background preview"
                   className="w-full rounded-xl border border-white/10"
                   style={{
-                    height: 240,
+                    height: 180,
                     objectFit: "contain",
                     background: "rgba(0,0,0,0.25)",
                   }}
@@ -1402,8 +1470,8 @@ await saveDraft({
                       </div>
                     </div>
 
-                    <div className="flex flex-col gap-2">
-                      {templateBgUrls.slice(0, 8).map((u, index) => {
+                    <div className="flex max-h-[190px] flex-wrap gap-2 overflow-auto pr-1">
+                      {templateBgUrls.slice(0, 12).map((u, index) => {
                         const isCurrentTemplate =
                           String(templateBgUrl || d.templateBgUrl || "").trim() === u;
 
@@ -1412,51 +1480,17 @@ await saveDraft({
                         );
 
                         return (
-                          <div
+                          <BackgroundThumbButton
                             key={`${u}-${index}`}
-                            className="rounded-xl border px-3 py-3 text-left"
-                            style={{
-                              borderColor: isCurrentTemplate
-                                ? "rgba(255,255,255,0.34)"
-                                : "rgba(255,255,255,0.10)",
-                              background: isCurrentTemplate
-                                ? "rgba(255,255,255,0.06)"
-                                : "rgba(0,0,0,0.15)",
-                              color: "rgba(255,255,255,0.82)",
+                            url={u}
+                            title={`テンプレ背景 ${index + 1}`}
+                            subtitle={recommendedItem?.reason || "テンプレ背景ライブラリ"}
+                            active={isCurrentTemplate}
+                            disabled={!uid || busy}
+                            onClick={() => {
+                              void handleSelectTemplateBackground(u);
                             }}
-                          >
-                            <div className="block w-full text-left">
-                              <div className="flex items-center justify-between gap-2">
-                                <div className="font-semibold" style={{ fontSize: 12 }}>
-                                  テンプレ背景 {index + 1}
-                                </div>
-
-                                <div className="flex flex-wrap items-center gap-2">
-                                  {recommendedItem ? (
-                                    <SmallBadge active={false} label="おすすめ候補" />
-                                  ) : null}
-                                  <SmallBadge
-                                    active={isCurrentTemplate}
-                                    label={isCurrentTemplate ? "選択中" : "未選択"}
-                                  />
-                                </div>
-                              </div>
-
-                              <div className="mt-2 text-white/55" style={{ fontSize: 12 }}>
-                                {u.slice(0, 72)}
-                                {u.length > 72 ? "…" : ""}
-                              </div>
-
-                              {recommendedItem?.reason ? (
-                                <div
-                                  className="mt-2 rounded-lg border border-white/10 bg-black/20 px-2 py-2 text-white/60"
-                                  style={{ fontSize: 11, lineHeight: 1.5 }}
-                                >
-                                  理由：{recommendedItem.reason}
-                                </div>
-                              ) : null}
-                            </div>
-                          </div>
+                          />
                         );
                       })}
                     </div>
@@ -1579,27 +1613,87 @@ await saveDraft({
                       AI背景生成履歴（確認用）
                     </div>
 
-                    <div className="flex flex-col gap-2">
-                      {aiBgUrls.slice(0, 6).map((u: string) => (
-                        <div
-                          key={u}
-                          className="rounded-xl border px-3 py-2"
-                          style={{
-                            borderColor: "rgba(255,255,255,0.10)",
-                            background: "rgba(0,0,0,0.15)",
-                            color: "rgba(255,255,255,0.78)",
-                            fontSize: 12,
-                          }}
-                        >
-                          <div className="block w-full text-left">
-                            {u.slice(0, 60)}
-                            {u.length > 60 ? "…" : ""}
-                          </div>
-                        </div>
-                      ))}
+                    <div className="flex max-h-[190px] flex-wrap gap-2 overflow-auto pr-1">
+                      {aiBgUrls.slice(0, 12).map((u: string, index: number) => {
+                        const isCurrentAiBg = String(d.bgImageUrl || bgDisplayUrl || "").trim() === u;
+                        return (
+                          <BackgroundThumbButton
+                            key={u}
+                            url={u}
+                            title={`AI背景 ${index + 1}`}
+                            subtitle="生成済みAI背景"
+                            active={isCurrentAiBg}
+                            disabled={!uid || busy}
+                            onClick={() => {
+                              void handleSelectAiBackground(u);
+                            }}
+                          />
+                        );
+                      })}
                     </div>
                   </div>
                 ) : null}
+
+                <div className="mt-3 rounded-xl border border-white/10 bg-black/15 p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-white/70" style={{ fontSize: 12 }}>
+                      自分の画像ライブラリから背景を選択
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-white/45" style={{ fontSize: 11 }}>
+                        {libraryBackgrounds.length}件
+                      </span>
+                      <Btn
+                        variant="secondary"
+                        disabled={!uid || busy || libraryBusy}
+                        onClick={() => {
+                          void loadUserBackgroundLibrary();
+                        }}
+                      >
+                        {libraryBusy ? "読込中" : "再読込"}
+                      </Btn>
+                    </div>
+                  </div>
+
+                  {libraryBackgrounds.length > 0 ? (
+                    <div className="mt-3 grid max-h-[220px] grid-cols-3 gap-2 overflow-auto pr-1 sm:grid-cols-4 lg:grid-cols-5">
+                      {libraryBackgrounds.slice(0, 12).map((asset, index) => {
+                        const isTemplate = asset.source === "template";
+                        const isActive = isTemplate
+                          ? String(templateBgUrl || d.templateBgUrl || "").trim() === asset.url
+                          : String(d.bgImageUrl || bgDisplayUrl || "").trim() === asset.url;
+
+                        return (
+                          <BackgroundThumbButton
+                            key={`${asset.url}-${index}`}
+                            url={asset.url}
+                            title={asset.name || `ライブラリ背景 ${index + 1}`}
+                            subtitle={
+                              asset.source === "template"
+                                ? "テンプレ背景"
+                                : asset.source === "bg-stock"
+                                  ? "保存背景"
+                                  : "アップロード画像"
+                            }
+                            active={isActive}
+                            disabled={!uid || busy}
+                            onClick={() => {
+                              if (isTemplate) {
+                                void handleSelectTemplateBackground(asset.url);
+                              } else {
+                                void handleSelectAiBackground(asset.url);
+                              }
+                            }}
+                          />
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="mt-3 rounded-xl border border-white/10 bg-black/20 px-3 py-3 text-white/55" style={{ fontSize: 12, lineHeight: 1.6 }}>
+                      ライブラリ画像がまだ読み込まれていません。背景画像を保存済みの場合は「再読込」を押してください。
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </>

@@ -1,33 +1,28 @@
 // /app/flow/layout.tsx
+// /flow 配下の共通レイアウト。
+//
+// 重要：
+// - `/flow` トップは白いホーム画面をそのまま表示します。
+// - `/flow/market-research` は市場研究ラボ自身が共通サイドバーを持ちます。
+// - それ以外の作業画面は FlowDashboardShell で共通サイドバーを付けます。
+// - 既存の各ページ機能そのものはここでは触りません。
+
 "use client";
 
 import React from "react";
-import { signOut } from "firebase/auth";
-import { auth } from "@/firebase";
-import FlowShell from "@/components/FlowShell";
-import AuthGate, { useAuthUser } from "@/components/AuthGate";
+import { usePathname } from "next/navigation";
+import FlowDashboardShell from "@/components/FlowDashboardShell";
 
 function Inner({ children }: { children: React.ReactNode }) {
-  const user = useAuthUser();
+  const pathname = usePathname();
 
-  async function onLogout() {
-    // auth が何らかで壊れてても落とさない（保険）
-    if (!auth) return;
-    await signOut(auth);
+  if (pathname === "/flow" || pathname === "/flow/market-research") {
+    return <>{children}</>;
   }
 
-  return (
-    <FlowShell user={user} onLogout={onLogout}>
-      {children}
-    </FlowShell>
-  );
+  return <FlowDashboardShell>{children}</FlowDashboardShell>;
 }
 
 export default function FlowLayout({ children }: { children: React.ReactNode }) {
-  // ✅ ここで /flow 配下をガードする（未ログインなら /login へ）
-  return (
-    <AuthGate>
-      <Inner>{children}</Inner>
-    </AuthGate>
-  );
+  return <Inner>{children}</Inner>;
 }

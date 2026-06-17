@@ -48,7 +48,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
 
     if (user && isLogin) {
       setRedirecting(true);
-      router.replace("/");
+      router.replace("/flow");
       return;
     }
 

@@ -924,6 +924,35 @@ function SmallBadge({ active, label }: { active: boolean; label: string }) {
 }
 
 
+function shortAssetName(name: string, fallback: string) {
+  const raw = String(name || "").trim() || fallback;
+  const withoutQuery = raw.split("?")[0] || raw;
+  const fileName = withoutQuery.split("/").filter(Boolean).pop() || withoutQuery;
+
+  if (fileName.length <= 18) {
+    return fileName;
+  }
+
+  return `${fileName.slice(0, 8)}…${fileName.slice(-7)}`;
+}
+
+function ThumbImage({ src, alt }: { src: string; alt: string }) {
+  return (
+    <img
+      src={src}
+      alt={alt}
+      loading="lazy"
+      decoding="async"
+      className="h-full w-full rounded-xl object-cover"
+      draggable={false}
+      style={{
+        background: "rgba(255,255,255,0.04)",
+        display: "block",
+      }}
+    />
+  );
+}
+
 function LibraryBackgroundSection({
   title,
   emptyText,
@@ -942,50 +971,75 @@ function LibraryBackgroundSection({
   labelForSource: (source: LibraryBackgroundItem["source"]) => string;
 }) {
   const safeCurrentUrl = String(currentUrl || "").trim();
+  const safeAssets = (assets || [])
+    .map((asset) => ({
+      ...asset,
+      url: String(asset.url || "").trim(),
+    }))
+    .filter((asset) => asset.url)
+    .slice(0, 18);
 
   return (
     <div>
-      <div className="mb-2 text-white/60" style={{ fontSize: 11 }}>
-        {title}
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <div className="text-white/60" style={{ fontSize: 11 }}>
+          {title}
+        </div>
+        {safeAssets.length > 0 ? (
+          <div className="text-white/35" style={{ fontSize: 10 }}>
+            {safeAssets.length}件
+          </div>
+        ) : null}
       </div>
 
-      {(assets || []).length > 0 ? (
-        <div className="flex max-h-[220px] flex-col gap-2 overflow-auto pr-1">
-          {(assets || []).slice(0, 12).map((asset, i) => {
-            const u = String(asset.url || "").trim();
-            const isCurrent = safeCurrentUrl === u;
+      {safeAssets.length > 0 ? (
+        <div className="flex max-h-[200px] flex-wrap gap-2 overflow-auto pr-1">
+          {safeAssets.map((asset, i) => {
+            const isCurrent = safeCurrentUrl === asset.url;
+            const titleText = shortAssetName(asset.name, `${title} ${i + 1}`);
 
             return (
               <button
-                key={`${title}-${u}-${i}`}
+                key={`${title}-${asset.url}-${i}`}
                 type="button"
-                disabled={busy || !u}
+                disabled={busy}
                 onClick={async () => {
-                  await onSelect(u);
+                  await onSelect(asset.url);
                 }}
-                className="rounded-xl border px-3 py-3 text-left transition hover:bg-white/5"
-                style={{
-                  borderColor: isCurrent
-                    ? "rgba(120,255,220,0.55)"
-                    : "rgba(255,255,255,0.10)",
-                  background: isCurrent
-                    ? "rgba(120,255,220,0.08)"
-                    : "rgba(0,0,0,0.15)",
-                  color: "rgba(255,255,255,0.82)",
-                }}
+                className={[
+                  "group relative w-[84px] overflow-hidden rounded-xl border p-1 text-left transition",
+                  "hover:-translate-y-0.5 hover:bg-white/10",
+                  isCurrent
+                    ? "border-cyan-300/70 bg-cyan-300/10 shadow-[0_0_22px_rgba(80,220,255,0.22)]"
+                    : "border-white/10 bg-black/18",
+                  busy ? "cursor-wait opacity-60" : "cursor-pointer",
+                ].join(" ")}
+                title={asset.name || titleText}
+                aria-label={`${titleText}を選択`}
               >
-                <div className="flex items-center justify-between gap-2">
+                <div className="h-[64px] w-full overflow-hidden rounded-lg border border-white/10 bg-black/25">
+                  <ThumbImage src={asset.url} alt={asset.name || titleText} />
+                </div>
+
+                <div className="mt-1 flex items-center justify-between gap-1 px-1">
                   <div className="min-w-0">
-                    <div className="truncate font-semibold" style={{ fontSize: 12 }}>
-                      {asset.name || `${title} ${i + 1}`}
+                    <div
+                      className="truncate font-semibold text-white/78"
+                      style={{ fontSize: 10, lineHeight: 1.25 }}
+                    >
+                      {titleText}
                     </div>
-                    <div className="mt-1 text-white/45" style={{ fontSize: 10 }}>
+                    <div className="truncate text-white/42" style={{ fontSize: 9 }}>
                       {labelForSource(asset.source)}
                     </div>
                   </div>
-
-                  <SmallBadge active={isCurrent} label={isCurrent ? "選択中" : "未選択"} />
                 </div>
+
+                {isCurrent ? (
+                  <div className="absolute right-2 top-2 rounded-full border border-cyan-200/50 bg-cyan-300/90 px-2 py-0.5 text-[9px] font-bold text-slate-950">
+                    選択中
+                  </div>
+                ) : null}
               </button>
             );
           })}
@@ -2211,14 +2265,19 @@ export default function ProductPlacementEditor({
                 </div>
 
                 {(templateBgUrls || []).length > 0 ? (
-                  <div className="flex max-h-[180px] flex-col gap-2 overflow-auto pr-1">
-                    {(templateBgUrls || []).slice(0, 8).map((u, i) => {
+                  <div className="flex max-h-[190px] flex-wrap gap-2 overflow-auto pr-1">
+                    {(templateBgUrls || [])
+                      .map((url) => String(url || "").trim())
+                      .filter(Boolean)
+                      .slice(0, 18)
+                      .map((u, i) => {
                       const isCurrent =
                         String(templateBgUrl || "").trim() ===
                         String(u || "").trim();
                       const recommendedItem = templateRecommended.find(
                         (item) => item.url === u,
                       );
+                      const titleText = `テンプレ背景 ${i + 1}`;
 
                       return (
                         <button
@@ -2233,45 +2292,31 @@ export default function ProductPlacementEditor({
                             setActivePreviewTab("edit");
                             setCompositePreviewMode?.("edit");
                           }}
-                          className="rounded-xl border px-3 py-3 text-left transition hover:bg-white/5"
-                          style={{
-                            borderColor: isCurrent
-                              ? "rgba(255,255,255,0.34)"
-                              : "rgba(255,255,255,0.10)",
-                            background: isCurrent
-                              ? "rgba(255,255,255,0.06)"
-                              : "rgba(0,0,0,0.15)",
-                            color: "rgba(255,255,255,0.82)",
-                          }}
+                          className={[
+                            "group relative w-[84px] overflow-hidden rounded-xl border p-1 text-left transition",
+                            "hover:-translate-y-0.5 hover:bg-white/10",
+                            isCurrent
+                              ? "border-cyan-300/70 bg-cyan-300/10 shadow-[0_0_18px_rgba(80,220,255,0.22)]"
+                              : "border-white/10 bg-black/18",
+                            busy ? "cursor-wait opacity-60" : "cursor-pointer",
+                          ].join(" ")}
+                          title={recommendedItem?.reason ? `${titleText} / ${recommendedItem.reason}` : titleText}
+                          aria-label={`${titleText}を選択`}
                         >
-                          <div className="flex items-center justify-between gap-2">
-                            <div
-                              className="font-semibold"
-                              style={{ fontSize: 12 }}
-                            >
-                              テンプレ背景 {i + 1}
-                            </div>
-
-                            <div className="flex flex-wrap items-center gap-2">
-                              {recommendedItem ? (
-                                <SmallBadge
-                                  active={false}
-                                  label="おすすめ候補"
-                                />
-                              ) : null}
-                              <SmallBadge
-                                active={isCurrent}
-                                label={isCurrent ? "選択中" : "未選択"}
-                              />
-                            </div>
+                          <div className="h-[64px] w-full overflow-hidden rounded-lg border border-white/10 bg-black/25">
+                            <ThumbImage src={u} alt={titleText} />
                           </div>
-
-                          {recommendedItem?.reason ? (
-                            <div
-                              className="mt-2 rounded-lg border border-white/10 bg-black/20 px-2 py-2 text-white/60"
-                              style={{ fontSize: 11, lineHeight: 1.5 }}
-                            >
-                              理由：{recommendedItem.reason}
+                          <div className="mt-1 truncate px-0.5 text-[10px] font-semibold leading-4 text-white/78">
+                            {titleText}
+                          </div>
+                          {recommendedItem ? (
+                            <div className="truncate px-0.5 text-[9px] leading-3 text-white/42">
+                              おすすめ
+                            </div>
+                          ) : null}
+                          {isCurrent ? (
+                            <div className="absolute right-1 top-1 rounded-full border border-cyan-200/50 bg-cyan-300/90 px-1.5 py-0.5 text-[9px] font-bold text-slate-950">
+                              選択中
                             </div>
                           ) : null}
                         </button>
@@ -2294,51 +2339,53 @@ export default function ProductPlacementEditor({
                 </div>
 
                 {(aiBgUrls || []).length > 0 ? (
-                  <div className="flex max-h-[180px] flex-col gap-2 overflow-auto pr-1">
-                    {(aiBgUrls || []).slice(0, 8).map((u, i) => {
-                      const isCurrent =
-                        currentAiBgUrl === String(u || "").trim();
+                  <div className="flex max-h-[190px] flex-wrap gap-2 overflow-auto pr-1">
+                    {(aiBgUrls || [])
+                      .map((url) => String(url || "").trim())
+                      .filter(Boolean)
+                      .slice(0, 15)
+                      .map((u, i) => {
+                        const isCurrent = currentAiBgUrl === u;
+                        const titleText = `AI背景 ${i + 1}`;
 
-                      return (
-                        <button
-                          key={`${u}-${i}`}
-                          type="button"
-                          disabled={busy}
-                          onClick={async () => {
-                            await onSelectAiBg?.(u);
-                            await onChangePhotoMode(AI_BG_MODE);
-                            setIsBackgroundLocked(false);
-                            setEditingStep("background");
-                            setActivePreviewTab("edit");
-                            setCompositePreviewMode?.("edit");
-                          }}
-                          className="rounded-xl border px-3 py-3 text-left transition hover:bg-white/5"
-                          style={{
-                            borderColor: isCurrent
-                              ? "rgba(255,255,255,0.34)"
-                              : "rgba(255,255,255,0.10)",
-                            background: isCurrent
-                              ? "rgba(255,255,255,0.06)"
-                              : "rgba(0,0,0,0.15)",
-                            color: "rgba(255,255,255,0.82)",
-                          }}
-                        >
-                          <div className="flex items-center justify-between gap-2">
-                            <div
-                              className="font-semibold"
-                              style={{ fontSize: 12 }}
-                            >
-                              AI背景 {i + 1}
+                        return (
+                          <button
+                            key={`${u}-${i}`}
+                            type="button"
+                            disabled={busy}
+                            onClick={async () => {
+                              await onSelectAiBg?.(u);
+                              await onChangePhotoMode(AI_BG_MODE);
+                              setIsBackgroundLocked(false);
+                              setEditingStep("background");
+                              setActivePreviewTab("edit");
+                              setCompositePreviewMode?.("edit");
+                            }}
+                            className={[
+                              "group relative w-[84px] overflow-hidden rounded-xl border p-1 text-left transition",
+                              "hover:-translate-y-0.5 hover:bg-white/10",
+                              isCurrent
+                                ? "border-cyan-300/70 bg-cyan-300/10 shadow-[0_0_22px_rgba(80,220,255,0.22)]"
+                                : "border-white/10 bg-black/18",
+                              busy ? "cursor-wait opacity-60" : "cursor-pointer",
+                            ].join(" ")}
+                            title={titleText}
+                            aria-label={`${titleText}を選択`}
+                          >
+                            <div className="h-[64px] w-full overflow-hidden rounded-lg border border-white/10 bg-black/25">
+                              <ThumbImage src={u} alt={titleText} />
                             </div>
-
-                            <SmallBadge
-                              active={isCurrent}
-                              label={isCurrent ? "選択中" : "未選択"}
-                            />
-                          </div>
-                        </button>
-                      );
-                    })}
+                            <div className="mt-1 truncate px-1 text-white/78" style={{ fontSize: 10 }}>
+                              {titleText}
+                            </div>
+                            {isCurrent ? (
+                              <div className="absolute right-2 top-2 rounded-full border border-cyan-200/50 bg-cyan-300/90 px-2 py-0.5 text-[9px] font-bold text-slate-950">
+                                選択中
+                              </div>
+                            ) : null}
+                          </button>
+                        );
+                      })}
                   </div>
                 ) : (
                   <div

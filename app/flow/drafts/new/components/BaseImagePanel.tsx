@@ -701,7 +701,7 @@ export default function BaseImagePanel(props: Props) {
                 </Btn>
               </div>
 
-              <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+              <div className="mt-2 grid grid-cols-3 gap-2 sm:grid-cols-6">
                 {baseCandidates.map((u) => {
                   const isActive = String(d.baseImageUrl || "").trim() === u;
 
@@ -730,8 +730,9 @@ export default function BaseImagePanel(props: Props) {
                         <img
                           src={u}
                           alt="base-candidate"
-                          className="w-full rounded-lg"
-                          style={{ aspectRatio: "1 / 1", objectFit: "cover" }}
+                          className="h-16 w-full rounded-lg object-cover sm:h-20"
+                          loading="lazy"
+                          decoding="async"
                         />
                       </button>
 
