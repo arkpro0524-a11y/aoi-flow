@@ -28,7 +28,7 @@ export default function FlowDashboardShell({ children }: { children: React.React
 
       <UnifiedFlowSidebar onLogout={logout} />
 
-      <main style={{ position: "relative", zIndex: 1, marginLeft: 244, padding: "20px 28px 36px" }}>
+      <main className="flowMainContent" style={{ position: "relative", zIndex: 1, marginLeft: 244, padding: "20px 28px 36px" }}>
         {children}
       </main>
     </div>

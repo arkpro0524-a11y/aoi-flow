@@ -564,46 +564,138 @@ export default function NewDraftPage() {
         }
 
         @media (max-width: 820px) {
-          .previewStage{
-            position: sticky;
-            top: 56px;
-            z-index: 40;
-            background: rgba(2,13,25,0.95);
-            padding: 8px;
+          .studioRoot {
+            display: block !important;
+            width: 100% !important;
+            max-width: 100vw !important;
+            overflow-x: hidden !important;
           }
-          .topPreviewCanvas{
-            height: 42vh;
-            min-height: 220px;
-          }
-          .mainOperationPanel{
-            max-height: 58vh;
-            overflow-y: auto;
-            -webkit-overflow-scrolling: touch;
-          }
+
           .studioHero {
-            padding: 14px;
-            border-radius: 22px;
+            padding: 12px;
+            border-radius: 18px;
+            margin-bottom: 10px;
+          }
+
+          .studioHeader {
+            display: block !important;
+          }
+
+          .studioTitle {
+            font-size: 24px;
+            line-height: 1.2;
+          }
+
+          .studioLead {
+            font-size: 12px;
+            line-height: 1.65;
+          }
+
+          .statusChips {
+            justify-content: flex-start;
+            margin-top: 10px;
           }
 
           .stepRail {
-            display: flex;
+            display: flex !important;
             overflow-x: auto;
-            padding-bottom: 6px;
+            gap: 8px;
+            padding-bottom: 8px;
             scroll-snap-type: x mandatory;
+            -webkit-overflow-scrolling: touch;
           }
 
           .stepButton {
-            min-width: 190px;
+            min-width: 138px;
+            min-height: 58px;
+            flex: 0 0 auto;
             scroll-snap-align: start;
+            padding: 10px;
+          }
+
+          .stepLabel {
+            font-size: 12px;
+            white-space: nowrap;
+          }
+
+          .stepNote {
+            font-size: 10px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+          }
+
+          .studioGrid {
+            display: flex !important;
+            flex-direction: column !important;
+            gap: 10px;
+            width: 100% !important;
+          }
+
+          .studioCard {
+            border-radius: 18px;
+            padding: 10px;
+          }
+
+          .studioGrid > aside.studioCard {
+            position: sticky;
+            top: 0;
+            z-index: 60;
+            background: rgba(2, 13, 25, 0.96);
+            backdrop-filter: blur(14px);
+            -webkit-backdrop-filter: blur(14px);
+            box-shadow: 0 14px 34px rgba(0, 0, 0, 0.34);
           }
 
           .previewStage {
-            min-height: 220px;
+            min-height: 168px;
+            padding: 8px;
           }
 
           .topPreviewCanvas {
-            height: min(36vh, 300px);
-            min-height: 210px;
+            height: 34vh;
+            min-height: 180px;
+            max-height: 260px;
+            width: 100%;
+          }
+
+          .statusGrid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 8px;
+          }
+
+          .detailBox {
+            display: none;
+          }
+
+          .mainOperationPanel {
+            min-width: 0 !important;
+            width: 100% !important;
+            overflow-x: hidden !important;
+          }
+
+          .mainOperationPanel :global(*) {
+            max-width: 100%;
+            box-sizing: border-box;
+          }
+
+          .mainOperationPanel :global(img),
+          .mainOperationPanel :global(video),
+          .mainOperationPanel :global(canvas) {
+            max-width: 100% !important;
+            height: auto;
+          }
+
+          .mainOperationPanel :global(table),
+          .mainOperationPanel :global(pre),
+          .mainOperationPanel :global(code) {
+            max-width: 100% !important;
+            white-space: pre-wrap !important;
+            overflow-wrap: anywhere !important;
+          }
+
+          .mainOperationPanel :global(.rightImageGrid) {
+            grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
           }
         }
       `}</style>

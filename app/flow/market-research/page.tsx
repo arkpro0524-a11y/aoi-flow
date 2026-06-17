@@ -501,7 +501,7 @@ export default function MarketResearchPage() {
 
       <UnifiedFlowSidebar onLogout={() => void logout()} marketPanel={marketPanel} onSelectMarketPanel={setMarketPanel} />
 
-      <main style={{ position: "relative", zIndex: 1, marginLeft: 244, padding: "20px 28px 36px" }}>
+      <main className="flowMainContent" style={{ position: "relative", zIndex: 1, marginLeft: 244, padding: "20px 28px 36px" }}>
         <TopBar />
 
         <section style={{ display: "grid", gridTemplateColumns: "repeat(6, minmax(0, 1fr))", gap: 12, marginTop: 10 }}>

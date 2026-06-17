@@ -461,6 +461,28 @@ export default function DraftsPage() {
           gap: 12px;
           align-items: center;
         }
+
+        @media (max-width: 820px) {
+          .listWrap,
+          .compactWrap,
+          .pcWrap {
+            grid-template-columns: 1fr !important;
+            height: auto !important;
+            min-height: 0 !important;
+          }
+          .cardPC {
+            display: none !important;
+          }
+          .cardMobile {
+            display: block !important;
+          }
+          .mCaption,
+          .pcCaption {
+            white-space: normal !important;
+            overflow-wrap: anywhere !important;
+          }
+        }
+
       `}</style>
 
       <div className="h-full flex flex-col">

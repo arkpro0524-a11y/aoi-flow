@@ -145,7 +145,92 @@ export default function UnifiedFlowSidebar(props: Props) {
   const marketPanel = props.marketPanel ?? "main";
 
   return (
+    <>
+
+      <style jsx global>{`
+        @media (max-width: 820px) {
+          .unifiedFlowSidebar {
+            position: sticky !important;
+            top: 0 !important;
+            left: 0 !important;
+            right: 0 !important;
+            bottom: auto !important;
+            width: 100% !important;
+            max-width: 100vw !important;
+            height: auto !important;
+            max-height: 40vh !important;
+            overflow-y: auto !important;
+            padding: 10px 12px !important;
+            border-right: 0 !important;
+            border-bottom: 1px solid rgba(255,255,255,0.12) !important;
+            z-index: 100 !important;
+          }
+
+          .unifiedFlowSidebar nav {
+            display: flex !important;
+            gap: 8px !important;
+            overflow-x: auto !important;
+            overflow-y: hidden !important;
+            padding-bottom: 6px !important;
+            -webkit-overflow-scrolling: touch !important;
+          }
+
+          .unifiedFlowSidebar nav > a,
+          .unifiedFlowSidebar nav > button {
+            flex: 0 0 auto !important;
+            width: auto !important;
+            min-width: max-content !important;
+            white-space: nowrap !important;
+          }
+
+          .unifiedFlowSidebar nav > div {
+            flex: 0 0 auto !important;
+            min-width: 150px !important;
+            padding-left: 0 !important;
+          }
+
+          .unifiedFlowSidebar nav > div > a,
+          .unifiedFlowSidebar nav > div > button {
+            white-space: nowrap !important;
+          }
+
+          .unifiedFlowSidebar nav + div,
+          .unifiedFlowSidebar [data-mobile-hide="true"] {
+            display: none !important;
+          }
+
+          .flowMainContent {
+            margin-left: 0 !important;
+            width: 100% !important;
+            max-width: 100vw !important;
+            padding: 12px !important;
+            overflow-x: hidden !important;
+          }
+
+          .flowMainContent header {
+            display: block !important;
+            min-height: auto !important;
+          }
+
+          .flowMainContent section {
+            grid-template-columns: 1fr !important;
+          }
+
+          .flowMainContent * {
+            max-width: 100%;
+            word-break: normal;
+            overflow-wrap: anywhere;
+          }
+
+          .flowMainContent button,
+          .flowMainContent a {
+            white-space: normal;
+          }
+        }
+      `}</style>
+
     <aside
+      className="unifiedFlowSidebar"
       style={{
         position: "fixed",
         left: 0,
@@ -236,5 +321,6 @@ export default function UnifiedFlowSidebar(props: Props) {
         </button>
       </div>
     </aside>
+    </>
   );
 }
