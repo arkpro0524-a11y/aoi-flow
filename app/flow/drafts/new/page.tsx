@@ -565,118 +565,138 @@ export default function NewDraftPage() {
 
         @media (max-width: 820px) {
           .studioRoot {
-            display: block !important;
+            display: flex !important;
+            flex-direction: column !important;
             width: 100% !important;
             max-width: 100vw !important;
-            overflow-x: hidden !important;
+            height: calc(100dvh - 62px) !important;
+            max-height: calc(100dvh - 62px) !important;
+            overflow: hidden !important;
+            gap: 8px !important;
           }
 
           .studioHero {
-            padding: 12px;
-            border-radius: 18px;
-            margin-bottom: 10px;
+            flex: 0 0 auto !important;
+            padding: 8px !important;
+            border-radius: 14px !important;
+            margin: 0 !important;
           }
 
           .studioHeader {
-            display: block !important;
-          }
-
-          .studioTitle {
-            font-size: 24px;
-            line-height: 1.2;
-          }
-
-          .studioLead {
-            font-size: 12px;
-            line-height: 1.65;
-          }
-
-          .statusChips {
-            justify-content: flex-start;
-            margin-top: 10px;
+            display: none !important;
           }
 
           .stepRail {
+            margin-top: 0 !important;
             display: flex !important;
-            overflow-x: auto;
-            gap: 8px;
-            padding-bottom: 8px;
+            overflow-x: auto !important;
+            overflow-y: hidden !important;
+            gap: 6px !important;
+            padding: 0 0 5px !important;
             scroll-snap-type: x mandatory;
             -webkit-overflow-scrolling: touch;
           }
 
           .stepButton {
-            min-width: 138px;
-            min-height: 58px;
-            flex: 0 0 auto;
+            min-width: 122px !important;
+            min-height: 44px !important;
+            flex: 0 0 auto !important;
             scroll-snap-align: start;
-            padding: 10px;
+            padding: 7px 9px !important;
+            border-radius: 12px !important;
+          }
+
+          .stepNumber {
+            width: 18px !important;
+            height: 18px !important;
+            font-size: 10px !important;
+            margin-right: 5px !important;
           }
 
           .stepLabel {
-            font-size: 12px;
-            white-space: nowrap;
+            font-size: 11px !important;
+            white-space: nowrap !important;
           }
 
           .stepNote {
-            font-size: 10px;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
+            display: none !important;
           }
 
           .studioGrid {
+            flex: 1 1 auto !important;
+            min-height: 0 !important;
             display: flex !important;
             flex-direction: column !important;
-            gap: 10px;
+            gap: 8px !important;
             width: 100% !important;
+            overflow: hidden !important;
           }
 
           .studioCard {
-            border-radius: 18px;
-            padding: 10px;
+            border-radius: 14px !important;
+            padding: 8px !important;
           }
 
           .studioGrid > aside.studioCard {
-            position: sticky;
-            top: 0;
-            z-index: 60;
-            background: rgba(2, 13, 25, 0.96);
+            flex: 0 0 auto !important;
+            position: sticky !important;
+            top: 0 !important;
+            z-index: 60 !important;
+            background: rgba(2, 13, 25, 0.97) !important;
             backdrop-filter: blur(14px);
             -webkit-backdrop-filter: blur(14px);
-            box-shadow: 0 14px 34px rgba(0, 0, 0, 0.34);
+            box-shadow: 0 12px 30px rgba(0, 0, 0, 0.36);
+          }
+
+          .studioCardTitle {
+            margin-bottom: 6px !important;
+          }
+
+          .studioCardTitleText {
+            font-size: 12px !important;
+          }
+
+          .studioCardSubText {
+            display: none !important;
           }
 
           .previewStage {
-            min-height: 168px;
-            padding: 8px;
+            min-height: 0 !important;
+            height: 27vh !important;
+            max-height: 240px !important;
+            padding: 6px !important;
+            border-radius: 14px !important;
           }
 
           .topPreviewCanvas {
-            height: 34vh;
-            min-height: 180px;
-            max-height: 260px;
-            width: 100%;
+            width: 100% !important;
+            height: 100% !important;
+            min-height: 0 !important;
+            max-height: none !important;
+            border-radius: 12px !important;
           }
 
           .statusGrid {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 8px;
+            display: none !important;
           }
 
           .detailBox {
-            display: none;
+            display: none !important;
           }
 
           .mainOperationPanel {
+            flex: 1 1 auto !important;
+            min-height: 0 !important;
             min-width: 0 !important;
             width: 100% !important;
+            overflow-y: auto !important;
             overflow-x: hidden !important;
+            -webkit-overflow-scrolling: touch !important;
           }
 
           .mainOperationPanel :global(*) {
-            max-width: 100%;
-            box-sizing: border-box;
+            max-width: 100% !important;
+            box-sizing: border-box !important;
           }
 
           .mainOperationPanel :global(img),

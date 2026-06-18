@@ -158,20 +158,46 @@ export default function UnifiedFlowSidebar(props: Props) {
             width: 100% !important;
             max-width: 100vw !important;
             height: auto !important;
-            max-height: 40vh !important;
+            max-height: 18vh !important;
             overflow-y: auto !important;
-            padding: 10px 12px !important;
+            overflow-x: hidden !important;
+            padding: 6px 10px !important;
             border-right: 0 !important;
             border-bottom: 1px solid rgba(255,255,255,0.12) !important;
             z-index: 100 !important;
           }
 
+          .unifiedFlowSidebar > div:first-of-type {
+            padding-bottom: 4px !important;
+            gap: 8px !important;
+          }
+
+          .unifiedFlowSidebar > div:first-of-type img {
+            width: 32px !important;
+            height: 32px !important;
+            border-radius: 9px !important;
+          }
+
+          .unifiedFlowSidebar > div:first-of-type div div:first-child {
+            font-size: 15px !important;
+            line-height: 1 !important;
+          }
+
+          .unifiedFlowSidebar > div:first-of-type div div:nth-child(2) {
+            display: none !important;
+          }
+
+          .unifiedFlowSidebar > div:nth-of-type(2) {
+            display: none !important;
+          }
+
           .unifiedFlowSidebar nav {
             display: flex !important;
-            gap: 8px !important;
+            align-items: center !important;
+            gap: 6px !important;
             overflow-x: auto !important;
             overflow-y: hidden !important;
-            padding-bottom: 6px !important;
+            padding-bottom: 3px !important;
             -webkit-overflow-scrolling: touch !important;
           }
 
@@ -180,18 +206,33 @@ export default function UnifiedFlowSidebar(props: Props) {
             flex: 0 0 auto !important;
             width: auto !important;
             min-width: max-content !important;
+            min-height: 32px !important;
+            padding: 0 10px !important;
+            border-radius: 10px !important;
+            font-size: 12px !important;
             white-space: nowrap !important;
           }
 
           .unifiedFlowSidebar nav > div {
             flex: 0 0 auto !important;
-            min-width: 150px !important;
+            min-width: 126px !important;
             padding-left: 0 !important;
+            display: grid !important;
+            gap: 5px !important;
           }
 
           .unifiedFlowSidebar nav > div > a,
           .unifiedFlowSidebar nav > div > button {
+            min-height: 28px !important;
+            padding: 0 9px !important;
+            font-size: 11px !important;
             white-space: nowrap !important;
+          }
+
+          .unifiedFlowSidebar nav span:first-child {
+            width: 18px !important;
+            height: 18px !important;
+            font-size: 13px !important;
           }
 
           .unifiedFlowSidebar nav + div,
@@ -203,8 +244,9 @@ export default function UnifiedFlowSidebar(props: Props) {
             margin-left: 0 !important;
             width: 100% !important;
             max-width: 100vw !important;
-            padding: 12px !important;
-            overflow-x: hidden !important;
+            height: calc(100dvh - 62px) !important;
+            padding: 8px !important;
+            overflow: hidden !important;
           }
 
           .flowMainContent header {
@@ -229,7 +271,7 @@ export default function UnifiedFlowSidebar(props: Props) {
         }
       `}</style>
 
-    <aside
+<aside
       className="unifiedFlowSidebar"
       style={{
         position: "fixed",
