@@ -183,6 +183,10 @@ function buildBackgroundCandidates(
   pushUnique(out, seen, "AI背景 現在", extra.bgImageUrl || d.bgImageUrl, "ai-background");
   pushArrayUrls(out, seen, "AI背景", d.bgImageUrls, "ai-background-history");
   pushArrayUrls(out, seen, "生成背景素材", extra.aiBgUrls, "ai-background-assets");
+  pushUnique(out, seen, "商品/背景合成画像", d.compositeImageUrl, "composite");
+  pushArrayUrls(out, seen, "商品/背景合成履歴", (d as any).compositeImageUrls, "composite-history");
+  pushUnique(out, seen, "文字入り完成画像", extra.compositeTextImageUrl || (d as any).compositeTextImageUrl, "text-composite");
+  pushArrayUrls(out, seen, "文字入り完成画像履歴", (d as any).compositeTextImageUrls, "text-composite-history");
 
   return out;
 }
@@ -218,12 +222,8 @@ function buildImageCandidates(
   const out: ImageCandidate[] = [];
   const seen = new Set<string>();
 
-  // 背景固定合成では「商品だけ」が動く必要があります。
-  // そのため、最優先は切り抜き済み商品画像です。
-  pushUnique(out, seen, "切り抜き済み商品画像", extra.foregroundImageUrl || (d as any).foregroundImageUrl, "foreground");
-
-  // 切り抜きが未作成の下書きでも従来のアップロード写真は残します。
-  // ただし背景込み写真を選ぶと、その写真内の背景も商品と一緒に動きます。
+  // 動画素材は「下書きにアップロードされた商品写真」を最優先で表示する。
+  // 生成画像や背景より先に出すことで、ユーザーが選びたい実写真へすぐ届くようにする。
   pushUnique(out, seen, "アップロード写真 メイン", d.images?.primary?.url, "uploaded-primary");
   if (Array.isArray(d.images?.materials)) {
     d.images!.materials.forEach((img, index) => {
@@ -231,7 +231,12 @@ function buildImageCandidates(
     });
   }
 
-  // 互換用：古い下書きで画像配列が無い場合も選べるようにする。
+  // ここは「アップロード画像から選択」なので、生成画像・背景画像は原則として出さない。
+  // ただし過去データで d.images が空の下書きだけ、最低限の互換候補を後ろに出す。
+  const hasUploadedImages = out.length > 0;
+  if (hasUploadedImages) return out;
+
+  // 互換用：古い下書きでアップロード写真配列が無い場合だけ表示する。
   pushUnique(out, seen, "元画像（旧下書き互換）", d.baseImageUrl, "legacy-upload");
   pushUnique(out, seen, "互換画像（旧下書き互換）", (d as any).imageUrl, "legacy-upload");
 
@@ -256,6 +261,8 @@ function buildGeneratedImageCandidatesForVideo(
   // 現在画面で生成・保存されている主要画像。
   pushUnique(out, seen, "合成画像", d.compositeImageUrl, "composite");
   pushArrayUrls(out, seen, "合成画像履歴", (d as any).compositeImageUrls, "composite-history");
+  pushUnique(out, seen, "文字入り完成画像", extra.compositeTextImageUrl || (d as any).compositeTextImageUrl, "text-composite");
+  pushArrayUrls(out, seen, "文字入り完成画像履歴", (d as any).compositeTextImageUrls, "text-composite-history");
   pushUnique(out, seen, "切り抜き済み商品画像", extra.foregroundImageUrl || (d as any).foregroundImageUrl, "foreground");
   pushUnique(out, seen, "AI静止画", extra.aiImageUrl || d.aiImageUrl, "ai-image");
   pushUnique(out, seen, "イメージ画像", d.imageIdeaUrl, "idea");
@@ -429,24 +436,6 @@ export default function ProductVideoPanel({
       : null;
     return selectedCandidate || pickBackground(d, templateBgUrl, bgImageUrl);
   }, [backgroundCandidates, selectedVideoBackgroundUrl, d, templateBgUrl, bgImageUrl]);
-
-  // 背景固定合成に渡す最終背景URL。
-  // UIの background.url だけに依存すると、再読込・state同期のタイミングで空になることがあるため、
-  // 保存済みキー・テンプレ背景・AI背景・背景候補先頭まで強制的にフォールバックします。
-  const effectiveVideoBackgroundUrl = normalizeUrl(background.url) ||
-    normalizeUrl(selectedVideoBackgroundUrl) ||
-    normalizeUrl((d as any).nonAiVideoBackgroundImageUrl) ||
-    normalizeUrl((d as any).videoBackgroundImageUrl) ||
-    normalizeUrl(templateBgUrl) ||
-    normalizeUrl((d as any).templateBgUrl) ||
-    normalizeUrl(bgImageUrl) ||
-    normalizeUrl((d as any).bgImageUrl) ||
-    normalizeUrl(backgroundCandidates[0]?.url);
-
-  const effectiveVideoBackgroundLabel = effectiveVideoBackgroundUrl
-    ? (background.url === effectiveVideoBackgroundUrl ? background.label : "選択背景")
-    : background.label;
-
   const sourceVideo = useMemo(() => pickSourceProductVideo(d), [d]);
   const canBurn = !!normalizeUrl(d.nonAiVideoUrl) && !busy;
   const selectedVideoImageUrls = normalizeSelectedUrls((d as any).nonAiVideoSourceImageUrls);
@@ -518,40 +507,8 @@ export default function ProductVideoPanel({
   const chromaPreviewVideoUrl = normalizeUrl((d as any).chromaPreviewVideoUrl);
 
   async function handleCompositeSelectedBackground() {
-    if (!draftId) {
-      showMsg("下書きIDがありません。先に保存してください");
-      return;
-    }
-    const sourceVideoUrl = sourceVideo.url || normalizeUrl((d as any).sourceProductVideoUrl) || normalizeUrl(d.nonAiVideoUrl);
-    if (!sourceVideoUrl) {
-      showMsg("商品動画がありません。先に商品画像から動画を生成してください");
-      return;
-    }
-    if (!background.url) {
-      showMsg("背景画像が未選択です。動画タブ内の「背景選択」から背景を選んでください");
-      return;
-    }
-    if (typeof extractProductVideoClip !== "function") {
-      showMsg("動画背景合成が未接続です");
-      return;
-    }
-
-    setVideoCompositeBusy(true);
-    showMsg("動画背景合成を開始しました");
-    try {
-      await extractProductVideoClip({
-        draftId,
-        sourceVideoUrl,
-        backgroundImageUrl: background.url,
-        size: normalizeVideoSize(d.videoSize ?? "720x1280"),
-      });
-      showMsg("背景固定合成を実行しました。代表動画が更新されているか確認してください");
-    } catch (e: any) {
-      console.warn("[AOI FLOW handled]", e);
-      showMsg(`動画背景合成に失敗：${e?.message || "不明"}`);
-    } finally {
-      setVideoCompositeBusy(false);
-    }
+    // cutout方式は廃止。背景はNonAiVideoActions内のCanvas生成時に固定描画します。
+    showMsg("背景は動画生成時に自動合成されます。背景を選んだ状態で「商品画像から広告動画を生成」を押してください。");
   }
 
   const defaultPreset = nonAiPreset ?? ({
@@ -579,9 +536,9 @@ export default function ProductVideoPanel({
           <div className="rounded-2xl border border-amber-400/20 bg-amber-500/5 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
-                <div className="text-amber-100 font-black" style={{ fontSize: 13 }}>背景選択（動画背景合成用）</div>
+                <div className="text-amber-100 font-black" style={{ fontSize: 13 }}>背景選択（動画生成時に固定合成）</div>
                 <div className="mt-1 text-white/55" style={{ fontSize: 11 }}>
-                  AI背景・テンプレ背景から、商品動画の後ろに固定する背景を選びます。完成静止画は背景候補に入れません。
+                  AI背景・テンプレ背景・合成背景から、商品動画生成時に固定する背景を選びます。
                 </div>
               </div>
               <div className={[
@@ -610,7 +567,7 @@ export default function ProductVideoPanel({
                   現在：{background.url ? background.label : "未選択"}
                 </div>
                 <div className="mt-0.5 truncate text-[10px] text-white/50">
-                  背景を選ぶと下の「動画背景合成」が有効になります。送信URL: {effectiveVideoBackgroundUrl ? "あり" : "なし"}
+                  背景を選ぶと下の「動画背景合成」が有効になります。
                 </div>
               </div>
             </div>
@@ -650,43 +607,23 @@ export default function ProductVideoPanel({
               </div>
             </div>
 
-            <button
-              type="button"
-              disabled={busy || nonAiBusy || videoCompositeBusy || (!sourceVideo.url && !normalizeUrl((d as any).sourceProductVideoUrl) && !normalizeUrl(d.nonAiVideoUrl)) || !background.url}
-              onClick={handleCompositeSelectedBackground}
-              className="mt-3 w-full rounded-2xl border px-4 py-3 text-left transition disabled:cursor-not-allowed disabled:opacity-45"
-              style={{
-                borderColor: background.url ? "rgba(45,212,191,0.72)" : "rgba(255,255,255,0.18)",
-                background: background.url
-                  ? "linear-gradient(180deg, rgba(45,212,191,0.22), rgba(34,211,238,0.10))"
-                  : "linear-gradient(180deg, rgba(255,255,255,0.09), rgba(255,255,255,0.04))",
-                boxShadow: background.url
-                  ? "0 0 22px rgba(45,212,191,0.34), inset 0 1px 0 rgba(255,255,255,0.22)"
-                  : "inset 0 1px 0 rgba(255,255,255,0.12)",
-              }}
-            >
-              <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="text-[13px] font-black text-white">
-                    {videoCompositeBusy ? "動画背景合成中..." : "🎬 背景固定で合成"}
-                  </div>
-                  <div className="mt-1 truncate text-[10px] font-bold text-cyan-50/65">
-                    商品だけ動く動画 ＋ 固定背景
-                  </div>
-                </div>
-                <div className="rounded-full border border-cyan-100/40 bg-cyan-100/15 px-3 py-1 text-[10px] font-black text-cyan-50">
-                  縦動画
-                </div>
-              </div>
-            </button>
+            <div className="mt-3">
+              <Btn
+                variant="primary"
+                disabled={busy || nonAiBusy || videoCompositeBusy || !sourceVideo.url && !normalizeUrl((d as any).sourceProductVideoUrl) && !normalizeUrl(d.nonAiVideoUrl) || !background.url}
+                onClick={handleCompositeSelectedBackground}
+              >
+                {videoCompositeBusy ? "背景は生成時に合成" : "🎬 動画背景合成"}
+              </Btn>
+            </div>
           </div>
 
           <div className="rounded-2xl border border-white/15 bg-black/20 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
-                <div className="text-white/90 font-black" style={{ fontSize: 13 }}>商品動画素材を選択</div>
+                <div className="text-white/90 font-black" style={{ fontSize: 13 }}>アップロード画像から選択</div>
                 <div className="mt-1 text-white/55" style={{ fontSize: 11 }}>
-                  背景固定合成では、切り抜き済み商品画像を選ぶと商品だけが動きます。元写真を選ぶと写真内の背景も一緒に動く場合があります。
+                  下書きにアップロードした商品写真だけを表示。生成画像・背景画像は混ぜません。
                 </div>
               </div>
               {selectedVideoImageUrls.length ? (
@@ -720,11 +657,6 @@ export default function ProductVideoPanel({
                 <div className="mt-0.5 truncate text-[10px] text-white/50">
                   行をクリックすると追加/解除。複数枚を選ぶと順番に動画へ使います。
                 </div>
-                {effectiveImage && !String(effectiveImageLabel || "").includes("切り抜き") ? (
-                  <div className="mt-1 text-[10px] font-bold text-amber-200/90" style={{ lineHeight: 1.35 }}>
-                    背景固定にしたい場合は「切り抜き済み商品画像」を選んでください。
-                  </div>
-                ) : null}
               </div>
               {selectedVideoImageUrls.length ? (
                 <div className="shrink-0 rounded-full border border-cyan-200/40 bg-cyan-200/15 px-2 py-1 text-[10px] font-black text-cyan-50">
@@ -810,23 +742,13 @@ export default function ProductVideoPanel({
           sourceLabel={effectiveImageLabel}
           materialImageUrls={effectiveMaterials}
           baseImageUrl={d.baseImageUrl ?? undefined}
-          backgroundImageUrl={effectiveVideoBackgroundUrl || undefined}
-          backgroundLabel={effectiveVideoBackgroundLabel}
+          backgroundImageUrl={background.url || undefined}
+          backgroundLabel={background.label}
           sourceVideoUrl={sourceVideo.url || undefined}
           sourceVideoLabel={sourceVideo.label}
           seconds={(d.videoSeconds ?? 5) === 10 ? 10 : 5}
           quality={(d.videoQuality ?? "standard") === "high" ? "high" : "standard"}
           size={normalizeVideoSize(d.videoSize ?? "720x1280")}
-          onExtractProductVideoClip={async ({ sourceVideoUrl, backgroundImageUrl }) => {
-            if (!draftId) throw new Error("draftId がありません");
-            if (typeof extractProductVideoClip !== "function") throw new Error("extractProductVideoClip が未接続です");
-            await extractProductVideoClip({
-              draftId,
-              sourceVideoUrl,
-              backgroundImageUrl,
-              size: normalizeVideoSize(d.videoSize ?? "720x1280"),
-            });
-          }}
           onSave={async (url: string) => {
             await onSaveNonAiVideoToDraft({ url, preset: defaultPreset });
           }}

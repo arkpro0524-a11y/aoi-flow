@@ -5,7 +5,7 @@ export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import crypto from "crypto";
 import fs from "node:fs/promises";
-import { accessSync, constants, existsSync } from "node:fs";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { spawn } from "node:child_process";
@@ -26,37 +26,21 @@ function storageDownloadUrl(bucketName: string, filePath: string, token: string)
   )}?alt=media&token=${token}`;
 }
 
-function isExecutableFile(filePath: string) {
-  try {
-    if (!filePath) return false;
-    accessSync(filePath, constants.X_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 function resolveFfmpegPath() {
-  // Macローカル開発では ffmpeg-static が spawn Unknown system error -88 を出すことがあります。
-  // そのため Homebrew / system ffmpeg を最優先し、ffmpeg-static は最後の保険にします。
   const candidates = [
-    String(process.env.FFMPEG_PATH || "").trim(),
-    "/opt/homebrew/bin/ffmpeg",
-    "/usr/local/bin/ffmpeg",
-    "/usr/bin/ffmpeg",
-    "ffmpeg",
+    process.env.FFMPEG_PATH,
     typeof ffmpegStaticPath === "string" ? ffmpegStaticPath : "",
     path.join(process.cwd(), "node_modules", "ffmpeg-static", "ffmpeg"),
+    "ffmpeg",
   ];
 
-  for (const candidate of candidates) {
-    const cmd = String(candidate || "").trim();
-    if (!cmd) continue;
-    if (cmd === "ffmpeg") return cmd;
-    if (existsSync(cmd) && isExecutableFile(cmd)) return cmd;
+  for (const p of candidates) {
+    if (!p) continue;
+    if (p === "ffmpeg") return p;
+    if (existsSync(p)) return p;
   }
 
-  throw new Error("ffmpeg binary not found. Mac開発環境では `brew install ffmpeg` を実行してください。");
+  throw new Error("ffmpeg binary not found");
 }
 
 function parseSize(input: unknown): VideoSize {
@@ -77,10 +61,6 @@ function safeNumber(input: unknown, fallback: number, min: number, max: number) 
   return Math.max(min, Math.min(max, n));
 }
 
-function parseDuration(input: unknown) {
-  return safeNumber(input, 10, 1, 20);
-}
-
 function normalizeChromaColor(input: unknown) {
   const raw = String(input || "").trim();
 
@@ -90,42 +70,23 @@ function normalizeChromaColor(input: unknown) {
   return "0x38A88E";
 }
 
-async function runCommand(cmd: string, args: string[], timeoutMs = 90_000) {
+async function runCommand(cmd: string, args: string[]) {
   await new Promise<void>((resolve, reject) => {
     const child = spawn(cmd, args, {
       stdio: ["ignore", "pipe", "pipe"],
     });
 
-    let settled = false;
     let stderr = "";
-
-    const finish = (fn: () => void) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      fn();
-    };
-
-    const timer = setTimeout(() => {
-      try {
-        child.kill("SIGKILL");
-      } catch {}
-      finish(() => reject(new Error(`ffmpeg timeout ${Math.round(timeoutMs / 1000)}s / cmd=${cmd}`)));
-    }, timeoutMs);
 
     child.stderr.on("data", (d) => {
       stderr += String(d);
     });
 
-    child.on("error", (e: any) => {
-      finish(() => reject(new Error(`ffmpeg spawn error: ${e?.message || e} / cmd=${cmd}`)));
-    });
+    child.on("error", reject);
 
     child.on("close", (code) => {
-      finish(() => {
-        if (code === 0) return resolve();
-        reject(new Error(`ffmpeg failed code=${code}: ${stderr.slice(-3000)}`));
-      });
+      if (code === 0) return resolve();
+      reject(new Error(`ffmpeg failed code=${code}: ${stderr.slice(-3000)}`));
     });
   });
 }
@@ -178,7 +139,6 @@ export async function POST(req: Request) {
     const sourceVideoUrl = String(body.sourceVideoUrl || "").trim();
     const backgroundImageUrl = String(body.backgroundImageUrl || "").trim();
     const size = parseSize(body.size);
-    const duration = parseDuration(body.duration ?? body.seconds);
 
     const chromaColor = normalizeChromaColor(body.chromaColor);
 
@@ -247,7 +207,7 @@ export async function POST(req: Request) {
       "-pix_fmt",
       "yuv420p",
       "-t",
-      String(duration),
+      "10",
       "-shortest",
       chromaPreviewPath,
     ]);
@@ -262,16 +222,14 @@ export async function POST(req: Request) {
       inputVideoPath,
       "-filter_complex",
       [
-        `[0:v]scale=${size.w}:${size.h},setsar=1[bg]`,
-        `[1:v]${foregroundFilter},setsar=1[fg]`,
-        `[bg][fg]overlay=0:0:format=auto,format=yuv420p[outv]`,
+        `[0:v]scale=${size.w}:${size.h}[bg]`,
+        `[1:v]${foregroundFilter}[fg]`,
+        `[bg][fg]overlay=0:0:format=auto[outv]`,
       ].join(";"),
       "-map",
       "[outv]",
       "-map",
       "1:a?",
-      "-t",
-      String(duration),
       "-c:v",
       "libx264",
       "-preset",
@@ -342,7 +300,6 @@ export async function POST(req: Request) {
       path: filePath,
       chromaPreviewPath: chromaPreviewStoragePath,
       size,
-      duration,
       chromaColor,
       similarity,
       blend,

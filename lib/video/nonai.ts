@@ -8,7 +8,7 @@
 import "server-only";
 
 import fs from "node:fs/promises";
-import { accessSync, constants, existsSync } from "node:fs";
+import { existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
@@ -82,32 +82,25 @@ function runFfmpegToBuffer(args: string[]): Promise<Buffer> {
     // ✅ ここだけ：ffmpeg の実在パスを決める（/ROOT事故を吸収）
     const candidates: string[] = [];
 
-    // Macローカル開発では ffmpeg-static が spawn Unknown system error -88 を出すことがあるため、
-    // Homebrew / system ffmpeg を優先します。
+    // 1) env 優先（将来Vercel等でも逃げ道になる）
     if (process.env.FFMPEG_PATH) candidates.push(process.env.FFMPEG_PATH);
-    candidates.push("/opt/homebrew/bin/ffmpeg");
-    candidates.push("/usr/local/bin/ffmpeg");
-    candidates.push("/usr/bin/ffmpeg");
-    candidates.push("ffmpeg");
 
+    // 2) ffmpeg-static（importしてるならそれ）
     try {
+      // 既に import ffmpegPath from "ffmpeg-static" がある前提でもOK
+      // （無い場合でも落ちないようにガード）
       // @ts-ignore
       if (typeof ffmpegPath === "string" && ffmpegPath) candidates.push(ffmpegPath);
     } catch {}
+
+    // 3) ✅ もっとも効く：実プロジェクトの node_modules を直接参照（Macで確実）
     candidates.push(path.join(process.cwd(), "node_modules", "ffmpeg-static", "ffmpeg"));
 
-    const isExecutableFile = (filePath: string) => {
-      try {
-        if (!filePath) return false;
-        accessSync(filePath, constants.X_OK);
-        return true;
-      } catch {
-        return false;
-      }
-    };
+    // 4) 最後の手段：PATHの ffmpeg
+    candidates.push("ffmpeg");
 
-    const cmd = candidates.find((p) => p === "ffmpeg" || (existsSync(p) && isExecutableFile(p)));
-    if (!cmd) return reject(new Error("ffmpeg binary not found. Mac開発環境では `brew install ffmpeg` を実行してください。"));
+    const cmd = candidates.find((p) => p === "ffmpeg" || existsSync(p));
+    if (!cmd) return reject(new Error("ffmpeg binary not found"));
 
     const p = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"] });
 
@@ -117,7 +110,7 @@ function runFfmpegToBuffer(args: string[]): Promise<Buffer> {
     p.stdout.on("data", (d) => out.push(Buffer.from(d)));
     p.stderr.on("data", (d) => err.push(Buffer.from(d)));
 
-    p.on("error", (e: any) => reject(new Error(`ffmpeg spawn error: ${e?.message || e} / cmd=${cmd}`)));
+    p.on("error", (e) => reject(e));
     p.on("close", (code) => {
       if (code === 0) return resolve(Buffer.concat(out));
       const msg = Buffer.concat(err).toString("utf8").slice(-4000);

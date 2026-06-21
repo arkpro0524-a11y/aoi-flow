@@ -9,7 +9,7 @@ import type { MotionCharacter } from "@/lib/types/draft";
 
 type RenderMode = "auto" | "cloud" | "local";
 type SourceMode = "image" | "video";
-type VideoType = "auto_ad" | "spin" | "zoom" | "pan" | "showcase" | "reel";
+type VideoType = "auto_ad" | "spin" | "turntable" | "zoom" | "pan" | "showcase" | "reel";
 
 type Props = {
   busy: boolean;
@@ -82,7 +82,8 @@ function renderModeDesc(mode: RenderMode) {
 }
 
 function videoTypeLabel(type: VideoType) {
-  if (type === "spin") return "Spin 回転";
+  if (type === "spin") return "Rotate 演出回転";
+  if (type === "turntable") return "Turntable 商品回転";
   if (type === "zoom") return "Zoom ズーム";
   if (type === "pan") return "Pan 横移動";
   if (type === "showcase") return "Showcase 見せ場構成";
@@ -91,16 +92,18 @@ function videoTypeLabel(type: VideoType) {
 }
 
 function videoTypeDesc(type: VideoType) {
-  if (type === "spin") return "複数方向写真のように、軽い回転感を優先します。";
+  if (type === "spin") return "1枚画像を時計回りに回す演出です。商品の前後を見せたい場合はTurntableを使います。";
+  if (type === "turntable") return "複数の商品画像を順番に切り替え、オルゴール台のように前面・斜め・側面・背面が見える疑似360度回転を作ります。2枚以上推奨。";
   if (type === "zoom") return "商品へ寄って質感を見せます。静物・雑貨向き。";
   if (type === "pan") return "横に流して空間感を出します。背景あり画像向き。";
-  if (type === "showcase") return "スピン・ズーム・パンを混ぜて広告らしく見せます。";
+  if (type === "showcase") return "ズーム・パンを混ぜて広告らしく見せます。";
   if (type === "reel") return "縦動画向け。テンポよく見せるSNS用です。";
   return "推奨。商品画像に合わせて自然な広告動画に寄せます。";
 }
 
 function motionForVideoType(type: VideoType, fallback: MotionCharacter): MotionCharacter {
   if (type === "spin") return { ...fallback, tempo: "normal", reveal: "early", intensity: "balanced", rhythm: "continuous" };
+  if (type === "turntable") return { ...fallback, tempo: "normal", reveal: "early", intensity: "balanced", rhythm: "continuous" };
   if (type === "zoom") return { ...fallback, tempo: "slow", reveal: "early", intensity: "calm", rhythm: "continuous" };
   if (type === "pan") return { ...fallback, tempo: "slow", reveal: "delayed", intensity: "calm", rhythm: "continuous" };
   if (type === "showcase") return { ...fallback, tempo: "normal", reveal: "early", intensity: "strong", rhythm: "continuous" };
@@ -201,10 +204,6 @@ export default function NonAiVideoActions(props: Props) {
   const inputImageLabel = props.sourceLabel || "選択済み画像";
   const inputVideoUrl = String(props.sourceVideoUrl || "").trim();
   const backgroundImageUrl = String(props.backgroundImageUrl || "").trim();
-  // 商品画像から作る広告動画では、動画化後のcutoutは使いません。
-  // 既存の切り抜き済み商品PNGと背景画像をCanvas上で直接合成してから動画化します。
-  const hasStaticCanvasBackground = !!backgroundImageUrl;
-  const shouldCompositeAfterStaticVideo = false;
 
   const canRunStaticVideo = useMemo(() => {
     if (props.busy || localBusy) return false;
@@ -218,57 +217,6 @@ export default function NonAiVideoActions(props: Props) {
     const token = await auth.currentUser?.getIdToken();
     if (!token) throw new Error("認証トークン取得に失敗しました。再ログインしてください");
     return token;
-  }
-
-  async function compositeFixedBackgroundVideo(sourceVideoUrl: string) {
-    const cleanSourceVideoUrl = String(sourceVideoUrl || "").trim();
-    const cleanBackgroundImageUrl = String(backgroundImageUrl || "").trim();
-
-    if (!cleanSourceVideoUrl) throw new Error("背景合成できません：商品動画URLが空です");
-    if (!cleanBackgroundImageUrl) throw new Error("背景合成できません：背景画像が未選択です");
-    if (!props.draftId) throw new Error("背景合成できません：draftId がありません");
-
-    const token = await getToken();
-
-    console.log("[AOI FLOW] /api/video/cutout start", {
-      sourceVideoUrl: cleanSourceVideoUrl,
-      backgroundImageUrl: cleanBackgroundImageUrl,
-      size: props.size,
-    });
-
-    const res = await fetch("/api/video/cutout", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({
-        draftId: props.draftId,
-        sourceVideoUrl: cleanSourceVideoUrl,
-        backgroundImageUrl: cleanBackgroundImageUrl,
-        size: props.size,
-        duration: props.seconds,
-        chromaColor: "0x38A88E",
-        similarity: 0.52,
-        blend: 0.08,
-      }),
-    });
-
-    const j: any = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      const detail = j?.detail ? ` / detail: ${safeStringify(j.detail)}` : "";
-      throw new Error((j?.error || j?.message || "背景固定合成に失敗しました") + detail);
-    }
-
-    const finalUrl =
-      String(j?.videoUrl || "").trim() ||
-      String(j?.mp4Url || "").trim() ||
-      String(j?.url || "").trim();
-
-    if (!finalUrl) throw new Error("背景固定合成は完了しましたが、動画URLが返っていません");
-
-    await props.onSave(finalUrl);
-    return finalUrl;
   }
 
   async function uploadProductVideo(file: File) {
@@ -307,7 +255,13 @@ export default function NonAiVideoActions(props: Props) {
       if (!url) throw new Error("動画URL取得に失敗しました");
 
       await props.onSaveSourceVideo?.({ url, path });
-      setMsg("✅ 商品撮影動画を保存しました。動画撮影素材はcutoutせず、そのまま使います");
+      setMsg("✅ 商品撮影動画を保存しました。背景合成が必要な場合は、背景画像を選んでから合成してください");
+
+      if (backgroundImageUrl && typeof props.onExtractProductVideoClip === "function") {
+        setMsg("🎬 商品撮影動画と背景を合成中...");
+        await props.onExtractProductVideoClip({ sourceVideoUrl: url, backgroundImageUrl });
+        setMsg("✅ 商品撮影動画＋背景合成が完了しました");
+      }
     } catch (e: any) {
       props.setReason(e?.message || "商品撮影動画の保存に失敗しました");
     } finally {
@@ -326,11 +280,7 @@ export default function NonAiVideoActions(props: Props) {
     }
 
     props.setReason("");
-    console.log("[AOI FLOW] video action background", {
-      backgroundImageUrl,
-      hasStaticCanvasBackground,
-    });
-    setMsg(hasStaticCanvasBackground ? "🎬 固定背景つきの商品動画を生成中です" : "🎬 商品画像から広告動画を生成中です");
+    setMsg(props.backgroundImageUrl ? "🎬 背景固定つきの商品動画を生成中です" : "🎬 商品画像から広告動画を生成中です");
     setLocalBusy(true);
 
     try {
@@ -359,8 +309,7 @@ export default function NonAiVideoActions(props: Props) {
         size: { w, h },
         motion,
         videoType,
-        backgroundImageUrl: hasStaticCanvasBackground ? backgroundImageUrl : undefined,
-        chromaBackground: false,
+        backgroundImageUrl: props.backgroundImageUrl || undefined,
       });
 
       if (!blob || blob.size === 0) {
@@ -406,16 +355,8 @@ export default function NonAiVideoActions(props: Props) {
       if (!fin.ok) {
         const webmUrl = String(upj?.url || upj?.videoUrl || "").trim();
         if (webmUrl) {
-          // 背景選択中は、緑背景の商品動画を代表保存せず、先に背景固定合成へ進めます。
-          if (shouldCompositeAfterStaticVideo) {
-            setMsg("🎬 商品動画と固定背景を合成中です");
-            await compositeFixedBackgroundVideo(webmUrl);
-            props.setReason("");
-            setMsg("✅ 背景固定の広告動画を保存しました");
-            return;
-          }
-
-          // 背景未選択時だけ、通常の商品動画として保存します。
+          // Cloud Run未設定・ローカルFFmpeg未導入でも、ブラウザで作ったWEBMは保存して使えるようにする。
+          // MP4化はCloud Render設定後、または開発者PCにFFmpegを入れた後に再実行する。
           await props.onSave(webmUrl);
           props.setReason("");
           setMsg(
@@ -438,22 +379,10 @@ export default function NonAiVideoActions(props: Props) {
         return;
       }
 
-      // 背景選択中は、緑背景の商品動画を代表保存せず、先に背景固定合成へ進めます。
-      if (shouldCompositeAfterStaticVideo) {
-        setMsg("🎬 商品動画と固定背景を合成中です");
-        await compositeFixedBackgroundVideo(mp4Url);
-        props.setReason("");
-        setMsg(`✅ 背景固定の広告動画が完成しました（${props.seconds}秒 / ${renderModeLabel(renderMode)}）`);
-        return;
-      }
-
-      // 背景未選択時だけ、通常の商品動画として保存します。
       await props.onSave(mp4Url);
       setMsg(`✅ 広告動画(mp4)が完成しました（${props.seconds}秒 / ${renderModeLabel(renderMode)}）`);
     } catch (e: any) {
-      const m = e?.message || "広告動画の生成または背景固定合成に失敗しました";
-      props.setReason(m);
-      setMsg(`⚠️ ${m}`);
+      props.setReason(e?.message || "広告動画の生成に失敗しました");
     } finally {
       setLocalBusy(false);
     }
@@ -465,7 +394,7 @@ export default function NonAiVideoActions(props: Props) {
     <div className="mt-2 rounded-2xl border border-white/10 bg-black/20 p-3">
       <div className="text-white/85 font-black text-xs">商品広告動画生成</div>
       <div className="mt-2 text-white/60 text-xs" style={{ lineHeight: 1.6 }}>
-        商品画像または商品撮影動画から、Instagram / TikTok向けの広告動画を作ります。背景を選択している場合は、切り抜き済み商品PNGと背景を先に合成し、動画cutoutは使いません。
+        商品画像または商品撮影動画から、Instagram / TikTok向けの広告動画を作ります。
         <br />尺：{props.seconds === 10 ? "10秒" : "5秒"} / 品質：{props.quality === "high" ? "高品質" : "標準"} / サイズ：{props.size}
       </div>
 
@@ -508,7 +437,8 @@ export default function NonAiVideoActions(props: Props) {
         <div className="flex gap-2 overflow-x-auto pb-1">
           {[
             { id: "auto_ad" as const, label: "Auto Ad", desc: "自動広告" },
-            { id: "spin" as const, label: "Spin", desc: "回転" },
+            { id: "turntable" as const, label: "Turntable", desc: "商品回転" },
+            { id: "spin" as const, label: "Rotate", desc: "演出回転" },
             { id: "zoom" as const, label: "Zoom", desc: "寄り" },
             { id: "pan" as const, label: "Pan", desc: "横移動" },
             { id: "showcase" as const, label: "Showcase", desc: "構成" },

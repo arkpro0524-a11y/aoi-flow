@@ -5,7 +5,7 @@ import { NextResponse } from "next/server";
 import crypto from "crypto";
 import { spawn } from "child_process";
 import fs from "fs/promises";
-import { accessSync, constants, existsSync } from "node:fs";
+import { existsSync } from "node:fs";
 import path from "path";
 import { tmpdir } from "os";
 import ffmpegStaticPath from "ffmpeg-static";
@@ -30,37 +30,21 @@ function storageDownloadUrl(bucketName: string, filePath: string, token: string)
  * 3. node_modules 直下
  * 4. PC / サーバーに入っている ffmpeg
  */
-function isExecutableFile(filePath: string) {
-  try {
-    if (!filePath) return false;
-    accessSync(filePath, constants.X_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 function resolveFfmpegPath() {
-  // Macローカル開発では ffmpeg-static が spawn Unknown system error -88 を出すことがあります。
-  // そのため Homebrew / system ffmpeg を最優先し、ffmpeg-static は最後の保険にします。
   const candidates = [
-    String(process.env.FFMPEG_PATH || "").trim(),
-    "/opt/homebrew/bin/ffmpeg",
-    "/usr/local/bin/ffmpeg",
-    "/usr/bin/ffmpeg",
-    "ffmpeg",
+    process.env.FFMPEG_PATH,
     typeof ffmpegStaticPath === "string" ? ffmpegStaticPath : "",
     path.join(process.cwd(), "node_modules", "ffmpeg-static", "ffmpeg"),
+    "ffmpeg",
   ];
 
-  for (const candidate of candidates) {
-    const cmd = String(candidate || "").trim();
-    if (!cmd) continue;
-    if (cmd === "ffmpeg") return cmd;
-    if (existsSync(cmd) && isExecutableFile(cmd)) return cmd;
+  for (const p of candidates) {
+    if (!p) continue;
+    if (p === "ffmpeg") return p;
+    if (existsSync(p)) return p;
   }
 
-  throw new Error("ffmpeg binary not found. Mac開発環境では `brew install ffmpeg` を実行してください。");
+  throw new Error("ffmpeg binary not found");
 }
 
 /**

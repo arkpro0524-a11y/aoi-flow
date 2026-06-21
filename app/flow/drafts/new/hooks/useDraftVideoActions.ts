@@ -531,7 +531,9 @@ export default function useDraftVideoActions(params: Params) {
       String((dRef.current as any).videoBackgroundImageUrl || "").trim() ||
       String((dRef.current as any).nonAiVideoBackgroundImageUrl || "").trim() ||
       String(dRef.current.bgImageUrl || "").trim() ||
-      String(dRef.current.templateBgUrl || "").trim();
+      String(dRef.current.templateBgUrl || "").trim() ||
+      String(dRef.current.compositeImageUrl || "").trim() ||
+      String(dRef.current.aiImageUrl || "").trim();
 
     if (!backgroundImageUrl) {
       setNonAiReason("切り抜きできません：合成用の背景画像がありません");
