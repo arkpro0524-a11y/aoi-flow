@@ -18,6 +18,15 @@ export type NonAiVideoInput = {
   };
   videoType?: "auto_ad" | "spin" | "zoom" | "pan" | "showcase" | "reel";
   textLines?: string[];
+  /**
+   * 商品切り抜きPNGの背面へ直接敷く静止背景です。
+   * 動画化後にcutoutせず、Canvas上で「背景固定＋商品だけ動く」構成にします。
+   */
+  backgroundImageUrl?: string;
+  /**
+   * 旧方式のクロマキー用。商品広告画像モードでは使わず、互換用に残します。
+   */
+  chromaBackground?: boolean;
 };
 
 function easeInOut(t: number) {
@@ -142,6 +151,8 @@ export async function generateNonAiVideoWebm(input: NonAiVideoInput): Promise<Bl
 
   /** 画像をすべて事前ロード（順序保持） */
   const images = await Promise.all(sequenceUrls.map(loadImage));
+  const backgroundImage = input.backgroundImageUrl ? await loadImage(input.backgroundImageUrl) : null;
+  const hasStaticBackground = !!backgroundImage;
   const imageCount = images.length;
 
   // ✅ fpsを落とす（最重要）
@@ -198,12 +209,22 @@ export async function generateNonAiVideoWebm(input: NonAiVideoInput): Promise<Bl
 
     ctx.clearRect(0, 0, w, h);
 
-    // 背景を薄く敷く。透明PNGや商品単体を回転させた時でも、真っ黒画面にならないようにする。
-    const bg = ctx.createLinearGradient(0, 0, w, h);
-    bg.addColorStop(0, "#071525");
-    bg.addColorStop(1, "#0f2a3f");
-    ctx.fillStyle = bg;
-    ctx.fillRect(0, 0, w, h);
+    // 背景画像が選ばれている場合は、動画cutoutを使わず、
+    // Canvas上で「固定背景＋切り抜き済み商品PNG」を直接合成します。
+    if (backgroundImage) {
+      drawCoverImage(ctx, backgroundImage, w, h, 1, 0, 0, 0);
+    } else if (input.chromaBackground) {
+      // 旧互換：クロマキー用グリーン背景。
+      ctx.fillStyle = "#38A88E";
+      ctx.fillRect(0, 0, w, h);
+    } else {
+      // 通常動画では背景を薄く敷く。透明PNGや商品単体でも真っ黒画面にしない。
+      const bg = ctx.createLinearGradient(0, 0, w, h);
+      bg.addColorStop(0, "#071525");
+      bg.addColorStop(1, "#0f2a3f");
+      ctx.fillStyle = bg;
+      ctx.fillRect(0, 0, w, h);
+    }
 
     const oneImage = imageCount === 1;
     const videoType = input.videoType ?? "auto_ad";
@@ -219,11 +240,15 @@ export async function generateNonAiVideoWebm(input: NonAiVideoInput): Promise<Bl
       const scale = 1.0 + move * 1.7 * tt;
       drawContainImage(ctx, img, w, h, scale, 0, 0, 0);
     } else if (oneImage && videoType === "pan") {
-      // 単品Pan：横揺れではなく、ゆっくり斜め移動＋微拡大。
-      const scale = 1.06 + move * tt;
+      // 単品Pan：背景固定合成用では商品だけを動かしたいので contain を使う。
+      const scale = (input.chromaBackground || hasStaticBackground) ? 0.92 + move * tt : 1.06 + move * tt;
       const ox = (tt - 0.5) * w * 0.12;
       const oy = (0.5 - tt) * h * 0.06;
-      drawCoverImage(ctx, img, w, h, scale, ox, oy, 0);
+      if (input.chromaBackground || hasStaticBackground) {
+        drawContainImage(ctx, img, w, h, scale, ox, oy, 0);
+      } else {
+        drawCoverImage(ctx, img, w, h, scale, ox, oy, 0);
+      }
     } else {
       // Canva風のKen Burns。複数画像では各写真が自然に拡大・移動しながら切り替わる。
       const direction = imageIndex % 2 === 0 ? 1 : -1;
@@ -231,7 +256,11 @@ export async function generateNonAiVideoWebm(input: NonAiVideoInput): Promise<Bl
       const ox = direction * (tt - 0.5) * w * 0.08;
       const oy = -direction * (tt - 0.5) * h * 0.05;
       const rot = oneImage ? direction * (tt - 0.5) * 0.035 : direction * (tt - 0.5) * 0.02;
-      drawCoverImage(ctx, img, w, h, scale, ox, oy, rot);
+      if (input.chromaBackground || hasStaticBackground) {
+        drawContainImage(ctx, img, w, h, 0.88 + move * tt, ox, oy, rot);
+      } else {
+        drawCoverImage(ctx, img, w, h, scale, ox, oy, rot);
+      }
 
       // 複数画像の切替時は軽くフェード。
       if (!oneImage && localT < 0.12 && imageIndex > 0) {
@@ -244,9 +273,11 @@ export async function generateNonAiVideoWebm(input: NonAiVideoInput): Promise<Bl
       }
     }
 
-    // 雰囲気レイヤー
-    ctx.fillStyle = `rgba(0,0,0,${alpha})`;
-    ctx.fillRect(0, 0, w, h);
+    // 雰囲気レイヤー。クロマキー背景では緑を汚すと抜けないため適用しません。
+    if (!input.chromaBackground && !hasStaticBackground) {
+      ctx.fillStyle = `rgba(0,0,0,${alpha})`;
+      ctx.fillRect(0, 0, w, h);
+    }
 
     // テキスト（primary区間のみ表示）
     if (imageIndex === 0 && input.textLines?.length) {

@@ -201,6 +201,10 @@ export default function NonAiVideoActions(props: Props) {
   const inputImageLabel = props.sourceLabel || "選択済み画像";
   const inputVideoUrl = String(props.sourceVideoUrl || "").trim();
   const backgroundImageUrl = String(props.backgroundImageUrl || "").trim();
+  // 商品画像から作る広告動画では、動画化後のcutoutは使いません。
+  // 既存の切り抜き済み商品PNGと背景画像をCanvas上で直接合成してから動画化します。
+  const hasStaticCanvasBackground = !!backgroundImageUrl;
+  const shouldCompositeAfterStaticVideo = false;
 
   const canRunStaticVideo = useMemo(() => {
     if (props.busy || localBusy) return false;
@@ -214,6 +218,57 @@ export default function NonAiVideoActions(props: Props) {
     const token = await auth.currentUser?.getIdToken();
     if (!token) throw new Error("認証トークン取得に失敗しました。再ログインしてください");
     return token;
+  }
+
+  async function compositeFixedBackgroundVideo(sourceVideoUrl: string) {
+    const cleanSourceVideoUrl = String(sourceVideoUrl || "").trim();
+    const cleanBackgroundImageUrl = String(backgroundImageUrl || "").trim();
+
+    if (!cleanSourceVideoUrl) throw new Error("背景合成できません：商品動画URLが空です");
+    if (!cleanBackgroundImageUrl) throw new Error("背景合成できません：背景画像が未選択です");
+    if (!props.draftId) throw new Error("背景合成できません：draftId がありません");
+
+    const token = await getToken();
+
+    console.log("[AOI FLOW] /api/video/cutout start", {
+      sourceVideoUrl: cleanSourceVideoUrl,
+      backgroundImageUrl: cleanBackgroundImageUrl,
+      size: props.size,
+    });
+
+    const res = await fetch("/api/video/cutout", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        draftId: props.draftId,
+        sourceVideoUrl: cleanSourceVideoUrl,
+        backgroundImageUrl: cleanBackgroundImageUrl,
+        size: props.size,
+        duration: props.seconds,
+        chromaColor: "0x38A88E",
+        similarity: 0.52,
+        blend: 0.08,
+      }),
+    });
+
+    const j: any = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const detail = j?.detail ? ` / detail: ${safeStringify(j.detail)}` : "";
+      throw new Error((j?.error || j?.message || "背景固定合成に失敗しました") + detail);
+    }
+
+    const finalUrl =
+      String(j?.videoUrl || "").trim() ||
+      String(j?.mp4Url || "").trim() ||
+      String(j?.url || "").trim();
+
+    if (!finalUrl) throw new Error("背景固定合成は完了しましたが、動画URLが返っていません");
+
+    await props.onSave(finalUrl);
+    return finalUrl;
   }
 
   async function uploadProductVideo(file: File) {
@@ -252,13 +307,7 @@ export default function NonAiVideoActions(props: Props) {
       if (!url) throw new Error("動画URL取得に失敗しました");
 
       await props.onSaveSourceVideo?.({ url, path });
-      setMsg("✅ 商品撮影動画を保存しました。背景合成が必要な場合は、背景画像を選んでから合成してください");
-
-      if (backgroundImageUrl && typeof props.onExtractProductVideoClip === "function") {
-        setMsg("🎬 商品撮影動画と背景を合成中...");
-        await props.onExtractProductVideoClip({ sourceVideoUrl: url, backgroundImageUrl });
-        setMsg("✅ 商品撮影動画＋背景合成が完了しました");
-      }
+      setMsg("✅ 商品撮影動画を保存しました。動画撮影素材はcutoutせず、そのまま使います");
     } catch (e: any) {
       props.setReason(e?.message || "商品撮影動画の保存に失敗しました");
     } finally {
@@ -277,7 +326,11 @@ export default function NonAiVideoActions(props: Props) {
     }
 
     props.setReason("");
-    setMsg("🎬 商品画像から広告動画を生成中です");
+    console.log("[AOI FLOW] video action background", {
+      backgroundImageUrl,
+      hasStaticCanvasBackground,
+    });
+    setMsg(hasStaticCanvasBackground ? "🎬 固定背景つきの商品動画を生成中です" : "🎬 商品画像から広告動画を生成中です");
     setLocalBusy(true);
 
     try {
@@ -306,6 +359,8 @@ export default function NonAiVideoActions(props: Props) {
         size: { w, h },
         motion,
         videoType,
+        backgroundImageUrl: hasStaticCanvasBackground ? backgroundImageUrl : undefined,
+        chromaBackground: false,
       });
 
       if (!blob || blob.size === 0) {
@@ -351,8 +406,16 @@ export default function NonAiVideoActions(props: Props) {
       if (!fin.ok) {
         const webmUrl = String(upj?.url || upj?.videoUrl || "").trim();
         if (webmUrl) {
-          // Cloud Run未設定・ローカルFFmpeg未導入でも、ブラウザで作ったWEBMは保存して使えるようにする。
-          // MP4化はCloud Render設定後、または開発者PCにFFmpegを入れた後に再実行する。
+          // 背景選択中は、緑背景の商品動画を代表保存せず、先に背景固定合成へ進めます。
+          if (shouldCompositeAfterStaticVideo) {
+            setMsg("🎬 商品動画と固定背景を合成中です");
+            await compositeFixedBackgroundVideo(webmUrl);
+            props.setReason("");
+            setMsg("✅ 背景固定の広告動画を保存しました");
+            return;
+          }
+
+          // 背景未選択時だけ、通常の商品動画として保存します。
           await props.onSave(webmUrl);
           props.setReason("");
           setMsg(
@@ -375,10 +438,22 @@ export default function NonAiVideoActions(props: Props) {
         return;
       }
 
+      // 背景選択中は、緑背景の商品動画を代表保存せず、先に背景固定合成へ進めます。
+      if (shouldCompositeAfterStaticVideo) {
+        setMsg("🎬 商品動画と固定背景を合成中です");
+        await compositeFixedBackgroundVideo(mp4Url);
+        props.setReason("");
+        setMsg(`✅ 背景固定の広告動画が完成しました（${props.seconds}秒 / ${renderModeLabel(renderMode)}）`);
+        return;
+      }
+
+      // 背景未選択時だけ、通常の商品動画として保存します。
       await props.onSave(mp4Url);
       setMsg(`✅ 広告動画(mp4)が完成しました（${props.seconds}秒 / ${renderModeLabel(renderMode)}）`);
     } catch (e: any) {
-      props.setReason(e?.message || "広告動画の生成に失敗しました");
+      const m = e?.message || "広告動画の生成または背景固定合成に失敗しました";
+      props.setReason(m);
+      setMsg(`⚠️ ${m}`);
     } finally {
       setLocalBusy(false);
     }
@@ -390,7 +465,7 @@ export default function NonAiVideoActions(props: Props) {
     <div className="mt-2 rounded-2xl border border-white/10 bg-black/20 p-3">
       <div className="text-white/85 font-black text-xs">商品広告動画生成</div>
       <div className="mt-2 text-white/60 text-xs" style={{ lineHeight: 1.6 }}>
-        商品画像または商品撮影動画から、Instagram / TikTok向けの広告動画を作ります。
+        商品画像または商品撮影動画から、Instagram / TikTok向けの広告動画を作ります。背景を選択している場合は、切り抜き済み商品PNGと背景を先に合成し、動画cutoutは使いません。
         <br />尺：{props.seconds === 10 ? "10秒" : "5秒"} / 品質：{props.quality === "high" ? "高品質" : "標準"} / サイズ：{props.size}
       </div>
 

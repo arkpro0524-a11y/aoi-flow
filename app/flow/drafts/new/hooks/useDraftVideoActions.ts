@@ -490,7 +490,11 @@ export default function useDraftVideoActions(params: Params) {
   }
 
 
-  async function extractProductVideoClip() {
+  async function extractProductVideoClip(args?: {
+    sourceVideoUrl?: string;
+    backgroundImageUrl?: string;
+    size?: string;
+  }) {
     const ensuredDraftId = draftId ?? (await saveDraft());
 
     if (!ensuredDraftId) {
@@ -499,9 +503,14 @@ export default function useDraftVideoActions(params: Params) {
     }
 
     const sourceVideoUrl =
+      String(args?.sourceVideoUrl || "").trim() ||
       String((dRef.current as any).sourceProductVideoUrl || "").trim() ||
       (Array.isArray((dRef.current as any).sourceProductVideoUrls)
         ? String((dRef.current as any).sourceProductVideoUrls[0] || "").trim()
+        : "") ||
+      String((dRef.current as any).nonAiVideoUrl || "").trim() ||
+      (Array.isArray((dRef.current as any).nonAiVideoUrls)
+        ? String((dRef.current as any).nonAiVideoUrls[0] || "").trim()
         : "");
 
     if (!sourceVideoUrl) {
@@ -518,9 +527,9 @@ export default function useDraftVideoActions(params: Params) {
      *   動画タブで背景を選んでも代表動画合成に反映されないことがありました
      */
     const backgroundImageUrl =
+      String(args?.backgroundImageUrl || "").trim() ||
       String((dRef.current as any).videoBackgroundImageUrl || "").trim() ||
-      String(dRef.current.compositeImageUrl || "").trim() ||
-      String(dRef.current.aiImageUrl || "").trim() ||
+      String((dRef.current as any).nonAiVideoBackgroundImageUrl || "").trim() ||
       String(dRef.current.bgImageUrl || "").trim() ||
       String(dRef.current.templateBgUrl || "").trim();
 
@@ -553,7 +562,7 @@ export default function useDraftVideoActions(params: Params) {
           draftId: ensuredDraftId,
           sourceVideoUrl,
           backgroundImageUrl,
-          size: dRef.current.videoSize ?? "720x1280",
+          size: args?.size ?? dRef.current.videoSize ?? "720x1280",
         }),
       });
 
