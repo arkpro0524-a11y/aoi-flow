@@ -25,6 +25,35 @@ function safeString(v: unknown): string {
   return typeof v === "string" ? v.trim() : "";
 }
 
+function isSupportedVisionMime(mime: string): boolean {
+  const normalized = mime.toLowerCase().split(";")[0].trim();
+  return (
+    normalized === "image/png" ||
+    normalized === "image/jpeg" ||
+    normalized === "image/jpg" ||
+    normalized === "image/gif" ||
+    normalized === "image/webp"
+  );
+}
+
+function inferSupportedMimeFromName(name: string): string {
+  const lower = name.toLowerCase();
+  if (lower.endsWith(".png")) return "image/png";
+  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+  if (lower.endsWith(".gif")) return "image/gif";
+  if (lower.endsWith(".webp")) return "image/webp";
+  return "";
+}
+
+function resolveVisionMime(file: File): string {
+  const byType = safeString(file.type).toLowerCase();
+  if (isSupportedVisionMime(byType)) {
+    return byType === "image/jpg" ? "image/jpeg" : byType;
+  }
+
+  return inferSupportedMimeFromName(file.name || "");
+}
+
 function safeNumber(v: unknown): number | undefined {
   const raw = String(v ?? "").replace(/[^\d.]/g, "");
   const n = Number(raw);
@@ -79,11 +108,14 @@ function extractJsonText(text: string): string {
   return s;
 }
 
-async function fileToDataUrl(file: File): Promise<string> {
-  const buffer = Buffer.from(await file.arrayBuffer());
-  const base64 = buffer.toString("base64");
-  const mime = file.type || "image/png";
+async function fileToDataUrl(file: File): Promise<string | null> {
+  const mime = resolveVisionMime(file);
+  if (!mime) return null;
 
+  const buffer = Buffer.from(await file.arrayBuffer());
+  if (buffer.length === 0) return null;
+
+  const base64 = buffer.toString("base64");
   return `data:${mime};base64,${base64}`;
 }
 
@@ -99,10 +131,13 @@ async function imageUrlToServerFile(url: unknown): Promise<File | null> {
     if (!blob || blob.size === 0) return null;
 
     const contentType = blob.type || res.headers.get("content-type") || "image/png";
-    const ext = contentType.includes("jpeg") || contentType.includes("jpg") ? "jpg" : "png";
+    const supportedContentType = isSupportedVisionMime(contentType) ? contentType : "";
+    if (!supportedContentType) return null;
+
+    const ext = supportedContentType.includes("jpeg") || supportedContentType.includes("jpg") ? "jpg" : supportedContentType.includes("webp") ? "webp" : supportedContentType.includes("gif") ? "gif" : "png";
 
     return new File([blob], `draft-image-from-url-${Date.now()}.${ext}`, {
-      type: contentType,
+      type: supportedContentType === "image/jpg" ? "image/jpeg" : supportedContentType,
     });
   } catch (error) {
     console.error("[sell-check] draft image url fetch failed", error);
@@ -479,7 +514,7 @@ export async function POST(req: NextRequest) {
       ...form.getAll("image"),
     ].filter((item): item is File => item instanceof File).slice(0, 8);
 
-    const imageFiles = [...uploadedImageFiles];
+    const imageFiles = uploadedImageFiles.filter((file) => Boolean(resolveVisionMime(file)));
 
     // 下書き画像をクライアント側 fetch できない環境（Safari/CORS/Storage設定）でも
     // 診断を止めないため、imageUrl が渡された場合はサーバー側で画像を取得します。
@@ -532,17 +567,25 @@ export async function POST(req: NextRequest) {
     };
 
     const imageDataUrls = hasUsableImage
-      ? await Promise.all(imageFiles.map((file) => fileToDataUrl(file)))
+      ? (await Promise.all(imageFiles.map((file) => fileToDataUrl(file)))).filter(
+          (url): url is string => Boolean(url),
+        )
       : [];
 
-    const ai = await analyzeImageAndText({
-      imageDataUrls,
-      title,
-      memo,
-      keywords,
-      category,
-      condition,
-    });
+    let ai: any = {};
+    try {
+      ai = await analyzeImageAndText({
+        imageDataUrls,
+        title,
+        memo,
+        keywords,
+        category,
+        condition,
+      });
+    } catch (error) {
+      console.error("[sell-check] image AI analysis failed; fallback to rule-based diagnosis", error);
+      ai = {};
+    }
 
     const imageAnalysis = buildImageAnalysis(ai, hasUsableImage);
     const textAnalysis = buildTextAnalysis({
@@ -603,10 +646,16 @@ export async function POST(req: NextRequest) {
     console.error(error);
 
     const message = error instanceof Error ? error.message : "診断失敗";
+    const isBodyTooLarge = message.includes("Failed to parse body as FormData") || message.includes("body") || message.includes("FormData");
 
     return NextResponse.json(
-      { ok: false, error: message || "診断失敗" },
-      { status: 500 }
+      {
+        ok: false,
+        error: isBodyTooLarge
+          ? "診断画像の容量が大きすぎます。画像を減らすか、軽いPNG/JPEG/WebPで再実行してください。"
+          : message || "診断失敗",
+      },
+      { status: isBodyTooLarge ? 413 : 500 }
     );
   }
 }

@@ -531,6 +531,58 @@ function getExportRows(logs: SavedLog[]) {
   ]);
 }
 
+
+function getImportRowExportValues(row: ImportRow) {
+  return [
+    row.title,
+    row.price,
+    row.soldPrice,
+    row.category,
+    row.condition,
+    row.sold ? "売却済み" : "未売却",
+    row.views,
+    row.likes,
+    row.memo,
+    row.brandName,
+    row.modelName,
+    row.material,
+    row.productType,
+    row.characterName,
+    row.seriesName,
+    row.maker,
+    row.era,
+    row.collectorGenre,
+    row.materialType,
+    row.extractedKeywords,
+    row.conditionRiskScore,
+    row.descriptionQualityScore,
+    row.rarityScore,
+    row.demandScore,
+    row.brandPowerScore,
+    row.collectorScore,
+    row.ageValueScore,
+    row.trendScore,
+    row.marketSupplyScore,
+    row.keywordStrength,
+    row.brightnessScore,
+    row.compositionScore,
+    row.backgroundScore,
+    row.damageRiskScore,
+    row.overallImageScore,
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+  ];
+}
+
+function getSavedLogExportValues(log: SavedLog) {
+  return getExportRows([log])[0] ?? [];
+}
+
 function downloadFile(args: {
   fileName: string;
   mimeType: string;
@@ -1821,8 +1873,10 @@ export default function SellCheckAdminPage() {
       className="learning-admin-modern"
       style={{
         width: "100%",
-        maxWidth: 1260,
+        maxWidth: "100%",
+        minWidth: 0,
         margin: "0 auto",
+        overflowX: "hidden",
         display: "grid",
         gap: 14,
         color: "rgba(248,250,252,0.94)",
@@ -1830,6 +1884,9 @@ export default function SellCheckAdminPage() {
     >
       <style>{`
         .learning-admin-modern * { box-sizing: border-box; }
+        .learning-admin-modern { min-width: 0; overflow-x: hidden; }
+        .learning-admin-modern section,
+        .learning-admin-modern div { min-width: 0; }
         .learning-admin-modern button { -webkit-appearance: none; appearance: none; cursor: pointer; }
         .learning-admin-modern button:disabled { cursor: not-allowed; opacity: .48; }
         .learning-admin-modern input,
@@ -1869,7 +1926,7 @@ export default function SellCheckAdminPage() {
           </div>
         </div>
 
-        <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: 10 }}>
+        <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10 }}>
           {[
             ["学習DB件数", `${logs.length}件`, "保存済み", "▾"],
             ["重複候補", `${duplicateRemoveCount}件`, "分析待ち", "□"],
@@ -1891,7 +1948,7 @@ export default function SellCheckAdminPage() {
 
       <section style={{ ...glassPanel, borderRadius: 22, padding: 14 }}>
         <div style={{ fontSize: 13, fontWeight: 950, marginBottom: 10 }}>学習モードを選択</div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 12 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
           {activeMode.map((mode, index) => {
             const active = learningMode === mode.id;
             const gradients = [
@@ -2028,7 +2085,7 @@ export default function SellCheckAdminPage() {
                 <div style={{ fontSize: 13, fontWeight: 950, color: "#a7f3d0" }}>商品枠（自動追加されます）</div>
                 <button type="button" onClick={addDeepBulkProductBox} disabled={deepBulkBusy || !deepBulkCanAddProductBox} style={{ ...softButton, padding: "8px 12px" }}>＋ 商品を追加</button>
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 12 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
                 {deepBulkProductBoxes.map((box, index) => {
                   const boxSize = getFilesTotalSize(box.files);
                   const boxRemainingSlots = Math.max(0, deepBulkGroupSizeNumber - box.files.length);
@@ -2068,7 +2125,7 @@ export default function SellCheckAdminPage() {
         </section>
       ) : null}
 
-      <section style={{ display: "grid", gridTemplateColumns: "minmax(0,.64fr) minmax(0,.36fr)", gap: 14 }}>
+      <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 14 }}>
         <div style={{ ...glassPanel, borderRadius: 22, padding: 16 }}>
           <div style={{ fontSize: 12, letterSpacing: ".16em", color: "rgba(147,197,253,.65)", fontWeight: 950 }}>CSV / EXCEL</div>
           <h3 style={{ margin: "5px 0 12px", fontSize: 18, fontWeight: 950 }}>CSV / Excel読込</h3>
@@ -2078,13 +2135,39 @@ export default function SellCheckAdminPage() {
           </label>
         </div>
 
-        <div style={{ ...glassPanel, borderRadius: 22, padding: 16 }}>
+        <div style={{ ...glassPanel, borderRadius: 22, padding: 16, minWidth: 0 }}>
           <div style={{ fontSize: 12, letterSpacing: ".16em", color: "rgba(147,197,253,.65)", fontWeight: 950 }}>LEARNING ROWS</div>
-          <h3 style={{ margin: "5px 0 8px", fontSize: 18, fontWeight: 950 }}>学習データ入力</h3>
-          <p style={{ margin: 0, color: "rgba(255,255,255,.52)", fontSize: 12, lineHeight: 1.6 }}>解析結果やCSV読込結果を保存前に確認します。</p>
-          <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
+          <h3 style={{ margin: "5px 0 8px", fontSize: 18, fontWeight: 950 }}>保存前データ確認</h3>
+          <p style={{ margin: 0, color: "rgba(255,255,255,.52)", fontSize: 12, lineHeight: 1.6 }}>解析結果やCSV読込結果を、保存前に全項目横スクロールで確認します。</p>
+          <div style={{ marginTop: 12, display: "flex", flexWrap: "wrap", gap: 8 }}>
             <button type="button" onClick={addRow} style={softButton}>行を追加</button>
             <button type="button" onClick={submitImport} disabled={busy} style={primaryButton}>{busy ? "保存中..." : "保存"}</button>
+          </div>
+          <div style={{ marginTop: 12, ...glassCard, borderRadius: 16, overflow: "hidden", maxWidth: "100%" }}>
+            <div style={{ maxHeight: 260, overflow: "auto", WebkitOverflowScrolling: "touch" }}>
+              <table className="min-w-[2400px] border-collapse text-left text-xs text-white/75">
+                <thead className="sticky top-0 z-20 bg-[#10131a] text-white">
+                  <tr>
+                    <ExcelTh stickyLeft>行</ExcelTh>
+                    {EXPORT_HEADERS.map((header) => (
+                      <ExcelTh key={header}>{header}</ExcelTh>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((row, rowIndex) => (
+                    <tr key={rowIndex} className="border-t border-white/10 odd:bg-white/[0.03] hover:bg-white/[0.08]">
+                      <ExcelTd stickyLeft>{rowIndex + 1}</ExcelTd>
+                      {getImportRowExportValues(row).map((value, cellIndex) => (
+                        <ExcelTd key={`${rowIndex}-${cellIndex}`} wide={cellIndex === 0 || cellIndex === 8 || cellIndex === 19} title={String(value ?? "")}>
+                          {shortText(value)}
+                        </ExcelTd>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       </section>
@@ -2104,17 +2187,26 @@ export default function SellCheckAdminPage() {
         {logs.length === 0 ? (
           <div style={{ ...glassCard, borderRadius: 16, padding: 14, color: "rgba(255,255,255,.56)", fontSize: 13 }}>保存済み学習データがありません。</div>
         ) : (
-          <div style={{ ...glassCard, borderRadius: 18, overflow: "hidden" }}>
-            <div style={{ maxHeight: 360, overflow: "auto" }}>
-              <table className="min-w-[1200px] border-collapse text-left text-xs text-white/75">
+          <div style={{ ...glassCard, borderRadius: 18, overflow: "hidden", maxWidth: "100%" }}>
+            <div style={{ maxHeight: 360, overflow: "auto", WebkitOverflowScrolling: "touch" }}>
+              <table className="min-w-[2600px] border-collapse text-left text-xs text-white/75">
                 <thead className="sticky top-0 z-20 bg-[#10131a] text-white">
-                  <tr><ExcelTh stickyLeft>操作</ExcelTh><ExcelTh>商品名</ExcelTh><ExcelTh>出品価格</ExcelTh><ExcelTh>売却価格</ExcelTh><ExcelTh>状態</ExcelTh><ExcelTh>ブランド</ExcelTh><ExcelTh>メモ</ExcelTh><ExcelTh>作成日時</ExcelTh></tr>
+                  <tr>
+                    <ExcelTh stickyLeft>操作</ExcelTh>
+                    {EXPORT_HEADERS.map((header) => (
+                      <ExcelTh key={header}>{header}</ExcelTh>
+                    ))}
+                  </tr>
                 </thead>
                 <tbody>
                   {logs.map((log) => (
                     <tr key={log.id} className="border-t border-white/10 odd:bg-white/[0.03] hover:bg-white/[0.08]">
                       <ExcelTd stickyLeft><div className="flex min-w-[116px] gap-2"><button type="button" onClick={() => startEditLog(log)} className="rounded-lg border border-white/15 bg-white/10 px-3 py-1.5 text-[11px] font-black text-white">編集</button><button type="button" onClick={() => deleteLog(log.id)} className="rounded-lg border border-red-400/20 bg-red-500/10 px-3 py-1.5 text-[11px] font-black text-red-100">削除</button></div></ExcelTd>
-                      <ExcelTd wide title={log.title}>{shortText(log.title)}</ExcelTd><ExcelTd>{shortText(log.price)}</ExcelTd><ExcelTd>{shortText(log.soldPrice)}</ExcelTd><ExcelTd>{shortText(log.condition)}</ExcelTd><ExcelTd>{shortText(log.brandName)}</ExcelTd><ExcelTd wide title={log.memo}>{shortText(log.memo)}</ExcelTd><ExcelTd wide>{formatDate(log.createdAt)}</ExcelTd>
+                      {getSavedLogExportValues(log).map((value, cellIndex) => (
+                        <ExcelTd key={`${log.id}-${cellIndex}`} wide={cellIndex === 0 || cellIndex === 8 || cellIndex === 19 || cellIndex >= 38} title={String(value ?? "")}>
+                          {shortText(value)}
+                        </ExcelTd>
+                      ))}
                     </tr>
                   ))}
                 </tbody>

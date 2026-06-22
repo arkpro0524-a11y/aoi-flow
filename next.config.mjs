@@ -4,6 +4,9 @@ import path from "node:path";
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  experimental: {
+    proxyClientMaxBodySize: "50mb",
+  },
 
   // Next.js 16 / Turbopack が上位ディレクトリの package-lock.json を root と誤認すると、
   // "@/components/..." が "./components/..." として解決され、AuthGate / FlowShell 等が見つからなくなります。

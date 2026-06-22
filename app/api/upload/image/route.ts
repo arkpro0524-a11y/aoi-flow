@@ -330,9 +330,16 @@ export async function POST(req: Request) {
     });
   } catch (e: any) {
     console.error("[upload/image] error:", e);
+    const message = String(e?.message || "upload failed");
+    const isBodyTooLarge = message.includes("Failed to parse body as FormData") || message.includes("body") || message.includes("FormData");
     return NextResponse.json(
-      { ok: false, error: e?.message || "upload failed" },
-      { status: 500 }
+      {
+        ok: false,
+        error: isBodyTooLarge
+          ? "画像容量が大きすぎます。画像を減らすか、PNG/JPEG/WebPで軽くしてから再実行してください。"
+          : message,
+      },
+      { status: isBodyTooLarge ? 413 : 500 }
     );
   }
 }

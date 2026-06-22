@@ -43,6 +43,11 @@ function safeArray(v: unknown): string[] {
     .slice(0, 30);
 }
 
+function safeStringArray(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  return v.map((x) => safeString(x)).filter(Boolean).slice(0, 30);
+}
+
 function cleanObject(obj: CleanObject): CleanObject {
   const out: CleanObject = {};
 
@@ -132,6 +137,8 @@ export async function POST(req: NextRequest) {
 
     const draftId = safeString(body.draftId);
     const imageUrl = safeString(body.imageUrl);
+    const imageUrls = safeStringArray(body.imageUrls);
+    const allImageUrls = imageUrls.length > 0 ? imageUrls : imageUrl ? [imageUrl] : [];
     const imageSource = safeString(body.imageSource) || "manual";
 
     const priceRaw = safeNonNegativeNumber(body.price);
@@ -275,7 +282,9 @@ export async function POST(req: NextRequest) {
     const diagnosisPayload = cleanObject({
       uid: uid || undefined,
       draftId: draftId || undefined,
-      imageUrl: imageUrl || undefined,
+      imageUrl: imageUrl || allImageUrls[0] || undefined,
+      imageUrls: allImageUrls.length > 0 ? allImageUrls : undefined,
+      imageCount: allImageUrls.length || safeNonNegativeNumber(body.imageCount) || undefined,
       imageSource,
 
       price,
@@ -328,7 +337,7 @@ export async function POST(req: NextRequest) {
       priceDistortionAnalysis: body.priceDistortionAnalysis,
       rotationLearningAnalysis: body.rotationLearningAnalysis,
 
-      hasImage: !!imageUrl || body.hasImage === true,
+      hasImage: allImageUrls.length > 0 || !!imageUrl || body.hasImage === true,
 
       isLearningData: false,
       learningNote:

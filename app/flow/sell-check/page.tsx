@@ -52,6 +52,126 @@ function createBatchDiagnosisItem(index: number): BatchDiagnosisItem {
   };
 }
 
+function isSupportedImageFile(file: File): boolean {
+  const type = String(file.type || "").toLowerCase();
+  const name = String(file.name || "").toLowerCase();
+
+  if (["image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp"].includes(type)) {
+    return true;
+  }
+
+  return /\.(png|jpe?g|gif|webp)$/i.test(name);
+}
+
+function filterSupportedImageFiles(files: File[]): { supported: File[]; rejected: File[] } {
+  const supported: File[] = [];
+  const rejected: File[] = [];
+
+  files.forEach((file) => {
+    if (isSupportedImageFile(file)) supported.push(file);
+    else rejected.push(file);
+  });
+
+  return { supported, rejected };
+}
+
+function unsupportedImageMessage(rejected: File[]): string {
+  if (rejected.length === 0) return "";
+  const names = rejected.map((file) => file.name || "未対応画像").join("、");
+  return `未対応の画像形式があります：${names}。PNG / JPEG / GIF / WebP に変換してから選択してください。`;
+}
+
+const SELL_CHECK_MAX_IMAGES = 8;
+const SELL_CHECK_TOTAL_IMAGE_LIMIT_BYTES = 8_000_000;
+const SELL_CHECK_SINGLE_IMAGE_LIMIT_BYTES = 1_200_000;
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("画像の読み込みに失敗しました。"));
+    reader.readAsDataURL(file);
+  });
+}
+
+function loadImageElement(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error("画像をブラウザで読み込めませんでした。PNG / JPEG / WebP に変換してください。"));
+    img.src = src;
+  });
+}
+
+function canvasToBlob(canvas: HTMLCanvasElement, type: string, quality: number): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob) resolve(blob);
+      else reject(new Error("画像の圧縮に失敗しました。"));
+    }, type, quality);
+  });
+}
+
+function replaceImageExt(name: string, ext: string): string {
+  const base = String(name || `sell-check-image-${Date.now()}`).replace(/\.[^.]+$/, "");
+  return `${base}.${ext}`;
+}
+
+async function compressImageForSellCheck(file: File, maxBytes: number): Promise<File> {
+  if (!isSupportedImageFile(file)) {
+    throw new Error(unsupportedImageMessage([file]));
+  }
+
+  if (file.size > 0 && file.size <= maxBytes && file.type !== "image/gif") {
+    return file;
+  }
+
+  const dataUrl = await readFileAsDataUrl(file);
+  const img = await loadImageElement(dataUrl);
+
+  const maxSide = 1600;
+  const width = Math.max(1, img.naturalWidth || img.width || 1);
+  const height = Math.max(1, img.naturalHeight || img.height || 1);
+  const scale = Math.min(1, maxSide / Math.max(width, height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(width * scale));
+  canvas.height = Math.max(1, Math.round(height * scale));
+
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("画像圧縮用のCanvasを作成できませんでした。");
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+  const qualities = [0.86, 0.76, 0.66, 0.56, 0.46, 0.36];
+  let lastBlob: Blob | null = null;
+
+  for (const quality of qualities) {
+    const blob = await canvasToBlob(canvas, "image/jpeg", quality);
+    lastBlob = blob;
+    if (blob.size <= maxBytes) {
+      return new File([blob], replaceImageExt(file.name, "jpg"), { type: "image/jpeg" });
+    }
+  }
+
+  if (!lastBlob) throw new Error("画像の圧縮に失敗しました。");
+  return new File([lastBlob], replaceImageExt(file.name, "jpg"), { type: "image/jpeg" });
+}
+
+async function prepareSellCheckImages(files: File[]): Promise<File[]> {
+  const targets = files.slice(0, SELL_CHECK_MAX_IMAGES);
+  if (targets.length === 0) return [];
+
+  const perFileLimit = Math.min(
+    SELL_CHECK_SINGLE_IMAGE_LIMIT_BYTES,
+    Math.max(420_000, Math.floor(SELL_CHECK_TOTAL_IMAGE_LIMIT_BYTES / targets.length)),
+  );
+
+  const prepared: File[] = [];
+  for (const file of targets) {
+    prepared.push(await compressImageForSellCheck(file, perFileLimit));
+  }
+  return prepared;
+}
+
 type Stats = {
   total: number;
   sold: number;
@@ -226,6 +346,106 @@ function InfoCard(props: { label: string; value: string }) {
   );
 }
 
+
+function clampScore(value: unknown, fallback = 0): number {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(0, Math.min(100, Math.round(n)));
+}
+
+function yenOrDash(value: unknown): string {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return "—";
+  return formatYen(n);
+}
+
+function marketAveragePrice(result: SellCheckResult): number | undefined {
+  return (
+    result.similarData?.averageSoldPrice ||
+    result.similarData?.medianSoldPrice ||
+    result.similarData?.averageActivePrice ||
+    result.similarData?.medianActivePrice ||
+    undefined
+  );
+}
+
+function priceRotationLabel(result: SellCheckResult): string {
+  return (
+    result.rotationLearningAnalysis?.expectedDaysToSellLabel ||
+    result.sellSpeedLabel ||
+    "—"
+  );
+}
+
+function RingMetric(props: { label: string; value: unknown; sub?: string }) {
+  const score = clampScore(props.value, 0);
+  return (
+    <div className="rounded-2xl border border-white/10 bg-black/25 p-3 text-center">
+      <div
+        className="mx-auto flex h-24 w-24 items-center justify-center rounded-full"
+        style={{
+          background: `conic-gradient(rgba(74,222,128,.95) ${score * 3.6}deg, rgba(255,255,255,.12) 0deg)`,
+        }}
+      >
+        <div className="flex h-[74px] w-[74px] items-center justify-center rounded-full bg-[#071521] text-xl font-black text-white">
+          {score}
+        </div>
+      </div>
+      <div className="mt-2 text-xs font-black text-white/80">{props.label}</div>
+      {props.sub ? <div className="mt-1 text-[11px] text-white/45">{props.sub}</div> : null}
+    </div>
+  );
+}
+
+function SellCheckInsightPanel(props: { result: SellCheckResult; listedPrice?: string | number }) {
+  const result = props.result;
+  const listed = safeNumber(props.listedPrice);
+  const marketAvg = marketAveragePrice(result);
+  const designScore = result.imageAnalysis?.overallImageScore ?? result.scoreBreakdown?.imageScore ?? 0;
+  const marketDemand = result.marketAnalysis?.demandScore ?? result.scoreBreakdown?.marketScore ?? 0;
+  const priceScore = result.scoreBreakdown?.priceScore ?? 0;
+  const rotationScore =
+    result.sellSpeed === "fast" ? 88 :
+    result.sellSpeed === "normal" ? 68 :
+    result.sellSpeed === "slow" ? 42 :
+    result.sellSpeed === "collector_wait" ? 34 : 50;
+
+  return (
+    <div className="rounded-[1.75rem] border border-white/10 bg-white/[0.055] p-4 shadow-[0_24px_80px_rgba(0,0,0,.22)]">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="text-xs font-black uppercase tracking-[0.22em] text-cyan-100/60">SELL CHECK INSIGHT</div>
+          <div className="mt-1 text-lg font-black text-white">価格・回転・市場比較</div>
+          <p className="mt-1 text-xs leading-5 text-white/55">既存のSELL CHECK結果を削らず、判断に必要な指標だけを上に集約しています。</p>
+        </div>
+        <div className="rounded-2xl border border-emerald-300/25 bg-emerald-400/10 px-4 py-2 text-sm font-black text-emerald-50">
+          {result.action || result.rankLabel || fallbackRankLabel(result.rank)}
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-3 md:grid-cols-4">
+        <InfoCard label="推奨価格" value={`${formatYen(result.suggestedPriceMin)}〜${formatYen(result.suggestedPriceMax)}`} />
+        <InfoCard label="市場平均" value={yenOrDash(marketAvg)} />
+        <InfoCard label="入力価格" value={yenOrDash(listed)} />
+        <InfoCard label="価格による回転速度" value={priceRotationLabel(result)} />
+      </div>
+
+      <div className="mt-4 grid gap-3 md:grid-cols-4">
+        <RingMetric label="総合" value={result.score} sub="SELL CHECK" />
+        <RingMetric label="価格妥当性" value={priceScore} sub="入力価格×類似価格" />
+        <RingMetric label="デザイン性" value={designScore} sub="画像総合" />
+        <RingMetric label="市場需要" value={marketDemand} sub="市場平均との比較" />
+      </div>
+
+      <div className="mt-4 grid gap-3 md:grid-cols-3">
+        <InfoCard label="売却中央値" value={yenOrDash(result.similarData?.medianSoldPrice)} />
+        <InfoCard label="販売中中央値" value={yenOrDash(result.similarData?.medianActivePrice)} />
+        <InfoCard label="類似データ数" value={`${result.similarData?.similarCount ?? result.learnedSampleCount ?? 0}件`} />
+      </div>
+    </div>
+  );
+}
+
 export default function SellCheckPage() {
   const sp = useSearchParams();
   const initialDraftId = sp.get("draftId");
@@ -279,6 +499,7 @@ export default function SellCheckPage() {
   ]);
   const [batchBusy, setBatchBusy] = useState(false);
   const [batchMessage, setBatchMessage] = useState("");
+  const [diagnosisMode, setDiagnosisMode] = useState<"single" | "bulk">("single");
   const [stats, setStats] = useState<Stats | null>(null);
 
   const targetText = useMemo(() => {
@@ -439,24 +660,28 @@ export default function SellCheckPage() {
   }
 
   function setBatchItemImages(id: string, files: File[]) {
+    const { supported, rejected } = filterSupportedImageFiles(files);
+    const rejectMessage = unsupportedImageMessage(rejected);
+
     setBatchItems((prev) =>
       prev.map((item) => {
         if (item.id !== id) return item;
         item.previews.forEach((url) => URL.revokeObjectURL(url));
-        const nextFiles = files.slice(0, 8);
+        const nextFiles = supported.slice(0, 8);
         return {
           ...item,
           files: nextFiles,
           previews: nextFiles.map((file) => URL.createObjectURL(file)),
-          error: "",
+          error: rejectMessage,
         };
       }),
     );
   }
 
   async function uploadDiagnosisImage(file: File): Promise<string> {
+    const uploadFile = await compressImageForSellCheck(file, SELL_CHECK_SINGLE_IMAGE_LIMIT_BYTES);
     const form = new FormData();
-    form.append("file", file);
+    form.append("file", uploadFile);
 
     const headers: Record<string, string> = {};
     if (idToken) headers.Authorization = `Bearer ${idToken}`;
@@ -480,11 +705,18 @@ export default function SellCheckPage() {
       throw new Error("想定出品価格を入力してください。");
     }
 
-    if (item.files.length === 0) {
+    const { supported, rejected } = filterSupportedImageFiles(item.files);
+    if (rejected.length > 0) {
+      throw new Error(unsupportedImageMessage(rejected));
+    }
+
+    if (supported.length === 0) {
       throw new Error("診断対象画像を1枚以上選択してください。");
     }
 
-    const imageUrl = await uploadDiagnosisImage(item.files[0]);
+    const preparedImages = await prepareSellCheckImages(supported);
+    let uploadedImageUrls: string[] = [];
+    let imageUrl = "";
 
     const form = new FormData();
     form.append("price", item.price);
@@ -498,7 +730,7 @@ export default function SellCheckPage() {
     form.append("memo", item.memo);
     form.append("keywords", item.keywords);
     form.append("imageUrl", imageUrl);
-    item.files.slice(0, 8).forEach((file) => form.append("images", file));
+    preparedImages.forEach((file) => form.append("images", file));
 
     const res = await fetch("/api/sell-check/analyze", { method: "POST", body: form });
     const data = await res.json().catch(() => ({}));
@@ -509,9 +741,25 @@ export default function SellCheckPage() {
 
     const nextResult = data.result as SellCheckResult;
 
+    // 診断そのものを優先します。画像保存で容量・Storage・権限エラーが出ても、
+    // 診断結果は保存できるように代表画像保存だけ後段で試行します。
+    try {
+      uploadedImageUrls = [];
+      for (const file of preparedImages.slice(0, 4)) {
+        const url = await uploadDiagnosisImage(file);
+        if (url) uploadedImageUrls.push(url);
+      }
+      imageUrl = uploadedImageUrls[0] || "";
+    } catch (uploadError) {
+      console.warn("[sell-check] bulk image save skipped", uploadError);
+      uploadedImageUrls = [];
+      imageUrl = "";
+    }
+
     await saveDiagnosisPayload({
       result: nextResult,
       imageUrl,
+      imageUrls: uploadedImageUrls,
       imageSource: "manual",
       title: item.title,
       memo: item.memo,
@@ -552,7 +800,11 @@ export default function SellCheckPage() {
         }
       }
 
-      setBatchMessage(`${successCount}件の診断を保存しました。画像付きで診断履歴に保存されています。`);
+      setBatchMessage(
+        successCount > 0
+          ? `${successCount}件の診断を保存しました。画像付きで診断履歴に保存されています。`
+          : "診断対象がありません。各商品枠に画像と想定出品価格を入れてから一括診断してください。",
+      );
       await loadStats();
     } finally {
       setBatchBusy(false);
@@ -562,6 +814,7 @@ export default function SellCheckPage() {
   async function saveDiagnosisPayload(args: {
     result: SellCheckResult;
     imageUrl: string;
+    imageUrls?: string[];
     imageSource: "manual" | "draft";
     draftId?: string;
     title: string;
@@ -585,6 +838,8 @@ export default function SellCheckPage() {
       body: JSON.stringify({
         draftId: args.draftId,
         imageUrl: args.imageUrl,
+        imageUrls: args.imageUrls || (args.imageUrl ? [args.imageUrl] : []),
+        imageCount: args.imageUrls?.length || (args.imageUrl ? 1 : 0),
         imageSource: args.imageSource,
         price: args.price,
         category: args.category,
@@ -637,12 +892,14 @@ export default function SellCheckPage() {
   async function saveDiagnosisResult(args: {
     result: SellCheckResult;
     imageUrl: string;
+    imageUrls?: string[];
     imageSource: "manual" | "draft";
     draftId?: string;
   }) {
     await saveDiagnosisPayload({
       result: args.result,
       imageUrl: args.imageUrl,
+      imageUrls: args.imageUrls,
       imageSource: args.imageSource,
       draftId: args.draftId,
       price,
@@ -661,6 +918,7 @@ export default function SellCheckPage() {
 
     try {
       let targetFile: File | null = null;
+      let manualPreparedImages: File[] = [];
       let usedImageUrl = "";
       let usedDraftId = "";
       let imageSource: "manual" | "draft" = "manual";
@@ -686,19 +944,35 @@ export default function SellCheckPage() {
         usedDraftId = selectedDraft.id;
         imageSource = "draft";
       } else {
-        if (imageFiles.length === 0) {
-          setError("診断対象の画像を1枚以上選択してください。");
+        const { supported, rejected } = filterSupportedImageFiles(imageFiles);
+        if (rejected.length > 0) {
+          setError(unsupportedImageMessage(rejected));
           return;
         }
 
-        targetFile = imageFiles[0] || null;
-        usedImageUrl = previewUrls[0] || "";
+        if (supported.length === 0) {
+          setError("診断対象の画像を1枚以上選択してください。PNG / JPEG / GIF / WebP に対応しています。");
+          return;
+        }
+
+        manualPreparedImages = await prepareSellCheckImages(supported);
+        targetFile = manualPreparedImages[0] || null;
+        usedImageUrl = "";
         imageSource = "manual";
       }
 
       if (!price.trim()) {
         setError("想定出品価格を入力してください。");
         return;
+      }
+
+      if (sourceMode === "manual" && targetFile) {
+        try {
+          usedImageUrl = await uploadDiagnosisImage(targetFile);
+        } catch (uploadError) {
+          console.warn("[sell-check] manual image save skipped before analyze", uploadError);
+          usedImageUrl = "";
+        }
       }
 
       const form = new FormData();
@@ -713,7 +987,7 @@ export default function SellCheckPage() {
       form.append("memo", memo);
       form.append("keywords", keywords);
       if (sourceMode === "manual") {
-        imageFiles.slice(0, 8).forEach((file) => {
+        manualPreparedImages.forEach((file) => {
           form.append("images", file);
         });
       } else if (targetFile) {
@@ -811,6 +1085,30 @@ export default function SellCheckPage() {
         </div>
       </div>
 
+      <div className="flex flex-wrap gap-2 rounded-3xl border border-white/10 bg-black/25 p-2">
+        <button
+          type="button"
+          onClick={() => setDiagnosisMode("single")}
+          className={[
+            "rounded-2xl px-4 py-2 text-sm font-black transition",
+            diagnosisMode === "single" ? "bg-white text-black" : "bg-white/8 text-white hover:bg-white/12",
+          ].join(" ")}
+        >
+          1商品を診断
+        </button>
+        <button
+          type="button"
+          onClick={() => setDiagnosisMode("bulk")}
+          className={[
+            "rounded-2xl px-4 py-2 text-sm font-black transition",
+            diagnosisMode === "bulk" ? "bg-white text-black" : "bg-white/8 text-white hover:bg-white/12",
+          ].join(" ")}
+        >
+          複数商品を一括診断
+        </button>
+      </div>
+
+      {diagnosisMode === "bulk" ? (
       <section className="rounded-[2rem] border border-white/10 bg-white/[0.055] p-5 shadow-[0_24px_80px_rgba(0,0,0,0.25)] backdrop-blur-xl">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
@@ -832,7 +1130,7 @@ export default function SellCheckPage() {
                 <button type="button" onClick={() => removeBatchItem(item.id)} className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-bold text-white/60">削除</button>
               </div>
               <label className="flex min-h-[150px] cursor-pointer items-center justify-center rounded-2xl border border-dashed border-sky-200/25 bg-black/25 p-3 text-center text-sm text-white/55 hover:bg-white/10">
-                <input type="file" accept="image/*" multiple className="hidden" onChange={(e) => { setBatchItemImages(item.id, Array.from(e.target.files ?? [])); e.currentTarget.value = ""; }} />
+                <input type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple className="hidden" onChange={(e) => { setBatchItemImages(item.id, Array.from(e.target.files ?? [])); e.currentTarget.value = ""; }} />
                 {item.previews.length > 0 ? (
                   <div className="grid w-full grid-cols-2 gap-2">
                     {item.previews.slice(0, 4).map((url, i) => (
@@ -853,9 +1151,12 @@ export default function SellCheckPage() {
               <input value={item.keywords} onChange={(e) => updateBatchItem(item.id, { keywords: e.target.value })} className="mt-2 w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm text-white outline-none" placeholder="キーワード" />
               {item.error ? <div className="mt-3 rounded-xl border border-red-300/20 bg-red-500/10 p-2 text-xs text-red-100">{item.error}</div> : null}
               {item.result ? (
-                <div className="mt-3 rounded-xl border border-emerald-300/20 bg-emerald-400/10 p-3 text-sm text-emerald-50">
-                  <div className="font-black">診断保存済み：{item.result.score}/100・ランク{item.result.rank}</div>
-                  <div className="mt-1 text-xs text-emerald-50/70">{item.result.rankLabel || fallbackRankLabel(item.result.rank)}</div>
+                <div className="mt-3 space-y-3">
+                  <div className="rounded-xl border border-emerald-300/20 bg-emerald-400/10 p-3 text-sm text-emerald-50">
+                    <div className="font-black">診断保存済み：{item.result.score}/100・ランク{item.result.rank}</div>
+                    <div className="mt-1 text-xs text-emerald-50/70">{item.result.rankLabel || fallbackRankLabel(item.result.rank)}</div>
+                  </div>
+                  <SellCheckInsightPanel result={item.result} listedPrice={item.price} />
                 </div>
               ) : null}
             </div>
@@ -863,7 +1164,9 @@ export default function SellCheckPage() {
         </div>
         {batchMessage ? <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-3 text-sm text-white/75">{batchMessage}</div> : null}
       </section>
+      ) : null}
 
+      {diagnosisMode === "single" ? (
       <div className="grid grid-cols-1 gap-5 xl:grid-cols-[1.1fr_0.9fr]">
         <section className="rounded-3xl border border-white/10 bg-black/30 p-5">
           <div className="mb-4">
@@ -967,12 +1270,16 @@ export default function SellCheckPage() {
                   <label className="flex min-h-[220px] cursor-pointer items-center justify-center rounded-2xl border border-dashed border-white/20 bg-white/5 p-3 text-center text-sm text-white/60 hover:bg-white/10">
                     <input
                       type="file"
-                      accept="image/*"
+                      accept="image/png,image/jpeg,image/gif,image/webp"
                       multiple
                       className="hidden"
                       onChange={(e) => {
-                        const files = Array.from(e.target.files ?? []).slice(0, 8);
-                        setImageFiles(files);
+                        const selected = Array.from(e.target.files ?? []).slice(0, 8);
+                        const { supported, rejected } = filterSupportedImageFiles(selected);
+                        setImageFiles(supported);
+                        const msg = unsupportedImageMessage(rejected);
+                        if (msg) setError(msg);
+                        e.currentTarget.value = "";
                       }}
                     />
 
@@ -1172,6 +1479,8 @@ export default function SellCheckPage() {
 
                 <div className="mt-3 text-lg font-black">{result.action}</div>
               </div>
+
+              <SellCheckInsightPanel result={result} listedPrice={price} />
 
               <div className="rounded-2xl border border-white/10 bg-black/35 p-4">
                 <div className="text-sm font-bold text-white/55">推奨価格帯</div>
@@ -1555,6 +1864,7 @@ export default function SellCheckPage() {
           )}
         </section>
       </div>
+      ) : null}
 
       <section className="rounded-3xl border border-white/10 bg-black/30 p-5">
         <div className="mb-4">
