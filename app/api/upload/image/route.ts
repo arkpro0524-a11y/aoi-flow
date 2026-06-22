@@ -256,13 +256,8 @@ export async function POST(req: Request) {
     const draftId = String(form.get("draftId") || "").trim();
     const fileValue = form.get("file");
 
-    if (!draftId) {
-      return NextResponse.json(
-        { ok: false, error: "draftId required" },
-        { status: 400 }
-      );
-    }
-
+    // sell-check の複数診断では draftId を持たない画像も保存します。
+    // Bearer トークンがある場合は draftId なしでも本人UID配下へ保存できます。
     if (!fileValue || !(fileValue instanceof Blob)) {
       return NextResponse.json(
         { ok: false, error: "file required" },
@@ -307,7 +302,8 @@ export async function POST(req: Request) {
     const ts = Date.now();
     const rand = crypto.randomBytes(6).toString("hex");
 
-    const filePath = `users/${uid}/drafts/${draftId}/images/${ymd()}/${ts}_${rand}.${normalized.ext}`;
+    const folder = draftId ? `drafts/${draftId}` : "sell-check-diagnosis";
+    const filePath = `users/${uid}/${folder}/images/${ymd()}/${ts}_${rand}.${normalized.ext}`;
 
     await bucket.file(filePath).save(normalized.out, {
       contentType: normalized.contentType,

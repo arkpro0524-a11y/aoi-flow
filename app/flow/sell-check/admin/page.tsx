@@ -129,7 +129,7 @@ function getUploadPercent(totalSize: number): number {
 function getDeepGroupSize(value: string): number {
   const n = Number(value);
   if (!Number.isFinite(n)) return 1;
-  return Math.max(1, Math.min(5, Math.round(n)));
+  return Math.max(1, Math.min(10, Math.round(n)));
 }
 
 function getDeepProductCount(fileCount: number, groupSize: number): number {
@@ -1745,95 +1745,184 @@ export default function SellCheckAdminPage() {
     );
   }
 
-  return (
-    <div className="space-y-6 text-white">
-      <section className="overflow-hidden rounded-[2rem] border border-white/10 bg-white/[0.045] shadow-[0_28px_90px_rgba(0,0,0,0.35)] backdrop-blur-xl">
-        <div className="border-b border-white/10 bg-gradient-to-r from-sky-400/15 via-white/[0.06] to-emerald-300/10 p-5 sm:p-6">
-          <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
-            <div>
-              <div className="text-xs font-black uppercase tracking-[0.28em] text-sky-100/70">
-                LEARNING DATA CENTER
-              </div>
-              <h1 className="mt-2 text-3xl font-black tracking-tight text-white">
-                学習データ管理
-              </h1>
-              <p className="mt-2 max-w-3xl text-sm leading-relaxed text-white/65">
-                Learning DBを育てる入口です。1商品を深く学習、市場一覧を浅く大量学習、商品ごとのSELL CHECK深掘り学習を切り替えて使います。
-              </p>
-            </div>
+  const glassPanel: React.CSSProperties = {
+    border: "1px solid rgba(255,255,255,0.12)",
+    background: "linear-gradient(180deg, rgba(13,39,59,0.58), rgba(6,21,35,0.48))",
+    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.06), 0 18px 40px rgba(0,0,0,0.20)",
+    backdropFilter: "blur(14px)",
+    WebkitBackdropFilter: "blur(14px)",
+  };
 
-            <div className="grid min-w-[280px] grid-cols-2 gap-3 text-sm sm:grid-cols-4 xl:grid-cols-2">
-              <div className="rounded-3xl border border-white/10 bg-black/25 p-4">
-                <div className="text-xs font-bold text-white/45">学習DB件数</div>
-                <div className="mt-1 text-2xl font-black">{logs.length}</div>
-              </div>
-              <div className="rounded-3xl border border-white/10 bg-black/25 p-4">
-                <div className="text-xs font-bold text-white/45">入力中</div>
-                <div className="mt-1 text-2xl font-black">{rows.length}</div>
-              </div>
-              <div className="rounded-3xl border border-white/10 bg-black/25 p-4">
-                <div className="text-xs font-bold text-white/45">重複候補</div>
-                <div className="mt-1 text-2xl font-black">{duplicateRemoveCount}</div>
-              </div>
-              <div className="rounded-3xl border border-white/10 bg-black/25 p-4">
-                <div className="text-xs font-bold text-white/45">容量上限</div>
-                <div className="mt-1 text-2xl font-black">10MB</div>
-              </div>
+  const glassCard: React.CSSProperties = {
+    border: "1px solid rgba(255,255,255,0.10)",
+    background: "rgba(4,18,31,0.42)",
+    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.05)",
+  };
+
+  const inputBase: React.CSSProperties = {
+    width: "100%",
+    border: "1px solid rgba(255,255,255,0.12)",
+    borderRadius: 14,
+    background: "rgba(3,12,22,0.54)",
+    color: "rgba(248,250,252,0.94)",
+    outline: "none",
+    padding: "12px 14px",
+    fontSize: 13,
+    fontWeight: 700,
+  };
+
+  const primaryButton: React.CSSProperties = {
+    border: "1px solid rgba(147,197,253,0.36)",
+    borderRadius: 14,
+    background: "linear-gradient(135deg, rgba(37,99,235,0.94), rgba(14,165,233,0.84))",
+    color: "white",
+    padding: "12px 16px",
+    fontSize: 13,
+    fontWeight: 950,
+    boxShadow: "0 14px 30px rgba(37,99,235,0.25)",
+  };
+
+  const softButton: React.CSSProperties = {
+    border: "1px solid rgba(255,255,255,0.14)",
+    borderRadius: 14,
+    background: "rgba(255,255,255,0.065)",
+    color: "rgba(248,250,252,0.90)",
+    padding: "10px 14px",
+    fontSize: 12,
+    fontWeight: 900,
+  };
+
+  const activeMode = [
+    {
+      id: "single" as const,
+      icon: "◎",
+      title: "1商品を詳しく学習",
+      sub: "商品ページ本文と画像を統合",
+      caption: "Learning DB",
+    },
+    {
+      id: "market" as const,
+      icon: "▦",
+      title: "複数商品を浅く市場学習",
+      sub: "一覧スクショから商品カード抽出",
+      caption: "Market DB",
+    },
+    {
+      id: "deep" as const,
+      icon: "◇",
+      title: "複数商品を詳しくSELL CHECK学習",
+      sub: "商品枠ごとに画像と文章を投入",
+      caption: "Theory DB",
+    },
+  ];
+
+  return (
+    <div
+      className="learning-admin-modern"
+      style={{
+        width: "100%",
+        maxWidth: 1260,
+        margin: "0 auto",
+        display: "grid",
+        gap: 14,
+        color: "rgba(248,250,252,0.94)",
+      }}
+    >
+      <style>{`
+        .learning-admin-modern * { box-sizing: border-box; }
+        .learning-admin-modern button { -webkit-appearance: none; appearance: none; cursor: pointer; }
+        .learning-admin-modern button:disabled { cursor: not-allowed; opacity: .48; }
+        .learning-admin-modern input,
+        .learning-admin-modern textarea,
+        .learning-admin-modern select {
+          background: rgba(3,12,22,.62) !important;
+          color: rgba(248,250,252,.94) !important;
+          border-color: rgba(255,255,255,.12) !important;
+        }
+        .learning-admin-modern option { background: #0f1e30 !important; color: #f8fafc !important; }
+        .learning-admin-modern table { background: rgba(3,12,22,.48) !important; }
+        .learning-admin-modern th,
+        .learning-admin-modern td { border-color: rgba(255,255,255,.10) !important; }
+      `}</style>
+
+      <section style={{ ...glassPanel, borderRadius: 22, padding: 16 }}>
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16 }}>
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, letterSpacing: ".18em", fontWeight: 950, color: "#5eead4" }}>
+              <span style={{ width: 8, height: 8, borderRadius: 999, background: "#14b8a6", boxShadow: "0 0 14px rgba(45,212,191,.65)" }} />
+              LEARNING DATABASE CENTER
             </div>
+            <h2 style={{ margin: "8px 0 0", fontSize: 26, lineHeight: 1.15, fontWeight: 950 }}>学習データ管理</h2>
+            <p style={{ margin: "8px 0 0", maxWidth: 850, color: "rgba(255,255,255,.64)", fontSize: 13, lineHeight: 1.7 }}>
+              売れる診断の判断精度を育てる場所です。商品詳細・市場一覧・SELL CHECK深掘りを切り替えてLearning DBへ蓄積します。
+            </p>
+          </div>
+          <div style={{ minWidth: 250, ...glassCard, borderRadius: 18, padding: 12 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12, fontWeight: 900, color: "rgba(255,255,255,.68)" }}>
+              <span>10MB CAPACITY</span>
+              <span>{formatBytes(deepBulkTotalSize)} / 10MB</span>
+            </div>
+            <div style={{ marginTop: 9, height: 9, borderRadius: 999, background: "rgba(255,255,255,.10)", overflow: "hidden" }}>
+              <div style={{ height: "100%", width: `${getUploadPercent(deepBulkTotalSize)}%`, borderRadius: 999, background: deepBulkTotalSize > IMAGE_UPLOAD_SOFT_LIMIT_BYTES ? "linear-gradient(90deg,#f97316,#ef4444)" : "linear-gradient(90deg,#2563eb,#22d3ee,#34d399)" }} />
+            </div>
+            <div style={{ marginTop: 8, textAlign: "right", fontSize: 12, color: "rgba(255,255,255,.56)", fontWeight: 850 }}>残り {formatBytes(getUploadRemainingBytes(deepBulkTotalSize))}</div>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-4 p-5 lg:grid-cols-3">
-          {([
-            {
-              id: "single" as const,
-              icon: "◎",
-              title: "① 1商品を詳しく学習",
-              desc: "商品ページ本文と複数画像を統合して、1商品を深くLearning DB化します。",
-              badge: "商品詳細",
-            },
-            {
-              id: "market" as const,
-              icon: "▦",
-              title: "② 複数商品を浅く市場学習",
-              desc: "一覧スクショから商品カードを検出し、Market DB向きに大量登録します。",
-              badge: "市場観測",
-            },
-            {
-              id: "deep" as const,
-              icon: "◇",
-              title: "③ 複数商品を詳しくSELL CHECK学習",
-              desc: "商品ごとの箱に画像と文章を入れて、SELL CHECK / Theory DB向けに深掘りします。",
-              badge: "本命",
-            },
-          ]).map((mode) => {
+        <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: 10 }}>
+          {[
+            ["学習DB件数", `${logs.length}件`, "保存済み", "▾"],
+            ["重複候補", `${duplicateRemoveCount}件`, "分析待ち", "□"],
+            ["入力中", `${rows.length}件`, "確認待ち", "⌁"],
+            ["容量上限", "10MB", "最大容量", "◌"],
+            ["市場接続", "OK", "利用可能", "◎"],
+          ].map(([label, value, sub, icon]) => (
+            <div key={label} style={{ ...glassCard, borderRadius: 18, padding: 13, minHeight: 92, display: "flex", gap: 12, alignItems: "center" }}>
+              <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 36, height: 36, borderRadius: 12, background: "rgba(59,130,246,.18)", color: "#bfdbfe", fontWeight: 950 }}>{icon}</span>
+              <span>
+                <div style={{ fontSize: 12, color: "rgba(255,255,255,.55)", fontWeight: 850 }}>{label}</div>
+                <div style={{ marginTop: 3, fontSize: 22, lineHeight: 1.05, fontWeight: 950 }}>{value}</div>
+                <div style={{ marginTop: 3, fontSize: 11, color: "rgba(255,255,255,.42)", fontWeight: 750 }}>{sub}</div>
+              </span>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section style={{ ...glassPanel, borderRadius: 22, padding: 14 }}>
+        <div style={{ fontSize: 13, fontWeight: 950, marginBottom: 10 }}>学習モードを選択</div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 12 }}>
+          {activeMode.map((mode, index) => {
             const active = learningMode === mode.id;
+            const gradients = [
+              "linear-gradient(135deg, rgba(37,99,235,.48), rgba(29,78,216,.22))",
+              "linear-gradient(135deg, rgba(20,184,166,.42), rgba(13,148,136,.18))",
+              "linear-gradient(135deg, rgba(124,58,237,.46), rgba(79,70,229,.18))",
+            ];
             return (
               <button
                 key={mode.id}
                 type="button"
                 onClick={() => setLearningMode(mode.id)}
-                className={`group rounded-[1.6rem] border p-5 text-left transition ${
-                  active
-                    ? "border-sky-200/45 bg-sky-300/15 shadow-[0_18px_70px_rgba(56,189,248,0.18)]"
-                    : "border-white/10 bg-black/25 hover:border-white/20 hover:bg-white/[0.07]"
-                }`}
+                style={{
+                  ...glassCard,
+                  borderRadius: 18,
+                  padding: 16,
+                  minHeight: 86,
+                  textAlign: "left",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 14,
+                  background: active ? gradients[index] : "rgba(4,18,31,.44)",
+                  border: active ? "1px solid rgba(94,234,212,.45)" : "1px solid rgba(255,255,255,.10)",
+                  boxShadow: active ? "0 0 26px rgba(45,212,191,.12), inset 0 1px 0 rgba(255,255,255,.06)" : "inset 0 1px 0 rgba(255,255,255,.04)",
+                }}
               >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-center gap-3">
-                    <div className={`flex h-12 w-12 items-center justify-center rounded-2xl text-xl font-black ${active ? "bg-sky-300/25 text-sky-100" : "bg-white/10 text-white/70"}`}>
-                      {mode.icon}
-                    </div>
-                    <div>
-                      <div className="text-xs font-black uppercase tracking-[0.18em] text-white/40">{mode.badge}</div>
-                      <div className="mt-1 text-base font-black text-white">{mode.title}</div>
-                    </div>
-                  </div>
-                  <div className={`rounded-full px-3 py-1 text-xs font-black ${active ? "bg-sky-100 text-sky-950" : "bg-white/10 text-white/55"}`}>
-                    {active ? "選択中" : "開く"}
-                  </div>
-                </div>
-                <p className="mt-4 text-sm leading-relaxed text-white/58">{mode.desc}</p>
+                <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", flex: "0 0 auto", width: 36, height: 36, borderRadius: 999, background: active ? "rgba(255,255,255,.14)" : "rgba(255,255,255,.08)", fontSize: 16, fontWeight: 950 }}>{index + 1}</span>
+                <span style={{ minWidth: 0 }}>
+                  <span style={{ display: "block", fontSize: 15, fontWeight: 950 }}>{mode.title}</span>
+                  <span style={{ display: "block", marginTop: 4, fontSize: 12, color: "rgba(255,255,255,.56)", fontWeight: 750 }}>{mode.sub}</span>
+                </span>
               </button>
             );
           })}
@@ -1841,628 +1930,211 @@ export default function SellCheckAdminPage() {
       </section>
 
       {learningMode === "single" ? (
-        <section className="overflow-hidden rounded-[2rem] border border-white/10 bg-white/[0.045] shadow-[0_24px_80px_rgba(0,0,0,0.30)] backdrop-blur-xl">
-          <div className="border-b border-white/10 bg-gradient-to-r from-blue-400/15 to-white/[0.04] p-5">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <div className="text-xs font-black uppercase tracking-[0.24em] text-blue-100/70">SINGLE PRODUCT LEARNING</div>
-                <h2 className="mt-1 text-2xl font-black">① 1商品を詳しく学習</h2>
-                <p className="mt-2 text-sm text-white/60">商品ページ本文と複数画像を統合解析します。本文だけ・画像だけでも実行できます。</p>
-              </div>
-              <button
-                type="button"
-                onClick={extractRichFromTextAndImages}
-                disabled={richBusy || (!richText.trim() && richImageFiles.length === 0)}
-                className="rounded-2xl bg-blue-100 px-5 py-3 text-sm font-black text-blue-950 disabled:opacity-50"
-              >
-                {richBusy ? "統合解析中..." : "1商品を学習データ化"}
-              </button>
+        <section style={{ ...glassPanel, borderRadius: 22, padding: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 14, marginBottom: 12 }}>
+            <div>
+              <div style={{ fontSize: 12, letterSpacing: ".16em", fontWeight: 950, color: "rgba(147,197,253,.72)" }}>SINGLE PRODUCT LEARNING</div>
+              <h3 style={{ margin: "5px 0 0", fontSize: 21, fontWeight: 950 }}>1商品を詳しく学習</h3>
             </div>
+            <button type="button" onClick={extractRichFromTextAndImages} disabled={richBusy || (!richText.trim() && richImageFiles.length === 0)} style={primaryButton}>{richBusy ? "統合解析中..." : "1商品を学習データ化"}</button>
           </div>
-
-          <div className="grid grid-cols-1 gap-5 p-5 xl:grid-cols-[1fr_380px]">
-            <label className="block rounded-[1.5rem] border border-white/10 bg-black/25 p-4">
-              <div className="mb-2 text-sm font-black text-white/75">商品ページ本文・補足情報</div>
-              <textarea
-                value={richText}
-                onChange={(e) => setRichText(e.target.value)}
-                className="min-h-[300px] w-full rounded-2xl border border-white/10 bg-black/45 p-4 text-sm text-white outline-none placeholder:text-white/30"
-                placeholder="商品名、価格、商品説明、状態、売却済み表示、閲覧数、いいね数などを貼り付け"
-              />
-            </label>
-
-            <label className="flex min-h-[360px] cursor-pointer flex-col items-center justify-center rounded-[1.5rem] border border-dashed border-blue-200/35 bg-black/30 p-4 text-center text-sm text-white/65 transition hover:bg-white/10">
-              <input
-                type="file"
-                accept="image/*"
-                multiple
-                className="hidden"
-                disabled={richBusy}
-                onChange={(e) => {
-                  const files = Array.from(e.target.files ?? []);
-                  setRichImages(files);
-                  e.currentTarget.value = "";
-                }}
-              />
-              {richImagePreviewUrls.length > 0 ? (
-                <div className="grid w-full grid-cols-2 gap-3">
-                  {richImagePreviewUrls.map((url, index) => (
-                    <img key={`${url}-${index}`} src={url} alt="統合解析用の商品画像" className="h-[130px] w-full rounded-xl border border-white/10 bg-black/30 object-contain" />
-                  ))}
-                </div>
-              ) : (
-                <span className="leading-relaxed">
-                  <span className="text-3xl">＋</span>
-                  <br />商品画像・スクショを選択
-                  <br /><span className="text-xs text-white/45">本文だけでも解析できます</span>
-                </span>
-              )}
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.15fr) minmax(310px, .85fr)", gap: 14 }}>
+            <textarea value={richText} onChange={(e) => setRichText(e.target.value)} style={{ ...inputBase, minHeight: 190, resize: "vertical" }} placeholder="商品名、価格、商品説明、状態、売却済み表示、閲覧数、いいね数などを貼り付け" />
+            <label style={{ ...glassCard, borderRadius: 18, borderStyle: "dashed", minHeight: 190, padding: 12, display: "flex", alignItems: "center", justifyContent: "center", textAlign: "center", cursor: "pointer" }}>
+              <input type="file" accept="image/*" multiple style={{ display: "none" }} disabled={richBusy} onChange={(e) => { setRichImages(Array.from(e.target.files ?? [])); e.currentTarget.value = ""; }} />
+              <span style={{ color: "rgba(255,255,255,.70)", fontWeight: 900 }}>{richImageFiles.length > 0 ? `${richImageFiles.length}枚選択中` : "商品画像・スクショを選択"}</span>
             </label>
           </div>
         </section>
       ) : null}
 
       {learningMode === "market" ? (
-        <section className="overflow-hidden rounded-[2rem] border border-sky-300/20 bg-sky-400/10 shadow-[0_24px_80px_rgba(0,0,0,0.30)] backdrop-blur-xl">
-          <div className="border-b border-white/10 bg-gradient-to-r from-sky-300/15 to-blue-500/10 p-5">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <div className="text-xs font-black uppercase tracking-[0.24em] text-sky-100/70">MARKET BULK LEARNING</div>
-                <h2 className="mt-1 text-2xl font-black">② 複数商品を浅く市場学習</h2>
-                <p className="mt-2 text-sm text-white/60">一覧スクショから商品カードを検出し、1商品=1行でLearning DB用データを作ります。</p>
-              </div>
-              <div className="rounded-2xl border border-sky-200/20 bg-black/25 px-4 py-3 text-right text-xs font-bold text-white/65">
-                <div>選択 {marketBulkImageFiles.length}枚 / 最大20枚</div>
-                <div className="mt-1">容量 {formatBytes(marketBulkTotalSize)} / {formatBytes(IMAGE_UPLOAD_HARD_LIMIT_BYTES)}</div>
-              </div>
+        <section style={{ ...glassPanel, borderRadius: 22, padding: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 14, marginBottom: 12 }}>
+            <div>
+              <div style={{ fontSize: 12, letterSpacing: ".16em", fontWeight: 950, color: "rgba(45,212,191,.72)" }}>MARKET SCREENSHOT LEARNING</div>
+              <h3 style={{ margin: "5px 0 0", fontSize: 21, fontWeight: 950 }}>複数商品を浅く市場学習</h3>
             </div>
+            <button type="button" onClick={extractMarketBulkFromScreenshots} disabled={marketBulkBusy || marketBulkImageFiles.length === 0} style={primaryButton}>{marketBulkBusy ? "市場スクショ解析中..." : "市場スクショから一括データ化"}</button>
           </div>
-
-          <div className="grid grid-cols-1 gap-5 p-5 xl:grid-cols-[1fr_420px]">
-            <div className="space-y-4">
-              <textarea
-                value={marketBulkText}
-                onChange={(e) => setMarketBulkText(e.target.value)}
-                className="min-h-[230px] w-full rounded-2xl border border-white/10 bg-black/45 p-4 text-sm text-white outline-none placeholder:text-white/30"
-                placeholder="任意：検索語、対象市場、スクショの補足を入力。例：メルカリ 売却済み 英国 ヴィンテージ ミニチュアハウス"
-              />
-              <div className="rounded-2xl border border-white/10 bg-black/25 p-4">
-                <div className="mb-2 flex items-center justify-between text-xs font-bold text-white/70">
-                  <span>容量メーター</span>
-                  <span>残り {formatBytes(getUploadRemainingBytes(marketBulkTotalSize))}</span>
-                </div>
-                <div className="h-3 overflow-hidden rounded-full bg-white/10">
-                  <div className={`h-full rounded-full ${marketBulkTotalSize > IMAGE_UPLOAD_SOFT_LIMIT_BYTES ? "bg-red-400" : marketBulkTotalSize > IMAGE_UPLOAD_HARD_LIMIT_BYTES * 0.75 ? "bg-yellow-300" : "bg-sky-300"}`} style={{ width: `${getUploadPercent(marketBulkTotalSize)}%` }} />
-                </div>
-              </div>
-            </div>
-
-            <label className="flex min-h-[340px] cursor-pointer flex-col items-center justify-center rounded-[1.5rem] border border-dashed border-sky-200/35 bg-black/35 p-4 text-center text-sm text-white/65 transition hover:bg-white/10">
-              <input
-                type="file"
-                accept="image/*"
-                multiple
-                className="hidden"
-                disabled={marketBulkBusy}
-                onChange={(e) => {
-                  const files = Array.from(e.target.files ?? []);
-                  void setMarketBulkImages(files);
-                  e.currentTarget.value = "";
-                }}
-              />
-              {marketBulkImagePreviewUrls.length > 0 ? (
-                <div className="grid w-full grid-cols-2 gap-3">
-                  {marketBulkImagePreviewUrls.slice(0, 12).map((url, index) => (
-                    <img key={`${url}-${index}`} src={url} alt="市場スクショ" className="h-[95px] w-full rounded-xl border border-white/10 bg-black/30 object-contain" />
-                  ))}
-                  {marketBulkImagePreviewUrls.length > 12 ? <div className="flex h-[95px] items-center justify-center rounded-xl border border-white/10 bg-white/5 text-xs font-bold text-white/60">+{marketBulkImagePreviewUrls.length - 12}枚</div> : null}
-                </div>
-              ) : (
-                <span className="leading-relaxed">
-                  <span className="text-3xl">＋</span>
-                  <br />市場スクショを複数選択
-                  <br /><span className="text-xs text-white/45">一覧向き・浅く大量学習</span>
-                </span>
-              )}
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(330px, .75fr)", gap: 14 }}>
+            <textarea value={marketBulkText} onChange={(e) => setMarketBulkText(e.target.value)} disabled={marketBulkBusy} style={{ ...inputBase, minHeight: 180, resize: "vertical" }} placeholder="任意：検索語、対象市場、スクショの補足。例：メルカリ 売却済み 英国 ヴィンテージ" />
+            <label style={{ ...glassCard, borderRadius: 18, borderStyle: "dashed", minHeight: 180, padding: 12, display: "flex", alignItems: "center", justifyContent: "center", textAlign: "center", cursor: "pointer" }}>
+              <input type="file" accept="image/*" multiple style={{ display: "none" }} disabled={marketBulkBusy} onChange={(e) => { void setMarketBulkImages(Array.from(e.target.files ?? [])); e.currentTarget.value = ""; }} />
+              <span style={{ color: "rgba(255,255,255,.70)", fontWeight: 900 }}>{marketBulkImageFiles.length > 0 ? `${marketBulkImageFiles.length}枚 / ${formatBytes(marketBulkTotalSize)}` : "市場スクショを選択"}</span>
             </label>
-          </div>
-
-          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/10 p-5">
-            <button type="button" onClick={() => { setMarketBulkText(""); void setMarketBulkImages([]); }} disabled={marketBulkBusy} className="rounded-2xl border border-white/15 bg-white/10 px-5 py-3 text-sm font-black text-white disabled:opacity-50">入力クリア</button>
-            <button type="button" onClick={extractMarketBulkFromScreenshots} disabled={marketBulkBusy || (!marketBulkText.trim() && marketBulkImageFiles.length === 0)} className="rounded-2xl bg-sky-100 px-6 py-3 text-sm font-black text-sky-950 disabled:opacity-50">{marketBulkBusy ? "市場スクショ解析中..." : "市場スクショから複数商品を一括データ化"}</button>
           </div>
         </section>
       ) : null}
 
       {learningMode === "deep" ? (
-        <section className="overflow-hidden rounded-[2rem] border border-emerald-200/20 bg-gradient-to-br from-emerald-300/[0.10] via-white/[0.055] to-sky-300/[0.08] shadow-[0_28px_90px_rgba(0,0,0,0.35)] backdrop-blur-xl">
-          <div className="border-b border-white/10 bg-gradient-to-r from-emerald-300/15 via-sky-300/10 to-blue-500/10 p-5 sm:p-6">
-            <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
-              <div>
-                <div className="text-xs font-black uppercase tracking-[0.28em] text-emerald-100/70">SELL CHECK DEEP LEARNING</div>
-                <h2 className="mt-2 text-3xl font-black tracking-tight text-white">③ 複数商品を詳しくSELL CHECK学習</h2>
-                <p className="mt-2 max-w-3xl text-sm leading-relaxed text-white/65">
-                  最大枚数ではなく10MBが上限です。1商品あたりのスクショ枚数を決めると、各商品枠がその枚数で満杯になった時点で次の枠を自動追加します。
-                </p>
+        <section style={{ ...glassPanel, borderRadius: 22, padding: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, marginBottom: 14 }}>
+            <div>
+              <div style={{ fontSize: 12, letterSpacing: ".16em", fontWeight: 950, color: "rgba(110,231,183,.72)" }}>SELL CHECK DEEP LEARNING</div>
+              <h3 style={{ margin: "5px 0 0", fontSize: 24, lineHeight: 1.15, fontWeight: 950 }}>③ 複数商品を詳しくSELL CHECK学習</h3>
+              <p style={{ margin: "7px 0 0", color: "rgba(255,255,255,.58)", fontSize: 12.5, lineHeight: 1.65 }}>
+                最大枚数ではなく10MBが上限です。1商品あたりのスクショ枚数を決めると、各商品枠がその枚数で満杯になった時点で次の枠を自動追加します。
+              </p>
+            </div>
+            <button type="button" onClick={extractDeepBulkFromScreenshots} disabled={deepBulkBusy || (!deepBulkText.trim() && deepBulkImageFiles.length === 0 && deepBulkProductTexts.every((text) => !text.trim()))} style={primaryButton}>{deepBulkBusy ? "SELL CHECK深掘り解析中..." : "学習データを保存・更新する"}</button>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "230px minmax(0,1fr) 320px", gap: 12, marginBottom: 14 }}>
+            <div style={{ ...glassCard, borderRadius: 18, padding: 14 }}>
+              <div style={{ fontSize: 12, color: "rgba(255,255,255,.58)", fontWeight: 950 }}>1商品あたりのスクショ枚数を設定</div>
+              <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 8 }}>
+                <button type="button" onClick={() => setDeepBulkGroupSize(String(Math.max(1, deepBulkGroupSizeNumber - 1)))} disabled={deepBulkBusy || deepBulkGroupSizeNumber <= 1} style={{ ...softButton, width: 42, height: 38, padding: 0 }}>−</button>
+                <select value={deepBulkGroupSize} onChange={(e) => setDeepBulkGroupSize(e.target.value)} disabled={deepBulkBusy} style={{ ...inputBase, height: 38, padding: "6px 10px", textAlign: "center" }}>
+                  {Array.from({ length: 10 }, (_, i) => i + 1).map((num) => <option key={num} value={String(num)}>{num}枚 / 商品</option>)}
+                </select>
+                <button type="button" onClick={() => setDeepBulkGroupSize(String(Math.min(10, deepBulkGroupSizeNumber + 1)))} disabled={deepBulkBusy || deepBulkGroupSizeNumber >= 10} style={{ ...softButton, width: 42, height: 38, padding: 0 }}>＋</button>
               </div>
-              <div className="grid min-w-[340px] grid-cols-3 gap-3 text-sm">
-                <div className="rounded-3xl border border-white/10 bg-black/25 p-4"><div className="text-xs text-white/45">商品枠</div><div className="mt-1 text-2xl font-black">{deepBulkProductBoxes.length}</div></div>
-                <div className="rounded-3xl border border-white/10 bg-black/25 p-4"><div className="text-xs text-white/45">解析対象</div><div className="mt-1 text-2xl font-black">{deepBulkProductCount}</div></div>
-                <div className="rounded-3xl border border-white/10 bg-black/25 p-4"><div className="text-xs text-white/45">使用容量</div><div className="mt-1 text-2xl font-black">{formatBytes(deepBulkTotalSize)}</div></div>
+              <div style={{ marginTop: 9, fontSize: 11, color: "rgba(255,255,255,.46)", fontWeight: 750 }}>1商品につき1〜10枚まで設定できます。</div>
+            </div>
+
+            <div style={{ ...glassCard, borderRadius: 18, padding: 14 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12, fontWeight: 950, color: "rgba(255,255,255,.68)", marginBottom: 9 }}>
+                <span>容量メーター</span>
+                <span>{formatBytes(deepBulkTotalSize)} / 10MB</span>
+              </div>
+              <div style={{ height: 11, borderRadius: 999, background: "rgba(255,255,255,.10)", overflow: "hidden" }}>
+                <div style={{ height: "100%", width: `${getUploadPercent(deepBulkTotalSize)}%`, borderRadius: 999, background: deepBulkTotalSize > IMAGE_UPLOAD_SOFT_LIMIT_BYTES ? "linear-gradient(90deg,#f97316,#ef4444)" : "linear-gradient(90deg,#2563eb,#22d3ee,#34d399)" }} />
+              </div>
+              <div style={{ marginTop: 9, display: "flex", justifyContent: "space-between", color: "rgba(255,255,255,.52)", fontSize: 12, fontWeight: 850 }}>
+                <span>{getUploadPercent(deepBulkTotalSize)}%</span>
+                <span>残り {formatBytes(getUploadRemainingBytes(deepBulkTotalSize))}</span>
+              </div>
+            </div>
+
+            <div style={{ ...glassCard, borderRadius: 18, padding: 14 }}>
+              <div style={{ fontSize: 12, color: "rgba(255,255,255,.58)", fontWeight: 950, marginBottom: 8 }}>学習の流れ</div>
+              <div style={{ display: "grid", gap: 6, fontSize: 12, color: "rgba(255,255,255,.66)", fontWeight: 800 }}>
+                <span><b style={{ color: "#93c5fd" }}>STEP 1</b>　枚数を決める</span>
+                <span><b style={{ color: "#93c5fd" }}>STEP 2</b>　商品枠に投入（画像＋文章）</span>
+                <span><b style={{ color: "#93c5fd" }}>STEP 3</b>　SELL CHECK項目へ変換</span>
               </div>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-5 p-5 xl:grid-cols-[360px_1fr]">
-            <aside className="space-y-4">
-              <div className="rounded-[1.5rem] border border-white/10 bg-black/25 p-4">
-                <div className="text-xs font-black uppercase tracking-[0.22em] text-white/45">SETTINGS</div>
-                <label className="mt-4 block text-sm font-black text-white/70">
-                  1商品あたりのスクショ枚数
-                  <select value={deepBulkGroupSize} onChange={(e) => setDeepBulkGroupSize(e.target.value)} disabled={deepBulkBusy} className="mt-2 w-full rounded-2xl border border-white/10 bg-black/55 px-4 py-3 text-sm text-white outline-none">
-                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => <option key={n} value={String(n)}>{n}枚 / 商品</option>)}
-                  </select>
-                </label>
-                <div className="mt-3 rounded-2xl border border-white/10 bg-white/[0.04] p-3 text-xs leading-relaxed text-white/55">
-                  例：1枚/商品なら画像を1枚入れるたび次の商品枠が増えます。2枚/商品なら2枚で1商品として解析します。
-                </div>
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0,.34fr) minmax(0,.66fr)", gap: 12 }}>
+            <div style={{ display: "grid", gap: 12 }}>
+              <textarea value={deepBulkText} onChange={(e) => setDeepBulkText(e.target.value)} disabled={deepBulkBusy} style={{ ...inputBase, minHeight: 145, resize: "vertical" }} placeholder="任意：検索語、対象市場、撮影ルール、共通条件など" />
+              <button type="button" onClick={() => { setDeepBulkText(""); setDeepBulkProductTexts([]); clearDeepBulkProductBoxes(); }} disabled={deepBulkBusy} style={softButton}>入力クリア</button>
+            </div>
+
+            <div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 10 }}>
+                <div style={{ fontSize: 13, fontWeight: 950, color: "#a7f3d0" }}>商品枠（自動追加されます）</div>
+                <button type="button" onClick={addDeepBulkProductBox} disabled={deepBulkBusy || !deepBulkCanAddProductBox} style={{ ...softButton, padding: "8px 12px" }}>＋ 商品を追加</button>
               </div>
-
-              <div className="rounded-[1.5rem] border border-white/10 bg-black/25 p-4">
-                <div className="mb-2 flex items-center justify-between text-xs font-bold text-white/70">
-                  <span>容量メーター</span>
-                  <span>残り {formatBytes(getUploadRemainingBytes(deepBulkTotalSize))}</span>
-                </div>
-                <div className="h-3 overflow-hidden rounded-full bg-white/10">
-                  <div className={`h-full rounded-full ${deepBulkTotalSize > IMAGE_UPLOAD_SOFT_LIMIT_BYTES ? "bg-red-400" : deepBulkTotalSize > IMAGE_UPLOAD_HARD_LIMIT_BYTES * 0.75 ? "bg-yellow-300" : "bg-emerald-300"}`} style={{ width: `${getUploadPercent(deepBulkTotalSize)}%` }} />
-                </div>
-                <div className="mt-3 flex items-end justify-between gap-3">
-                  <div className="text-3xl font-black text-white">{formatBytes(deepBulkTotalSize)}</div>
-                  <div className="text-sm font-bold text-white/45">/ {formatBytes(IMAGE_UPLOAD_HARD_LIMIT_BYTES)}</div>
-                </div>
-                <div className="mt-3 text-xs leading-relaxed text-white/50">赤表示になったら画像を減らしてください。送信前に自動圧縮します。</div>
-              </div>
-
-              <label className="block rounded-[1.5rem] border border-white/10 bg-black/25 p-4 text-sm font-black text-white/70">
-                全体メモ・今回の調査条件
-                <textarea value={deepBulkText} onChange={(e) => setDeepBulkText(e.target.value)} disabled={deepBulkBusy} className="mt-2 min-h-[150px] w-full rounded-2xl border border-white/10 bg-black/45 p-3 text-sm font-medium text-white outline-none placeholder:text-white/30" placeholder="任意：検索語、対象市場、撮影ルール、共通条件など" />
-              </label>
-            </aside>
-
-            <div className="space-y-5">
-              <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
-                <div className="rounded-3xl border border-white/10 bg-black/20 p-4"><div className="text-xs font-black text-white/45">STEP 1</div><div className="mt-1 font-black">枚数を決める</div><div className="mt-1 text-xs text-white/50">1商品に使う枚数を設定</div></div>
-                <div className="rounded-3xl border border-white/10 bg-black/20 p-4"><div className="text-xs font-black text-white/45">STEP 2</div><div className="mt-1 font-black">商品枠に投入</div><div className="mt-1 text-xs text-white/50">枠ごとに画像と文章</div></div>
-                <div className="rounded-3xl border border-white/10 bg-black/20 p-4"><div className="text-xs font-black text-white/45">STEP 3</div><div className="mt-1 font-black">深掘り解析</div><div className="mt-1 text-xs text-white/50">SELL CHECK項目へ変換</div></div>
-              </div>
-
-              <div className="grid grid-cols-1 gap-4 2xl:grid-cols-2">
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 12 }}>
                 {deepBulkProductBoxes.map((box, index) => {
                   const boxSize = getFilesTotalSize(box.files);
                   const boxRemainingSlots = Math.max(0, deepBulkGroupSizeNumber - box.files.length);
                   const canAddImages = deepBulkTotalSize < IMAGE_UPLOAD_HARD_LIMIT_BYTES && boxRemainingSlots > 0;
-                  const filled = box.files.length >= deepBulkGroupSizeNumber;
-
                   return (
-                    <div key={box.id} className={`overflow-hidden rounded-[1.75rem] border shadow-[0_16px_55px_rgba(0,0,0,0.22)] ${filled ? "border-emerald-200/35 bg-emerald-300/[0.08]" : "border-white/10 bg-white/[0.045]"}`}>
-                      <div className="border-b border-white/10 bg-gradient-to-r from-emerald-300/12 to-sky-300/10 p-4">
-                        <div className="flex flex-wrap items-center justify-between gap-3">
-                          <div>
-                            <div className="text-xs font-black uppercase tracking-[0.22em] text-emerald-100/65">PRODUCT BOX</div>
-                            <div className="mt-1 text-xl font-black">商品{index + 1}</div>
-                          </div>
-                          <div className="flex flex-wrap items-center gap-2 text-xs">
-                            <span className="rounded-full border border-white/10 bg-black/30 px-3 py-1 font-black text-white/70">{box.files.length}/{deepBulkGroupSizeNumber}枚</span>
-                            <span className="rounded-full border border-white/10 bg-black/30 px-3 py-1 font-bold text-white/55">{formatBytes(boxSize)}</span>
-                            <button type="button" onClick={() => removeDeepBulkProductBox(box.id)} disabled={deepBulkBusy || deepBulkProductBoxes.length <= 1} className="rounded-full border border-red-200/20 bg-red-400/10 px-3 py-1 font-black text-red-100 disabled:opacity-40">削除</button>
-                          </div>
+                    <div key={box.id} style={{ ...glassCard, borderRadius: 18, padding: 12 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 9 }}>
+                        <div style={{ fontSize: 14, fontWeight: 950 }}>商品{index + 1}</div>
+                        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                          <span style={{ borderRadius: 999, padding: "4px 8px", background: "rgba(255,255,255,.08)", fontSize: 11, fontWeight: 950 }}>{box.files.length}/{deepBulkGroupSizeNumber}枚</span>
+                          <span style={{ borderRadius: 999, padding: "4px 8px", background: "rgba(255,255,255,.08)", fontSize: 11, fontWeight: 850 }}>{formatBytes(boxSize)}</span>
                         </div>
                       </div>
-
-                      <div className="grid grid-cols-1 gap-4 p-4 lg:grid-cols-[260px_1fr]">
-                        <label className="flex min-h-[230px] cursor-pointer items-center justify-center rounded-2xl border border-dashed border-emerald-200/35 bg-black/35 p-3 text-center text-sm text-white/65 transition hover:bg-white/10">
-                          <input type="file" accept="image/*" multiple className="hidden" disabled={deepBulkBusy || !canAddImages} onChange={(e) => { const files = Array.from(e.target.files ?? []); void setDeepBulkBoxImages(box.id, files); e.currentTarget.value = ""; }} />
-                          {box.previewUrls.length > 0 ? (
-                            <div className="grid w-full grid-cols-2 gap-2">
-                              {box.previewUrls.map((url, imageIndex) => (
-                                <div key={`${url}-${imageIndex}`} className="relative rounded-xl border border-white/10 bg-black/30 p-1"><img src={url} alt={`商品${index + 1}のスクショ`} className="h-[92px] w-full rounded-lg object-contain" /><div className="absolute left-2 top-2 rounded-full bg-black/75 px-2 py-0.5 text-[10px] font-black text-white">{imageIndex + 1}</div></div>
-                              ))}
-                              {canAddImages ? <div className="flex h-[92px] items-center justify-center rounded-xl border border-dashed border-white/20 bg-white/5 text-[11px] font-black text-white/45">追加</div> : null}
-                            </div>
-                          ) : (
-                            <span className="leading-relaxed"><span className="text-3xl">＋</span><br />商品{index + 1}の画像を選択<br /><span className="text-xs text-white/45">この枠は残り {boxRemainingSlots}枚</span></span>
-                          )}
-                        </label>
-
-                        <label className="block text-xs font-black text-white/60">
-                          商品{index + 1} 補足文章
-                          <textarea value={box.text} onChange={(e) => updateDeepBulkProductText(box.id, e.target.value)} disabled={deepBulkBusy} className="mt-2 min-h-[230px] w-full rounded-2xl border border-white/10 bg-black/45 p-4 text-sm font-medium text-white outline-none placeholder:text-white/30" placeholder={`商品${index + 1}の説明文・価格・状態・気になる点。例：売却済み2980円、傷あり、箱なし、いいね12、サイズLなど`} />
-                        </label>
+                      <label style={{ border: "1px dashed rgba(255,255,255,.20)", background: "rgba(3,12,22,.45)", borderRadius: 15, minHeight: 120, padding: 12, display: "flex", alignItems: "center", justifyContent: "center", textAlign: "center", cursor: canAddImages ? "pointer" : "not-allowed" }}>
+                        <input type="file" accept="image/*" multiple style={{ display: "none" }} disabled={deepBulkBusy || !canAddImages} onChange={(e) => { const files = Array.from(e.target.files ?? []); void setDeepBulkBoxImages(box.id, files); e.currentTarget.value = ""; }} />
+                        {box.previewUrls.length > 0 ? (
+                          <span style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 6, width: "100%" }}>
+                            {box.previewUrls.slice(0, 4).map((url) => <img key={url} src={url} alt="preview" style={{ width: "100%", height: 56, objectFit: "cover", borderRadius: 10 }} />)}
+                          </span>
+                        ) : (
+                          <span style={{ color: "rgba(255,255,255,.68)", fontSize: 12, fontWeight: 900 }}>
+                            ＋<br />スクショを投入<br />クリック or ドラッグ＆ドロップ<br />JPG / PNG
+                          </span>
+                        )}
+                      </label>
+                      <textarea value={box.text} onChange={(e) => updateDeepBulkProductText(box.id, e.target.value)} disabled={deepBulkBusy} style={{ ...inputBase, minHeight: 82, resize: "vertical", marginTop: 9, fontSize: 12 }} placeholder="商品補足文章：特徴・価格・用途・ターゲットなど" />
+                      <div style={{ marginTop: 6, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                        <span style={{ color: "rgba(255,255,255,.45)", fontSize: 11, fontWeight: 800 }}>{box.text.length} / 500文字</span>
+                        <button type="button" onClick={() => removeDeepBulkProductBox(box.id)} disabled={deepBulkBusy || deepBulkProductBoxes.length <= 1} style={{ ...softButton, padding: "5px 8px", color: "#fecaca" }}>削除</button>
                       </div>
                     </div>
                   );
                 })}
               </div>
-
-              <div className="flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-white/10 bg-black/25 p-4">
-                <div className="text-xs leading-relaxed text-white/55">商品枠は10MBに収まる範囲で増やせます。1商品あたりの枚数に達すると次の商品枠を自動追加します。</div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <button type="button" onClick={addDeepBulkProductBox} disabled={deepBulkBusy || !deepBulkCanAddProductBox} className="rounded-2xl border border-emerald-200/30 bg-emerald-300/10 px-5 py-3 text-sm font-black text-emerald-100 disabled:opacity-50">商品枠を追加</button>
-                  <button type="button" onClick={extractDeepBulkFromScreenshots} disabled={deepBulkBusy || (!deepBulkText.trim() && deepBulkImageFiles.length === 0 && deepBulkProductTexts.every((text) => !text.trim()))} className="rounded-2xl bg-emerald-100 px-6 py-3 text-sm font-black text-emerald-950 disabled:opacity-50">{deepBulkBusy ? "SELL CHECK深掘り解析中..." : "商品枠ごとにSELL CHECK深掘り学習"}</button>
-                  <button type="button" onClick={() => { setDeepBulkText(""); setDeepBulkProductTexts([]); clearDeepBulkProductBoxes(); }} disabled={deepBulkBusy} className="rounded-2xl border border-white/15 bg-white/10 px-5 py-3 text-sm font-black text-white disabled:opacity-50">入力クリア</button>
-                </div>
-              </div>
-
-              {deepBulkTotalSize > IMAGE_UPLOAD_SOFT_LIMIT_BYTES ? <div className="rounded-2xl border border-red-200/20 bg-red-400/10 p-3 text-xs leading-relaxed text-red-100">容量が10MB上限に近いため、このまま送信すると失敗する可能性があります。商品枠の画像を減らしてください。</div> : null}
             </div>
           </div>
         </section>
       ) : null}
 
-      <section className="rounded-3xl border border-white/10 bg-black/30 p-5">
-        <div className="mb-3 text-lg font-black">CSV / Excelファイル読込</div>
-        <div className="mb-3 text-sm text-white/55">
-          .csv / .tsv / .txt / .xlsx / .xls
-          に対応。Excelの1枚目のシートを読み込みます。
+      <section style={{ display: "grid", gridTemplateColumns: "minmax(0,.64fr) minmax(0,.36fr)", gap: 14 }}>
+        <div style={{ ...glassPanel, borderRadius: 22, padding: 16 }}>
+          <div style={{ fontSize: 12, letterSpacing: ".16em", color: "rgba(147,197,253,.65)", fontWeight: 950 }}>CSV / EXCEL</div>
+          <h3 style={{ margin: "5px 0 12px", fontSize: 18, fontWeight: 950 }}>CSV / Excel読込</h3>
+          <label style={{ ...glassCard, minHeight: 118, borderRadius: 18, borderStyle: "dashed", display: "flex", alignItems: "center", justifyContent: "center", textAlign: "center", cursor: "pointer", padding: 14 }}>
+            <input type="file" accept=".csv,.tsv,.txt,.xlsx,.xls" style={{ display: "none" }} disabled={fileImportBusy} onChange={(e) => { const file = e.target.files?.[0] ?? null; void importFromFile(file); e.currentTarget.value = ""; }} />
+            <span style={{ color: "rgba(255,255,255,.68)", fontWeight: 850 }}>{fileImportBusy ? "ファイル読込中..." : fileImportName ? `前回読込：${fileImportName}` : "CSV / Excelファイルを選択"}<br /><small>.csv / .xlsx 対応</small></span>
+          </label>
         </div>
 
-        <label className="flex min-h-[110px] cursor-pointer items-center justify-center rounded-2xl border border-dashed border-white/25 bg-black/35 p-4 text-center text-sm text-white/65 hover:bg-white/10">
-          <input
-            type="file"
-            accept=".csv,.tsv,.txt,.xlsx,.xls"
-            className="hidden"
-            disabled={fileImportBusy}
-            onChange={(e) => {
-              const file = e.target.files?.[0] ?? null;
-              void importFromFile(file);
-              e.currentTarget.value = "";
-            }}
-          />
-
-          {fileImportBusy ? (
-            <span>ファイル読込中...</span>
-          ) : fileImportName ? (
-            <span>前回読込：{fileImportName}</span>
-          ) : (
-            <span>CSV / Excelファイルを選択</span>
-          )}
-        </label>
-      </section>
-
-      <section className="rounded-3xl border border-white/10 bg-black/30 p-5">
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <div className="text-lg font-black">学習データ入力</div>
-            <div className="mt-1 text-sm text-white/55">
-              売れた商品の実績・希少性・需要・ブランド力を入れるほど、価格帯の判断が安定します。
-            </div>
+        <div style={{ ...glassPanel, borderRadius: 22, padding: 16 }}>
+          <div style={{ fontSize: 12, letterSpacing: ".16em", color: "rgba(147,197,253,.65)", fontWeight: 950 }}>LEARNING ROWS</div>
+          <h3 style={{ margin: "5px 0 8px", fontSize: 18, fontWeight: 950 }}>学習データ入力</h3>
+          <p style={{ margin: 0, color: "rgba(255,255,255,.52)", fontSize: 12, lineHeight: 1.6 }}>解析結果やCSV読込結果を保存前に確認します。</p>
+          <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
+            <button type="button" onClick={addRow} style={softButton}>行を追加</button>
+            <button type="button" onClick={submitImport} disabled={busy} style={primaryButton}>{busy ? "保存中..." : "保存"}</button>
           </div>
-
-          <button
-            type="button"
-            onClick={addRow}
-            className="rounded-full border border-white/15 bg-white/10 px-5 py-2 text-sm font-black text-white"
-          >
-            行を追加
-          </button>
-        </div>
-
-        <div className="space-y-3">
-          {rows.map((row, index) => (
-            <div
-              key={index}
-              className="rounded-2xl border border-white/10 bg-black/30 p-4"
-            >
-              <RowEditor
-                row={row}
-                index={index}
-                updateRow={updateRow}
-                removeRow={removeRow}
-                imagePreviewUrls={imagePreviewUrls[index] || []}
-                imageFileName={imageFileNames[index] || ""}
-                busy={imageAnalyzeBusyIndex === index}
-                analyzeImagesForRow={analyzeImagesForRow}
-              />
-            </div>
-          ))}
-        </div>
-
-        {error ? (
-          <div className="mt-4 rounded-2xl border border-red-400/20 bg-red-500/10 p-3 text-sm text-red-100">
-            {error}
-          </div>
-        ) : null}
-
-        {msg ? (
-          <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-3 text-sm text-white/75">
-            {msg}
-          </div>
-        ) : null}
-
-        <div className="mt-5 flex justify-end">
-          <button
-            type="button"
-            onClick={submitImport}
-            disabled={busy}
-            className="rounded-2xl bg-white px-6 py-3 text-sm font-black text-black disabled:opacity-50"
-          >
-            {busy ? "保存中..." : "学習データとして保存"}
-          </button>
         </div>
       </section>
 
-      <section className="rounded-3xl border border-white/10 bg-black/30 p-5">
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+      <section style={{ ...glassPanel, borderRadius: 22, padding: 16 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 12 }}>
           <div>
-            <div className="text-lg font-black">保存済み学習データ</div>
-            <div className="mt-1 text-sm text-white/55">
-              sellCheckLogs
-              に保存されたデータをExcel風の表で確認・編集・削除できます。 CSV /
-              Excel形式で出力できます。
-            </div>
+            <div style={{ fontSize: 12, letterSpacing: ".16em", color: "rgba(147,197,253,.65)", fontWeight: 950 }}>SAVED LEARNING DATA</div>
+            <h3 style={{ margin: "5px 0 0", fontSize: 20, fontWeight: 950 }}>保存済み学習データ</h3>
           </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-bold text-white/65">
-              表示件数：{logs.length}件
-            </div>
-
-            <div
-              className={[
-                "rounded-full border px-4 py-2 text-xs font-bold",
-                duplicateRemoveCount > 0
-                  ? "border-amber-300/30 bg-amber-400/10 text-amber-100"
-                  : "border-white/10 bg-white/5 text-white/55",
-              ].join(" ")}
-            >
-              重複削除候補：{duplicateRemoveCount}件
-            </div>
-
-            <button
-              type="button"
-              onClick={exportLogsAsCsv}
-              disabled={logs.length === 0}
-              className="rounded-full border border-sky-300/30 bg-sky-400/15 px-5 py-2 text-sm font-black text-sky-100 disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              CSV出力
-            </button>
-
-            <button
-              type="button"
-              onClick={exportLogsAsExcel}
-              disabled={logs.length === 0}
-              className="rounded-full border border-emerald-300/30 bg-emerald-400/15 px-5 py-2 text-sm font-black text-emerald-100 disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              Excel出力
-            </button>
-
-            <button
-              type="button"
-              onClick={autoDeleteDuplicateLogs}
-              disabled={dedupeBusy || duplicateRemoveCount <= 0}
-              className="rounded-full border border-amber-300/30 bg-amber-400/15 px-5 py-2 text-sm font-black text-amber-100 disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              {dedupeBusy ? "重複削除中..." : "重複を自動削除"}
-            </button>
-
-            <button
-              type="button"
-              onClick={loadLogs}
-              disabled={logsBusy}
-              className="rounded-full border border-white/15 bg-white/10 px-5 py-2 text-sm font-black text-white disabled:opacity-50"
-            >
-              {logsBusy ? "読込中..." : "再読込"}
-            </button>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <button type="button" onClick={exportLogsAsCsv} disabled={logs.length === 0} style={softButton}>CSV出力</button>
+            <button type="button" onClick={exportLogsAsExcel} disabled={logs.length === 0} style={softButton}>Excel出力</button>
+            <button type="button" onClick={loadLogs} disabled={logsBusy} style={softButton}>{logsBusy ? "読込中..." : "再読込"}</button>
           </div>
         </div>
-
         {logs.length === 0 ? (
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-white/60">
-            保存済み学習データがありません。
-          </div>
+          <div style={{ ...glassCard, borderRadius: 16, padding: 14, color: "rgba(255,255,255,.56)", fontSize: 13 }}>保存済み学習データがありません。</div>
         ) : (
-          <div className="rounded-2xl border border-white/10 bg-black/40">
-            <div className="max-h-[560px] overflow-auto">
-              <table className="min-w-[3900px] border-collapse text-left text-xs text-white/75">
+          <div style={{ ...glassCard, borderRadius: 18, overflow: "hidden" }}>
+            <div style={{ maxHeight: 360, overflow: "auto" }}>
+              <table className="min-w-[1200px] border-collapse text-left text-xs text-white/75">
                 <thead className="sticky top-0 z-20 bg-[#10131a] text-white">
-                  <tr>
-                    <ExcelTh stickyLeft>操作</ExcelTh>
-                    <ExcelTh>重複</ExcelTh>
-                    <ExcelTh>商品名</ExcelTh>
-                    <ExcelTh>出品価格</ExcelTh>
-                    <ExcelTh>売却価格</ExcelTh>
-                    <ExcelTh>売却状態</ExcelTh>
-                    <ExcelTh>カテゴリ</ExcelTh>
-                    <ExcelTh>状態</ExcelTh>
-                    <ExcelTh>閲覧数</ExcelTh>
-                    <ExcelTh>いいね</ExcelTh>
-                    <ExcelTh>ブランド</ExcelTh>
-                    <ExcelTh>型番</ExcelTh>
-                    <ExcelTh>素材</ExcelTh>
-                    <ExcelTh>商品種別</ExcelTh>
-                    <ExcelTh>作品名・キャラクター</ExcelTh>
-                    <ExcelTh>シリーズ</ExcelTh>
-                    <ExcelTh>メーカー</ExcelTh>
-                    <ExcelTh>年代</ExcelTh>
-                    <ExcelTh>コレクター分類</ExcelTh>
-                    <ExcelTh>素材分類</ExcelTh>
-                    <ExcelTh>キーワード</ExcelTh>
-                    <ExcelTh>状態リスク</ExcelTh>
-                    <ExcelTh>説明文品質</ExcelTh>
-                    <ExcelTh>希少性</ExcelTh>
-                    <ExcelTh>需要</ExcelTh>
-                    <ExcelTh>ブランド力</ExcelTh>
-                    <ExcelTh>コレクター価値</ExcelTh>
-                    <ExcelTh>年代価値</ExcelTh>
-                    <ExcelTh>現在人気度</ExcelTh>
-                    <ExcelTh>出品数の少なさ</ExcelTh>
-                    <ExcelTh>検索KW強度</ExcelTh>
-                    <ExcelTh>明るさ</ExcelTh>
-                    <ExcelTh>構図</ExcelTh>
-                    <ExcelTh>背景</ExcelTh>
-                    <ExcelTh>傷リスク</ExcelTh>
-                    <ExcelTh>画像総合</ExcelTh>
-                    <ExcelTh>診断スコア</ExcelTh>
-                    <ExcelTh>ランク</ExcelTh>
-                    <ExcelTh>画像</ExcelTh>
-                    <ExcelTh>メモ</ExcelTh>
-                    <ExcelTh>作成日時</ExcelTh>
-                    <ExcelTh>ID</ExcelTh>
-                  </tr>
+                  <tr><ExcelTh stickyLeft>操作</ExcelTh><ExcelTh>商品名</ExcelTh><ExcelTh>出品価格</ExcelTh><ExcelTh>売却価格</ExcelTh><ExcelTh>状態</ExcelTh><ExcelTh>ブランド</ExcelTh><ExcelTh>メモ</ExcelTh><ExcelTh>作成日時</ExcelTh></tr>
                 </thead>
-
                 <tbody>
-                  {logs.map((log) => {
-                    const isDuplicateRemoveTarget = duplicateIdSet.has(log.id);
-
-                    return (
-                      <tr
-                        key={log.id}
-                        className={[
-                          "border-t border-white/10 odd:bg-white/[0.03] hover:bg-white/[0.08]",
-                          isDuplicateRemoveTarget ? "bg-amber-400/[0.08]" : "",
-                        ].join(" ")}
-                      >
-                        <ExcelTd stickyLeft>
-                          <div className="flex min-w-[116px] gap-2">
-                            <button
-                              type="button"
-                              onClick={() => startEditLog(log)}
-                              className="rounded-lg border border-white/15 bg-white/10 px-3 py-1.5 text-[11px] font-black text-white"
-                            >
-                              編集
-                            </button>
-
-                            <button
-                              type="button"
-                              onClick={() => deleteLog(log.id)}
-                              className="rounded-lg border border-red-400/20 bg-red-500/10 px-3 py-1.5 text-[11px] font-black text-red-100"
-                            >
-                              削除
-                            </button>
-                          </div>
-                        </ExcelTd>
-
-                        <ExcelTd>
-                          {isDuplicateRemoveTarget ? (
-                            <span className="rounded-full bg-amber-400/15 px-2 py-1 text-[11px] font-black text-amber-100">
-                              削除候補
-                            </span>
-                          ) : (
-                            <span className="text-white/40">—</span>
-                          )}
-                        </ExcelTd>
-
-                        <ExcelTd wide title={log.title}>
-                          {shortText(log.title)}
-                        </ExcelTd>
-                        <ExcelTd>{shortText(log.price)}</ExcelTd>
-                        <ExcelTd>{shortText(log.soldPrice)}</ExcelTd>
-                        <ExcelTd>{log.sold ? "売却済み" : "未売却"}</ExcelTd>
-                        <ExcelTd>{shortText(log.category)}</ExcelTd>
-                        <ExcelTd>{shortText(log.condition)}</ExcelTd>
-                        <ExcelTd>{shortText(log.views)}</ExcelTd>
-                        <ExcelTd>{shortText(log.likes)}</ExcelTd>
-                        <ExcelTd>{shortText(log.brandName)}</ExcelTd>
-                        <ExcelTd>{shortText(log.modelName)}</ExcelTd>
-                        <ExcelTd>{shortText(log.material)}</ExcelTd>
-                        <ExcelTd>{shortText(log.productType)}</ExcelTd>
-                        <ExcelTd wide title={log.characterName}>
-                          {shortText(log.characterName)}
-                        </ExcelTd>
-                        <ExcelTd wide title={log.seriesName}>
-                          {shortText(log.seriesName)}
-                        </ExcelTd>
-                        <ExcelTd>{shortText(log.maker)}</ExcelTd>
-                        <ExcelTd>{shortText(log.era)}</ExcelTd>
-                        <ExcelTd wide title={log.collectorGenre}>
-                          {shortText(log.collectorGenre)}
-                        </ExcelTd>
-                        <ExcelTd>{shortText(log.materialType)}</ExcelTd>
-                        <ExcelTd wide title={log.extractedKeywords}>
-                          {shortText(log.extractedKeywords)}
-                        </ExcelTd>
-                        <ExcelTd>{shortText(log.conditionRiskScore)}</ExcelTd>
-                        <ExcelTd>
-                          {shortText(log.descriptionQualityScore)}
-                        </ExcelTd>
-                        <ExcelTd>{shortText(log.rarityScore)}</ExcelTd>
-                        <ExcelTd>{shortText(log.demandScore)}</ExcelTd>
-                        <ExcelTd>{shortText(log.brandPowerScore)}</ExcelTd>
-                        <ExcelTd>{shortText(log.collectorScore)}</ExcelTd>
-                        <ExcelTd>{shortText(log.ageValueScore)}</ExcelTd>
-                        <ExcelTd>{shortText(log.trendScore)}</ExcelTd>
-                        <ExcelTd>{shortText(log.marketSupplyScore)}</ExcelTd>
-                        <ExcelTd>{shortText(log.keywordStrength)}</ExcelTd>
-                        <ExcelTd>{shortText(log.brightnessScore)}</ExcelTd>
-                        <ExcelTd>{shortText(log.compositionScore)}</ExcelTd>
-                        <ExcelTd>{shortText(log.backgroundScore)}</ExcelTd>
-                        <ExcelTd>{shortText(log.damageRiskScore)}</ExcelTd>
-                        <ExcelTd>{shortText(log.overallImageScore)}</ExcelTd>
-                        <ExcelTd>{log.score ?? "—"}</ExcelTd>
-                        <ExcelTd>{shortText(log.rank)}</ExcelTd>
-                        <ExcelTd>{log.hasImage ? "あり" : "なし"}</ExcelTd>
-                        <ExcelTd wide title={log.memo}>
-                          {shortText(log.memo)}
-                        </ExcelTd>
-                        <ExcelTd wide>{formatDate(log.createdAt)}</ExcelTd>
-                        <ExcelTd wide title={log.id}>
-                          {log.id}
-                        </ExcelTd>
-                      </tr>
-                    );
-                  })}
+                  {logs.map((log) => (
+                    <tr key={log.id} className="border-t border-white/10 odd:bg-white/[0.03] hover:bg-white/[0.08]">
+                      <ExcelTd stickyLeft><div className="flex min-w-[116px] gap-2"><button type="button" onClick={() => startEditLog(log)} className="rounded-lg border border-white/15 bg-white/10 px-3 py-1.5 text-[11px] font-black text-white">編集</button><button type="button" onClick={() => deleteLog(log.id)} className="rounded-lg border border-red-400/20 bg-red-500/10 px-3 py-1.5 text-[11px] font-black text-red-100">削除</button></div></ExcelTd>
+                      <ExcelTd wide title={log.title}>{shortText(log.title)}</ExcelTd><ExcelTd>{shortText(log.price)}</ExcelTd><ExcelTd>{shortText(log.soldPrice)}</ExcelTd><ExcelTd>{shortText(log.condition)}</ExcelTd><ExcelTd>{shortText(log.brandName)}</ExcelTd><ExcelTd wide title={log.memo}>{shortText(log.memo)}</ExcelTd><ExcelTd wide>{formatDate(log.createdAt)}</ExcelTd>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
           </div>
         )}
-
         {editingLogId && editingLog ? (
-          <div className="mt-5 rounded-3xl border border-white/10 bg-black/45 p-5">
-            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <div className="text-lg font-black">選択中データの編集</div>
-                <div className="mt-1 break-all text-xs text-white/45">
-                  ID：{editingLogId}
-                </div>
-              </div>
-
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={cancelEditLog}
-                  className="rounded-xl border border-white/15 bg-white/10 px-4 py-2 text-xs font-black text-white"
-                >
-                  キャンセル
-                </button>
-
-                <button
-                  type="button"
-                  onClick={saveEditingLog}
-                  className="rounded-xl bg-white px-4 py-2 text-xs font-black text-black"
-                >
-                  編集内容を保存
-                </button>
-              </div>
+          <div style={{ marginTop: 16, ...glassCard, borderRadius: 18, padding: 16 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginBottom: 12 }}>
+              <div><div style={{ fontSize: 16, fontWeight: 950 }}>選択中データの編集</div><div style={{ marginTop: 4, wordBreak: "break-all", color: "rgba(255,255,255,.45)", fontSize: 12 }}>ID：{editingLogId}</div></div>
+              <div style={{ display: "flex", gap: 8 }}><button type="button" onClick={cancelEditLog} style={softButton}>キャンセル</button><button type="button" onClick={saveEditingLog} style={primaryButton}>編集内容を保存</button></div>
             </div>
-
-            <RowEditor
-              row={editingLog}
-              index={0}
-              updateRow={(_, patch) =>
-                setEditingLog((prev) => (prev ? { ...prev, ...patch } : prev))
-              }
-              removeRow={() => cancelEditLog()}
-              imagePreviewUrls={[]}
-              imageFileName=""
-              busy={false}
-              analyzeImagesForRow={async () => undefined}
-              hideImageAnalyzer
-            />
+            <RowEditor row={editingLog} index={0} updateRow={(_, patch) => setEditingLog((prev) => (prev ? { ...prev, ...patch } : prev))} removeRow={() => cancelEditLog()} imagePreviewUrls={[]} imageFileName="" busy={false} analyzeImagesForRow={async () => undefined} hideImageAnalyzer />
           </div>
         ) : null}
       </section>
+
+      {error ? <div style={{ borderRadius: 14, border: "1px solid rgba(248,113,113,.25)", background: "rgba(239,68,68,.12)", padding: 12, color: "#fecaca", fontSize: 13, fontWeight: 800 }}>{error}</div> : null}
+      {msg ? <div style={{ borderRadius: 14, border: "1px solid rgba(255,255,255,.12)", background: "rgba(255,255,255,.06)", padding: 12, color: "rgba(255,255,255,.72)", fontSize: 13, fontWeight: 800 }}>{msg}</div> : null}
     </div>
   );
 }

@@ -17,6 +17,41 @@ import {
 import { auth, db } from "@/firebase";
 import type { SellCheckResult } from "@/lib/types/sellCheck";
 
+
+type BatchDiagnosisItem = {
+  id: string;
+  title: string;
+  price: string;
+  purchasePrice: string;
+  category: string;
+  condition: string;
+  memo: string;
+  keywords: string;
+  files: File[];
+  previews: string[];
+  result: SellCheckResult | null;
+  savedImageUrl: string;
+  error: string;
+};
+
+function createBatchDiagnosisItem(index: number): BatchDiagnosisItem {
+  return {
+    id: `batch-diagnosis-${Date.now()}-${index}-${Math.random().toString(36).slice(2)}`,
+    title: "",
+    price: "",
+    purchasePrice: "",
+    category: "interior",
+    condition: "good",
+    memo: "",
+    keywords: "",
+    files: [],
+    previews: [],
+    result: null,
+    savedImageUrl: "",
+    error: "",
+  };
+}
+
 type Stats = {
   total: number;
   sold: number;
@@ -238,6 +273,12 @@ export default function SellCheckPage() {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<SellCheckResult | null>(null);
   const [error, setError] = useState("");
+
+  const [batchItems, setBatchItems] = useState<BatchDiagnosisItem[]>([
+    createBatchDiagnosisItem(1),
+  ]);
+  const [batchBusy, setBatchBusy] = useState(false);
+  const [batchMessage, setBatchMessage] = useState("");
   const [stats, setStats] = useState<Stats | null>(null);
 
   const targetText = useMemo(() => {
@@ -378,11 +419,157 @@ export default function SellCheckPage() {
     setKeywords(selectedDraft.keywords || "");
   }, [selectedDraft, sourceMode]);
 
-  async function saveDiagnosisResult(args: {
+  function updateBatchItem(id: string, patch: Partial<BatchDiagnosisItem>) {
+    setBatchItems((prev) =>
+      prev.map((item) => (item.id === id ? { ...item, ...patch } : item)),
+    );
+  }
+
+  function addBatchItem() {
+    setBatchItems((prev) => [...prev, createBatchDiagnosisItem(prev.length + 1)]);
+  }
+
+  function removeBatchItem(id: string) {
+    setBatchItems((prev) => {
+      const target = prev.find((item) => item.id === id);
+      target?.previews.forEach((url) => URL.revokeObjectURL(url));
+      const next = prev.filter((item) => item.id !== id);
+      return next.length > 0 ? next : [createBatchDiagnosisItem(1)];
+    });
+  }
+
+  function setBatchItemImages(id: string, files: File[]) {
+    setBatchItems((prev) =>
+      prev.map((item) => {
+        if (item.id !== id) return item;
+        item.previews.forEach((url) => URL.revokeObjectURL(url));
+        const nextFiles = files.slice(0, 8);
+        return {
+          ...item,
+          files: nextFiles,
+          previews: nextFiles.map((file) => URL.createObjectURL(file)),
+          error: "",
+        };
+      }),
+    );
+  }
+
+  async function uploadDiagnosisImage(file: File): Promise<string> {
+    const form = new FormData();
+    form.append("file", file);
+
+    const headers: Record<string, string> = {};
+    if (idToken) headers.Authorization = `Bearer ${idToken}`;
+
+    const res = await fetch("/api/upload/image", {
+      method: "POST",
+      headers,
+      body: form,
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data?.ok || !data?.url) {
+      throw new Error(data?.error || "診断画像の保存に失敗しました");
+    }
+
+    return String(data.url);
+  }
+
+  async function analyzeBatchItem(item: BatchDiagnosisItem): Promise<{ result: SellCheckResult; imageUrl: string }> {
+    if (!item.price.trim()) {
+      throw new Error("想定出品価格を入力してください。");
+    }
+
+    if (item.files.length === 0) {
+      throw new Error("診断対象画像を1枚以上選択してください。");
+    }
+
+    const imageUrl = await uploadDiagnosisImage(item.files[0]);
+
+    const form = new FormData();
+    form.append("price", item.price);
+    form.append("purchasePrice", item.purchasePrice);
+    form.append("estimatedShippingCost", estimatedShippingCost);
+    form.append("estimatedPackagingCost", estimatedPackagingCost);
+    form.append("platformFeeRate", platformFeeRate);
+    form.append("category", item.category);
+    form.append("condition", item.condition);
+    form.append("title", item.title);
+    form.append("memo", item.memo);
+    form.append("keywords", item.keywords);
+    form.append("imageUrl", imageUrl);
+    item.files.slice(0, 8).forEach((file) => form.append("images", file));
+
+    const res = await fetch("/api/sell-check/analyze", { method: "POST", body: form });
+    const data = await res.json().catch(() => ({}));
+
+    if (!res.ok || !data?.ok) {
+      throw new Error(data?.error || "診断に失敗しました");
+    }
+
+    const nextResult = data.result as SellCheckResult;
+
+    await saveDiagnosisPayload({
+      result: nextResult,
+      imageUrl,
+      imageSource: "manual",
+      title: item.title,
+      memo: item.memo,
+      keywords: item.keywords,
+      price: item.price,
+      category: item.category,
+      condition: item.condition,
+    });
+
+    return { result: nextResult, imageUrl };
+  }
+
+  async function analyzeBatch() {
+    setBatchBusy(true);
+    setBatchMessage("");
+    setError("");
+
+    try {
+      let successCount = 0;
+
+      for (const item of batchItems) {
+        if (item.files.length === 0 && !item.title.trim() && !item.price.trim()) continue;
+
+        updateBatchItem(item.id, { error: "", result: null });
+
+        try {
+          const analyzed = await analyzeBatchItem(item);
+          updateBatchItem(item.id, {
+            result: analyzed.result,
+            savedImageUrl: analyzed.imageUrl,
+            error: "",
+          });
+          successCount += 1;
+        } catch (e) {
+          updateBatchItem(item.id, {
+            error: e instanceof Error ? e.message : "診断に失敗しました",
+          });
+        }
+      }
+
+      setBatchMessage(`${successCount}件の診断を保存しました。画像付きで診断履歴に保存されています。`);
+      await loadStats();
+    } finally {
+      setBatchBusy(false);
+    }
+  }
+
+  async function saveDiagnosisPayload(args: {
     result: SellCheckResult;
     imageUrl: string;
     imageSource: "manual" | "draft";
     draftId?: string;
+    title: string;
+    memo: string;
+    keywords: string;
+    price: string;
+    category: string;
+    condition: string;
   }) {
     const headers: Record<string, string> = {
       "content-type": "application/json",
@@ -399,19 +586,15 @@ export default function SellCheckPage() {
         draftId: args.draftId,
         imageUrl: args.imageUrl,
         imageSource: args.imageSource,
-
-        price,
-        category,
-        condition,
-
-        title,
-        memo,
-        keywords,
-
+        price: args.price,
+        category: args.category,
+        condition: args.condition,
+        title: args.title,
+        memo: args.memo,
+        keywords: args.keywords,
         score: args.result.score,
         rank: args.result.rank,
         action: args.result.action,
-
         scoreLabel: args.result.scoreLabel,
         rankLabel: args.result.rankLabel,
         sellSpeed: args.result.sellSpeed,
@@ -421,19 +604,16 @@ export default function SellCheckPage() {
         marketType: args.result.marketType,
         marketTypeLabel: args.result.marketTypeLabel,
         scoreExplanation: args.result.scoreExplanation,
-
         suggestedPriceMin: args.result.suggestedPriceMin,
         suggestedPriceMax: args.result.suggestedPriceMax,
         improvements: args.result.improvements,
         reasons: args.result.reasons,
         learnedSampleCount: args.result.learnedSampleCount,
         targetSummary: args.result.targetSummary,
-
         imageAnalysis: args.result.imageAnalysis,
         textAnalysis: args.result.textAnalysis,
         marketAnalysis: args.result.marketAnalysis,
         similarData: args.result.similarData,
-
         decisionMode: args.result.decisionMode,
         decisionModeLabel: args.result.decisionModeLabel,
         researchGuide: args.result.researchGuide,
@@ -444,16 +624,34 @@ export default function SellCheckPage() {
         marketStructureAnalysis: args.result.marketStructureAnalysis,
         priceDistortionAnalysis: args.result.priceDistortionAnalysis,
         rotationLearningAnalysis: args.result.rotationLearningAnalysis,
-
         hasImage: true,
       }),
     });
 
     const data = await res.json().catch(() => ({}));
-
     if (!res.ok || !data?.ok) {
       throw new Error(data?.error || "診断結果の保存に失敗しました");
     }
+  }
+
+  async function saveDiagnosisResult(args: {
+    result: SellCheckResult;
+    imageUrl: string;
+    imageSource: "manual" | "draft";
+    draftId?: string;
+  }) {
+    await saveDiagnosisPayload({
+      result: args.result,
+      imageUrl: args.imageUrl,
+      imageSource: args.imageSource,
+      draftId: args.draftId,
+      price,
+      category,
+      condition,
+      title,
+      memo,
+      keywords,
+    });
   }
 
   async function analyze() {
@@ -612,6 +810,59 @@ export default function SellCheckPage() {
           </Link>
         </div>
       </div>
+
+      <section className="rounded-[2rem] border border-white/10 bg-white/[0.055] p-5 shadow-[0_24px_80px_rgba(0,0,0,0.25)] backdrop-blur-xl">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <div className="text-xs font-black uppercase tracking-[0.24em] text-sky-100/60">BULK SELL CHECK</div>
+            <h2 className="mt-1 text-xl font-black text-white">複数商品を同時に診断・保存</h2>
+            <p className="mt-2 text-sm leading-6 text-white/60">商品ごとに画像・価格・説明文を入れて一括診断します。結果は画像付きで診断履歴へ保存されます。</p>
+          </div>
+          <div className="flex gap-2">
+            <button type="button" onClick={addBatchItem} className="rounded-2xl border border-white/15 bg-white/10 px-4 py-2 text-sm font-black text-white">商品枠を追加</button>
+            <button type="button" onClick={analyzeBatch} disabled={batchBusy} className="rounded-2xl bg-sky-100 px-5 py-2 text-sm font-black text-sky-950 disabled:opacity-50">{batchBusy ? "一括診断中..." : "一括診断して保存"}</button>
+          </div>
+        </div>
+
+        <div className="mt-5 grid gap-4 lg:grid-cols-2">
+          {batchItems.map((item, index) => (
+            <div key={item.id} className="rounded-[1.5rem] border border-white/10 bg-black/25 p-4">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div className="font-black text-white">商品 {index + 1}</div>
+                <button type="button" onClick={() => removeBatchItem(item.id)} className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-bold text-white/60">削除</button>
+              </div>
+              <label className="flex min-h-[150px] cursor-pointer items-center justify-center rounded-2xl border border-dashed border-sky-200/25 bg-black/25 p-3 text-center text-sm text-white/55 hover:bg-white/10">
+                <input type="file" accept="image/*" multiple className="hidden" onChange={(e) => { setBatchItemImages(item.id, Array.from(e.target.files ?? [])); e.currentTarget.value = ""; }} />
+                {item.previews.length > 0 ? (
+                  <div className="grid w-full grid-cols-2 gap-2">
+                    {item.previews.slice(0, 4).map((url, i) => (
+                      <img key={`${url}-${i}`} src={url} alt={`商品${index + 1}画像${i + 1}`} className="h-24 w-full rounded-xl border border-white/10 object-contain" />
+                    ))}
+                  </div>
+                ) : (
+                  <span>＋ 画像を選択<br /><span className="text-xs text-white/35">複数枚可</span></span>
+                )}
+              </label>
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <input value={item.title} onChange={(e) => updateBatchItem(item.id, { title: e.target.value })} className="rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm text-white outline-none" placeholder="商品名" />
+                <input value={item.price} onChange={(e) => updateBatchItem(item.id, { price: e.target.value })} className="rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm text-white outline-none" placeholder="出品価格" />
+                <select value={item.category} onChange={(e) => updateBatchItem(item.id, { category: e.target.value })} className="rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm text-white outline-none">{CATEGORY_OPTIONS.map((x) => <option key={x.value} value={x.value}>{x.label}</option>)}</select>
+                <select value={item.condition} onChange={(e) => updateBatchItem(item.id, { condition: e.target.value })} className="rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm text-white outline-none">{CONDITION_OPTIONS.map((x) => <option key={x.value} value={x.value}>{x.label}</option>)}</select>
+              </div>
+              <textarea value={item.memo} onChange={(e) => updateBatchItem(item.id, { memo: e.target.value })} rows={3} className="mt-2 w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm text-white outline-none" placeholder="説明文・状態・付属品・傷など" />
+              <input value={item.keywords} onChange={(e) => updateBatchItem(item.id, { keywords: e.target.value })} className="mt-2 w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm text-white outline-none" placeholder="キーワード" />
+              {item.error ? <div className="mt-3 rounded-xl border border-red-300/20 bg-red-500/10 p-2 text-xs text-red-100">{item.error}</div> : null}
+              {item.result ? (
+                <div className="mt-3 rounded-xl border border-emerald-300/20 bg-emerald-400/10 p-3 text-sm text-emerald-50">
+                  <div className="font-black">診断保存済み：{item.result.score}/100・ランク{item.result.rank}</div>
+                  <div className="mt-1 text-xs text-emerald-50/70">{item.result.rankLabel || fallbackRankLabel(item.result.rank)}</div>
+                </div>
+              ) : null}
+            </div>
+          ))}
+        </div>
+        {batchMessage ? <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-3 text-sm text-white/75">{batchMessage}</div> : null}
+      </section>
 
       <div className="grid grid-cols-1 gap-5 xl:grid-cols-[1.1fr_0.9fr]">
         <section className="rounded-3xl border border-white/10 bg-black/30 p-5">
