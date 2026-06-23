@@ -44,7 +44,7 @@ const UI = {
 };
 
 export default function FlowShell({ user, onLogout, children }: Props) {
-  const pathname = usePathname();
+  const pathname = usePathname() || "";
   const router = useRouter();
 
   const [liveUser, setLiveUser] = useState<User | null>(user);

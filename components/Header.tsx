@@ -5,7 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 export default function Header() {
-  const pathname = usePathname();
+  const pathname = usePathname() || "";
 
   // ✅ ログイン画面・FLOW配下はHeader不要（FlowShellが担当）
   if (pathname === "/login" || pathname.startsWith("/flow")) return null;

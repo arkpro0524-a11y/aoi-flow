@@ -13,6 +13,16 @@ function safeNumber(v: unknown): number | undefined {
   return Math.round(n);
 }
 
+function safePlainObject(v: unknown): Record<string, unknown> | undefined {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return undefined;
+  return v as Record<string, unknown>;
+}
+
+function safeStringArray(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  return v.map((x) => safeString(x)).filter(Boolean).slice(0, 40);
+}
+
 function toMs(v: any): number {
   if (!v) return 0;
   if (typeof v === "number") return v;
@@ -59,11 +69,13 @@ export async function GET(req: NextRequest) {
     const limitParam = Number(url.searchParams.get("limit") || "30");
     const max = Math.max(1, Math.min(100, Number.isFinite(limitParam) ? Math.round(limitParam) : 30));
 
+    // uid + createdAt の複合インデックスが未作成でも履歴を必ず表示できるように、
+    // Firestore側では uid のみに絞り、並び替えはサーバー側で行います。
+    // これで「診断履歴が取得できない」「学習データと混ざる」を防ぎます。
     const snap = await getAdminDb()
       .collection("sellCheckDiagnosisLogs")
       .where("uid", "==", uid)
-      .orderBy("createdAt", "desc")
-      .limit(max)
+      .limit(Math.max(max, 100))
       .get();
 
     const logs = snap.docs.map((doc) => {
@@ -98,8 +110,22 @@ export async function GET(req: NextRequest) {
         targetSummary: safeString(data.targetSummary),
         createdAt: toIso(data.createdAt),
         updatedAt: toIso(data.updatedAt),
+
+        // 詳細ポップアップで使う診断結果本体。
+        // 売却実績の学習データではなく、売れる診断で保存した結果だけを返します。
+        imageAnalysis: safePlainObject(data.imageAnalysis),
+        textAnalysis: safePlainObject(data.textAnalysis),
+        marketAnalysis: safePlainObject(data.marketAnalysis),
+        similarData: safePlainObject(data.similarData),
+        scoreBreakdown: safePlainObject(data.scoreBreakdown),
+        profitAnalysis: safePlainObject(data.profitAnalysis),
+        acquisitionAnalysis: safePlainObject(data.acquisitionAnalysis),
+        theoryProfile: safePlainObject(data.theoryProfile),
+        marketStructureAnalysis: safePlainObject(data.marketStructureAnalysis),
+        priceDistortionAnalysis: safePlainObject(data.priceDistortionAnalysis),
+        rotationLearningAnalysis: safePlainObject(data.rotationLearningAnalysis),
       };
-    });
+    }).sort((a, b) => Date.parse((b as any).createdAt || "") - Date.parse((a as any).createdAt || "")).slice(0, max);
 
     return NextResponse.json({ ok: true, logs });
   } catch (e) {

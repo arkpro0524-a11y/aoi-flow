@@ -14,7 +14,7 @@
 import { usePathname } from "next/navigation";
 
 export default function Footer() {
-  const pathname = usePathname();
+  const pathname = usePathname() || "";
 
   // ✅ /login と /flow 配下はフッターを出さない（完成イメージと一致させる）
   // - /login：背景 + 中央カードのみ

@@ -181,6 +181,44 @@ type Stats = {
   categoryCounts: Record<string, number>;
 };
 
+type DiagnosisLog = {
+  id: string;
+  title: string;
+  memo: string;
+  keywords: string;
+  price?: number;
+  category: string;
+  condition: string;
+  score?: number;
+  rank?: string;
+  action: string;
+  scoreLabel: string;
+  rankLabel: string;
+  sellSpeedLabel: string;
+  confidenceLabel: string;
+  suggestedPriceMin?: number;
+  suggestedPriceMax?: number;
+  imageUrl: string;
+  imageUrls: string[];
+  imageCount: number;
+  reasons: string[];
+  improvements: string[];
+  targetSummary: string;
+  createdAt: string;
+  updatedAt: string;
+  imageAnalysis?: any;
+  textAnalysis?: any;
+  marketAnalysis?: any;
+  similarData?: any;
+  scoreBreakdown?: any;
+  profitAnalysis?: any;
+  acquisitionAnalysis?: any;
+  theoryProfile?: any;
+  marketStructureAnalysis?: any;
+  priceDistortionAnalysis?: any;
+  rotationLearningAnalysis?: any;
+};
+
 type DraftOption = {
   id: string;
   title: string;
@@ -397,6 +435,330 @@ function RingMetric(props: { label: string; value: unknown; sub?: string }) {
   );
 }
 
+function toSellCheckResultFromDiagnosisLog(log: DiagnosisLog): SellCheckResult {
+  const score = clampScore(log.score, 0);
+  const rank = log.rank === "A" || log.rank === "B" || log.rank === "C" || log.rank === "D" ? log.rank : "C";
+
+  return {
+    score,
+    rank,
+    action: log.action || log.rankLabel || fallbackRankLabel(rank),
+    scoreLabel: log.scoreLabel || fallbackScoreLabel(score),
+    rankLabel: log.rankLabel || fallbackRankLabel(rank),
+    sellSpeed: "unknown",
+    sellSpeedLabel: log.sellSpeedLabel || "診断結果から確認",
+    confidenceLevel: "medium",
+    confidenceLabel: log.confidenceLabel || "保存済み診断",
+    marketType: "unknown",
+    marketTypeLabel: "保存済み診断",
+    scoreExplanation: log.targetSummary || "保存済みの売れる診断結果です。",
+    suggestedPriceMin: Number(log.suggestedPriceMin || 0),
+    suggestedPriceMax: Number(log.suggestedPriceMax || 0),
+    improvements: Array.isArray(log.improvements) ? log.improvements : [],
+    reasons: Array.isArray(log.reasons) ? log.reasons : [],
+    learnedSampleCount: Number(log.similarData?.similarCount || 0),
+    targetSummary: log.targetSummary || log.title || "保存済み診断",
+    imageAnalysis: log.imageAnalysis,
+    textAnalysis: log.textAnalysis,
+    marketAnalysis: log.marketAnalysis,
+    similarData: log.similarData,
+    scoreBreakdown: log.scoreBreakdown,
+    profitAnalysis: log.profitAnalysis,
+    acquisitionAnalysis: log.acquisitionAnalysis,
+    theoryProfile: log.theoryProfile,
+    marketStructureAnalysis: log.marketStructureAnalysis,
+    priceDistortionAnalysis: log.priceDistortionAnalysis,
+    rotationLearningAnalysis: log.rotationLearningAnalysis,
+  };
+}
+
+function shortDateTime(value: string): string {
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "日時不明";
+  return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+
+function metricValue(value: unknown, fallback = 0): number {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(0, Math.min(100, Math.round(n)));
+}
+
+function logMarketAverage(log: DiagnosisLog): number | undefined {
+  return safeNumber(
+    log.similarData?.averageSoldPrice ??
+      log.similarData?.averagePrice ??
+      log.marketAnalysis?.averageSoldPrice,
+  );
+}
+
+function logMarketMedian(log: DiagnosisLog): number | undefined {
+  return safeNumber(
+    log.similarData?.medianSoldPrice ??
+      log.similarData?.medianPrice ??
+      log.marketAnalysis?.medianSoldPrice,
+  );
+}
+
+function logRotationLabel(log: DiagnosisLog): string {
+  return (
+    safeString(log.rotationLearningAnalysis?.expectedDaysToSellLabel) ||
+    safeString(log.rotationLearningAnalysis?.rotationLabel) ||
+    safeString(log.sellSpeedLabel) ||
+    "データ不足"
+  );
+}
+
+function logPriceRange(log: DiagnosisLog): string {
+  const min = safeNumber(log.suggestedPriceMin);
+  const max = safeNumber(log.suggestedPriceMax);
+  if (min !== undefined && max !== undefined && min > 0 && max > 0) return `${formatYen(min)}〜${formatYen(max)}`;
+  if (min !== undefined && min > 0) return formatYen(min);
+  if (max !== undefined && max > 0) return formatYen(max);
+  return "—";
+}
+
+function diagnosisMetricSet(log: DiagnosisLog): { label: string; product: number; market: number }[] {
+  const result = toSellCheckResultFromDiagnosisLog(log);
+  const legacyScoreBreakdown = result.scoreBreakdown as (typeof result.scoreBreakdown & { profitScore?: number; rotationScore?: number }) | undefined;
+  const legacyRotationAnalysis = result.rotationLearningAnalysis as (typeof result.rotationLearningAnalysis & { rotationScore?: number }) | undefined;
+  const priceScore = metricValue(result.scoreBreakdown?.priceScore ?? legacyScoreBreakdown?.profitScore ?? log.score, 60);
+  const designScore = metricValue(result.imageAnalysis?.overallImageScore ?? result.scoreBreakdown?.imageScore ?? log.score, 60);
+  const demandScore = metricValue(result.marketAnalysis?.demandScore ?? result.scoreBreakdown?.marketScore ?? log.score, 60);
+  const supplyScore = metricValue(result.marketAnalysis?.marketSupplyScore ?? 55, 55);
+  const trendScore = metricValue(result.marketAnalysis?.trendScore ?? 60, 60);
+  const rotationScore =
+    result.sellSpeed === "fast" ? 88 :
+    result.sellSpeed === "normal" ? 68 :
+    result.sellSpeed === "slow" ? 44 :
+    result.sellSpeed === "collector_wait" ? 38 :
+    metricValue(legacyRotationAnalysis?.rotationScore ?? legacyScoreBreakdown?.rotationScore, 55);
+
+  return [
+    { label: "価格", product: priceScore, market: metricValue(log.similarData?.marketPriceScore, 65) },
+    { label: "回転", product: rotationScore, market: metricValue(log.similarData?.marketRotationScore, 60) },
+    { label: "デザイン", product: designScore, market: metricValue(log.similarData?.marketDesignScore, 60) },
+    { label: "需要", product: demandScore, market: metricValue(log.similarData?.marketDemandScore, 58) },
+    { label: "供給", product: supplyScore, market: metricValue(log.similarData?.marketSupplyScore, 55) },
+    { label: "トレンド", product: trendScore, market: metricValue(log.similarData?.marketTrendScore, 58) },
+  ];
+}
+
+function DiagnosisRadarChart({ log }: { log: DiagnosisLog }) {
+  const metrics = diagnosisMetricSet(log);
+  const size = 300;
+  const center = size / 2;
+  const radius = 105;
+
+  const point = (value: number, index: number) => {
+    const angle = -Math.PI / 2 + (Math.PI * 2 * index) / metrics.length;
+    const r = (metricValue(value) / 100) * radius;
+    return [center + Math.cos(angle) * r, center + Math.sin(angle) * r] as const;
+  };
+
+  const polygon = (key: "product" | "market") => metrics.map((m, i) => point(m[key], i).join(",")).join(" ");
+
+  return (
+    <div style={{ border: "1px solid rgba(255,255,255,.10)", background: "rgba(0,0,0,.20)", borderRadius: 20, padding: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginBottom: 10 }}>
+        <div style={{ fontSize: 15, fontWeight: 900, color: "white" }}>市場平均との比較</div>
+        <div style={{ display: "flex", gap: 10, fontSize: 11, color: "rgba(255,255,255,.62)" }}>
+          <span>● あなたの商品</span>
+          <span>● 市場平均</span>
+        </div>
+      </div>
+      <svg viewBox={`0 0 ${size} ${size}`} style={{ width: "100%", maxWidth: 360, display: "block", margin: "0 auto" }}>
+        {[20, 40, 60, 80, 100].map((n) => (
+          <polygon
+            key={n}
+            points={metrics.map((_, i) => point(n, i).join(",")).join(" ")}
+            fill="none"
+            stroke="rgba(255,255,255,.10)"
+            strokeWidth="1"
+          />
+        ))}
+        {metrics.map((m, i) => {
+          const [x, y] = point(108, i);
+          return (
+            <text key={m.label} x={x} y={y} textAnchor="middle" dominantBaseline="middle" fill="rgba(255,255,255,.75)" fontSize="12" fontWeight="700">
+              {m.label}
+            </text>
+          );
+        })}
+        <polygon points={polygon("market")} fill="rgba(59,130,246,.18)" stroke="rgba(96,165,250,.95)" strokeWidth="3" strokeDasharray="6 5" />
+        <polygon points={polygon("product")} fill="rgba(34,197,94,.20)" stroke="rgba(74,222,128,.98)" strokeWidth="3" />
+        {metrics.map((m, i) => {
+          const [px, py] = point(m.product, i);
+          const [mx, my] = point(m.market, i);
+          return (
+            <g key={m.label}>
+              <circle cx={mx} cy={my} r="4" fill="rgba(96,165,250,.98)" />
+              <circle cx={px} cy={py} r="4" fill="rgba(74,222,128,.98)" />
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
+function DiagnosisDetailPopup({ log, onClose }: { log: DiagnosisLog; onClose: () => void }) {
+  const metrics = diagnosisMetricSet(log);
+  const images = (log.imageUrls?.length ? log.imageUrls : log.imageUrl ? [log.imageUrl] : []).filter(Boolean);
+  const result = toSellCheckResultFromDiagnosisLog(log);
+
+  return (
+    <div
+      style={{ position: "fixed", inset: 0, zIndex: 80, background: "rgba(0,0,0,.72)", backdropFilter: "blur(8px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 18 }}
+      onClick={onClose}
+    >
+      <div
+        style={{ width: "min(1180px, 96vw)", maxHeight: "92vh", overflowY: "auto", borderRadius: 28, border: "1px solid rgba(255,255,255,.14)", background: "linear-gradient(135deg, rgba(5,18,32,.98), rgba(8,35,52,.96))", boxShadow: "0 30px 120px rgba(0,0,0,.7)", padding: 22 }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 18, alignItems: "flex-start", marginBottom: 18 }}>
+          <div>
+            <button type="button" onClick={onClose} style={{ marginBottom: 14, color: "#60a5fa", fontWeight: 800, background: "transparent", border: 0, cursor: "pointer" }}>← 一覧に戻る</button>
+            <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
+              <div style={{ width: 96, height: 96, borderRadius: 18, overflow: "hidden", border: "1px solid rgba(255,255,255,.12)", background: "rgba(0,0,0,.25)", flex: "0 0 auto" }}>
+                {images[0] ? <img src={images[0]} alt="診断商品" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} /> : <div style={{ padding: 10, fontSize: 12, color: "rgba(255,255,255,.7)" }}>画像なし</div>}
+              </div>
+              <div>
+                <div style={{ fontSize: 12, letterSpacing: ".18em", color: "rgba(125,211,252,.72)", fontWeight: 900 }}>SELL CHECK RESULT</div>
+                <h2 style={{ margin: "6px 0 0", color: "white", fontSize: 26, lineHeight: 1.25 }}>{log.title || "商品名未入力"}</h2>
+                <div style={{ marginTop: 8, color: "rgba(255,255,255,.58)", fontSize: 13 }}>{shortDateTime(log.createdAt)} / 診断ID：{log.id}</div>
+              </div>
+            </div>
+          </div>
+          <button type="button" onClick={onClose} style={{ border: "1px solid rgba(255,255,255,.16)", background: "rgba(255,255,255,.08)", color: "white", borderRadius: 14, padding: "10px 14px", fontWeight: 900, cursor: "pointer" }}>閉じる</button>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12, marginBottom: 16 }}>
+          <div style={{ gridColumn: "span 1", border: "1px solid rgba(255,255,255,.10)", background: "rgba(255,255,255,.055)", borderRadius: 18, padding: 16 }}>
+            <div style={{ color: "rgba(255,255,255,.58)", fontSize: 12, fontWeight: 800 }}>総合スコア</div>
+            <div style={{ color: "#4ade80", fontSize: 46, fontWeight: 900, lineHeight: 1 }}>{log.score ?? 0}<span style={{ fontSize: 14, color: "rgba(255,255,255,.6)" }}>点</span></div>
+            <div style={{ color: "rgba(255,255,255,.78)", fontSize: 13, marginTop: 8 }}>{log.rankLabel || log.action || "診断済み"}</div>
+          </div>
+          <div style={{ border: "1px solid rgba(255,255,255,.10)", background: "rgba(255,255,255,.055)", borderRadius: 18, padding: 16 }}>
+            <div style={{ color: "rgba(255,255,255,.58)", fontSize: 12, fontWeight: 800 }}>推奨価格</div>
+            <div style={{ color: "white", fontSize: 24, fontWeight: 900, marginTop: 8 }}>{logPriceRange(log)}</div>
+          </div>
+          <div style={{ border: "1px solid rgba(255,255,255,.10)", background: "rgba(255,255,255,.055)", borderRadius: 18, padding: 16 }}>
+            <div style={{ color: "rgba(255,255,255,.58)", fontSize: 12, fontWeight: 800 }}>市場平均 / 中央値</div>
+            <div style={{ color: "white", fontSize: 20, fontWeight: 900, marginTop: 8 }}>{yenOrDash(logMarketAverage(log))}</div>
+            <div style={{ color: "rgba(255,255,255,.62)", fontSize: 13 }}>中央値 {yenOrDash(logMarketMedian(log))}</div>
+          </div>
+          <div style={{ border: "1px solid rgba(255,255,255,.10)", background: "rgba(255,255,255,.055)", borderRadius: 18, padding: 16 }}>
+            <div style={{ color: "rgba(255,255,255,.58)", fontSize: 12, fontWeight: 800 }}>回転目安</div>
+            <div style={{ color: "#fbbf24", fontSize: 20, fontWeight: 900, marginTop: 8 }}>{logRotationLabel(log)}</div>
+          </div>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1.05fr .95fr", gap: 16 }}>
+          <DiagnosisRadarChart log={log} />
+          <div style={{ border: "1px solid rgba(255,255,255,.10)", background: "rgba(0,0,0,.20)", borderRadius: 20, padding: 16 }}>
+            <div style={{ fontSize: 15, fontWeight: 900, color: "white", marginBottom: 10 }}>項目別スコア比較</div>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", minWidth: 520, borderCollapse: "collapse", color: "white", fontSize: 13 }}>
+                <thead>
+                  <tr style={{ color: "rgba(255,255,255,.62)", textAlign: "left" }}>
+                    <th style={{ padding: "10px 8px", borderBottom: "1px solid rgba(255,255,255,.10)" }}>診断項目</th>
+                    <th style={{ padding: "10px 8px", borderBottom: "1px solid rgba(255,255,255,.10)" }}>あなたの商品</th>
+                    <th style={{ padding: "10px 8px", borderBottom: "1px solid rgba(255,255,255,.10)" }}>市場平均</th>
+                    <th style={{ padding: "10px 8px", borderBottom: "1px solid rgba(255,255,255,.10)" }}>評価</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {metrics.map((m) => (
+                    <tr key={m.label}>
+                      <td style={{ padding: "10px 8px", borderBottom: "1px solid rgba(255,255,255,.08)" }}>{m.label}</td>
+                      <td style={{ padding: "10px 8px", borderBottom: "1px solid rgba(255,255,255,.08)", color: "#86efac", fontWeight: 900 }}>{m.product}/100</td>
+                      <td style={{ padding: "10px 8px", borderBottom: "1px solid rgba(255,255,255,.08)", color: "#93c5fd", fontWeight: 900 }}>{m.market}/100</td>
+                      <td style={{ padding: "10px 8px", borderBottom: "1px solid rgba(255,255,255,.08)", color: m.product >= m.market ? "#86efac" : "#fbbf24", fontWeight: 900 }}>{m.product >= m.market ? "良い" : "要調整"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div style={{ marginTop: 16, display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 16 }}>
+          <div style={{ border: "1px solid rgba(255,255,255,.10)", background: "rgba(255,255,255,.045)", borderRadius: 20, padding: 16 }}>
+            <div style={{ fontSize: 15, fontWeight: 900, color: "white", marginBottom: 10 }}>小学生でもわかる解説</div>
+            <p style={{ color: "rgba(255,255,255,.72)", lineHeight: 1.8, fontSize: 14 }}>{result.scoreExplanation || result.scoreLabel || "この商品がどれくらい売れやすいか、価格・見た目・市場データから判定しました。"}</p>
+            <ul style={{ margin: "12px 0 0", paddingLeft: 18, color: "rgba(255,255,255,.72)", lineHeight: 1.8, fontSize: 13 }}>
+              {(log.reasons?.length ? log.reasons : ["市場平均と比較し、売れ行きと価格の妥当性を確認しています。"]).slice(0, 5).map((x, i) => <li key={`${x}-${i}`}>{x}</li>)}
+            </ul>
+          </div>
+          <div style={{ border: "1px solid rgba(255,255,255,.10)", background: "rgba(255,255,255,.045)", borderRadius: 20, padding: 16 }}>
+            <div style={{ fontSize: 15, fontWeight: 900, color: "white", marginBottom: 10 }}>改善ポイント</div>
+            <ul style={{ margin: 0, paddingLeft: 18, color: "rgba(255,255,255,.72)", lineHeight: 1.8, fontSize: 13 }}>
+              {(log.improvements?.length ? log.improvements : ["写真・説明文・価格を見直すと判断しやすくなります。"]).slice(0, 6).map((x, i) => <li key={`${x}-${i}`}>{x}</li>)}
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SavedDiagnosisSection(props: {
+  logs: DiagnosisLog[];
+  loading: boolean;
+  error: string;
+  onReload: () => void;
+  onSelect: (log: DiagnosisLog) => void;
+}) {
+  return (
+    <section style={{ borderRadius: 28, border: "1px solid rgba(255,255,255,.10)", background: "rgba(255,255,255,.055)", padding: 18, boxShadow: "0 24px 80px rgba(0,0,0,.25)", backdropFilter: "blur(16px)" }}>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16 }}>
+        <div>
+          <div style={{ fontSize: 12, fontWeight: 900, letterSpacing: ".22em", color: "rgba(125,211,252,.72)" }}>SAVED DIAGNOSIS</div>
+          <h2 style={{ margin: "5px 0 0", fontSize: 24, lineHeight: 1.2, color: "white", fontWeight: 900 }}>保存済み売れる診断</h2>
+          <p style={{ margin: "9px 0 0", color: "rgba(255,255,255,.62)", fontSize: 14, lineHeight: 1.7 }}>売れる診断で診断・保存した商品だけを表示します。学習データ管理のデータとは別です。カードを押すと詳細をポップアップ表示します。</p>
+        </div>
+        <button type="button" onClick={props.onReload} style={{ flex: "0 0 auto", border: "1px solid rgba(255,255,255,.16)", background: "rgba(255,255,255,.08)", color: "white", borderRadius: 14, padding: "10px 14px", fontWeight: 900, cursor: "pointer" }}>履歴を再読込</button>
+      </div>
+
+      {props.loading ? (
+        <div style={{ marginTop: 16, borderRadius: 18, border: "1px solid rgba(255,255,255,.10)", background: "rgba(0,0,0,.25)", padding: 14, color: "rgba(255,255,255,.64)", fontSize: 14 }}>診断履歴を読み込み中...</div>
+      ) : props.error ? (
+        <div style={{ marginTop: 16, borderRadius: 18, border: "1px solid rgba(251,191,36,.20)", background: "rgba(251,191,36,.10)", padding: 14, color: "#fef3c7", fontSize: 14 }}>{props.error}</div>
+      ) : props.logs.length === 0 ? (
+        <div style={{ marginTop: 16, borderRadius: 18, border: "1px solid rgba(255,255,255,.10)", background: "rgba(0,0,0,.25)", padding: 14, color: "rgba(255,255,255,.64)", fontSize: 14 }}>まだ保存済み診断がありません。売れる診断を実行すると、ここに商品別履歴が表示されます。</div>
+      ) : (
+        <div style={{ marginTop: 18, display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 12 }}>
+          {props.logs.map((log) => {
+            const thumb = log.imageUrl || log.imageUrls?.[0] || "";
+            return (
+              <button
+                type="button"
+                key={log.id}
+                onClick={() => props.onSelect(log)}
+                style={{ display: "block", width: "100%", overflow: "hidden", borderRadius: 18, border: "1px solid rgba(255,255,255,.12)", background: "rgba(0,0,0,.28)", padding: 0, textAlign: "left", cursor: "pointer" }}
+              >
+                <div style={{ width: "100%", height: 118, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,.28)", overflow: "hidden" }}>
+                  {thumb ? <img src={thumb} alt={log.title || "診断商品"} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} /> : <div style={{ padding: 10, color: "rgba(255,255,255,.72)", fontSize: 13, fontWeight: 900, textAlign: "center" }}>{log.title || "商品名未入力"}</div>}
+                </div>
+                <div style={{ padding: 10 }}>
+                  <div style={{ color: "white", fontSize: 13, fontWeight: 900, lineHeight: 1.35, minHeight: 36, overflow: "hidden" }}>{log.title || "商品名未入力"}</div>
+                  <div style={{ marginTop: 8, display: "flex", justifyContent: "space-between", gap: 6, alignItems: "center", color: "rgba(255,255,255,.52)", fontSize: 11 }}>
+                    <span>{shortDateTime(log.createdAt)}</span>
+                    <span style={{ border: "1px solid rgba(74,222,128,.22)", background: "rgba(34,197,94,.12)", color: "#bbf7d0", borderRadius: 999, padding: "2px 7px", fontWeight: 900 }}>{log.score ?? 0}点</span>
+                  </div>
+                  <div style={{ marginTop: 5, color: "rgba(255,255,255,.52)", fontSize: 11 }}>推奨 {logPriceRange(log)}</div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function SellCheckInsightPanel(props: { result: SellCheckResult; listedPrice?: string | number }) {
   const result = props.result;
   const listed = safeNumber(props.listedPrice);
@@ -501,6 +863,10 @@ export default function SellCheckPage() {
   const [batchMessage, setBatchMessage] = useState("");
   const [diagnosisMode, setDiagnosisMode] = useState<"single" | "bulk">("single");
   const [stats, setStats] = useState<Stats | null>(null);
+  const [diagnosisLogs, setDiagnosisLogs] = useState<DiagnosisLog[]>([]);
+  const [diagnosisLogsLoading, setDiagnosisLogsLoading] = useState(false);
+  const [diagnosisLogsError, setDiagnosisLogsError] = useState("");
+  const [selectedDiagnosisLog, setSelectedDiagnosisLog] = useState<DiagnosisLog | null>(null);
 
   const targetText = useMemo(() => {
     const categoryLabel =
@@ -518,8 +884,11 @@ export default function SellCheckPage() {
       if (u) {
         const token = await u.getIdToken(true).catch(() => "");
         setIdToken(token);
+        void loadDiagnosisLogs(token);
       } else {
         setIdToken("");
+        setDiagnosisLogs([]);
+        setDiagnosisLogsError("ログイン確認後に診断履歴を表示します。");
       }
     });
 
@@ -540,6 +909,37 @@ export default function SellCheckPage() {
       }
     } catch {
       setStats(null);
+    }
+  }
+
+  async function loadDiagnosisLogs(token = idToken) {
+    if (!token) {
+      setDiagnosisLogs([]);
+      setDiagnosisLogsError("ログイン確認後に診断履歴を表示します。");
+      return;
+    }
+
+    setDiagnosisLogsLoading(true);
+    setDiagnosisLogsError("");
+
+    try {
+      const res = await fetch("/api/sell-check/diagnosis-logs?limit=60", {
+        method: "GET",
+        cache: "no-store",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok || !data?.ok) {
+        throw new Error(data?.error || "診断履歴の取得に失敗しました");
+      }
+
+      setDiagnosisLogs(Array.isArray(data.logs) ? data.logs : []);
+    } catch (e) {
+      setDiagnosisLogs([]);
+      setDiagnosisLogsError(e instanceof Error ? e.message : "診断履歴の取得に失敗しました");
+    } finally {
+      setDiagnosisLogsLoading(false);
     }
   }
 
@@ -806,6 +1206,7 @@ export default function SellCheckPage() {
           : "診断対象がありません。各商品枠に画像と想定出品価格を入れてから一括診断してください。",
       );
       await loadStats();
+      await loadDiagnosisLogs();
     } finally {
       setBatchBusy(false);
     }
@@ -1024,6 +1425,7 @@ export default function SellCheckPage() {
       });
 
       await loadStats();
+      await loadDiagnosisLogs();
     } catch (e) {
       const message = e instanceof Error ? e.message : "診断に失敗しました";
       setError(message);
@@ -1033,7 +1435,21 @@ export default function SellCheckPage() {
   }
 
   return (
-    <div className="space-y-5">
+    <div className="sell-check-root space-y-5">
+      <style>{`
+        .sell-check-root input, .sell-check-root textarea, .sell-check-root select {
+          background: rgba(0, 0, 0, 0.45) !important;
+          color: rgba(255,255,255,.92) !important;
+          border-color: rgba(255,255,255,.12) !important;
+          border-radius: 14px !important;
+        }
+        .sell-check-root input::placeholder, .sell-check-root textarea::placeholder {
+          color: rgba(255,255,255,.35) !important;
+        }
+        .sell-check-root img {
+          max-width: 100%;
+        }
+      `}</style>
       <section className="rounded-[2rem] border border-white/15 bg-black/18 p-5 md:p-6">
         <div className="text-xs font-black tracking-[0.32em] text-white/50">
           SELL CHECK / STRUCTURE
@@ -1864,6 +2280,18 @@ export default function SellCheckPage() {
           )}
         </section>
       </div>
+      ) : null}
+
+      <SavedDiagnosisSection
+        logs={diagnosisLogs}
+        loading={diagnosisLogsLoading}
+        error={diagnosisLogsError}
+        onReload={() => loadDiagnosisLogs()}
+        onSelect={(log) => setSelectedDiagnosisLog(log)}
+      />
+
+      {selectedDiagnosisLog ? (
+        <DiagnosisDetailPopup log={selectedDiagnosisLog} onClose={() => setSelectedDiagnosisLog(null)} />
       ) : null}
 
       <section className="rounded-3xl border border-white/10 bg-black/30 p-5">

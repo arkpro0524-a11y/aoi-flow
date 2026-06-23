@@ -2179,6 +2179,7 @@ export default function SellCheckAdminPage() {
             <h3 style={{ margin: "5px 0 0", fontSize: 20, fontWeight: 950 }}>保存済み学習データ</h3>
           </div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <button type="button" onClick={autoDeleteDuplicateLogs} disabled={duplicateRemoveCount <= 0 || logsBusy} style={{ ...softButton, borderColor: duplicateRemoveCount > 0 ? "rgba(248,113,113,.45)" : "rgba(255,255,255,.12)", color: duplicateRemoveCount > 0 ? "#fecaca" : "rgba(255,255,255,.55)" }}>重複候補を削除（{duplicateRemoveCount}件）</button>
             <button type="button" onClick={exportLogsAsCsv} disabled={logs.length === 0} style={softButton}>CSV出力</button>
             <button type="button" onClick={exportLogsAsExcel} disabled={logs.length === 0} style={softButton}>Excel出力</button>
             <button type="button" onClick={loadLogs} disabled={logsBusy} style={softButton}>{logsBusy ? "読込中..." : "再読込"}</button>
