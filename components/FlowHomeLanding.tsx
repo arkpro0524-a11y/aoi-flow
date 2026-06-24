@@ -44,7 +44,6 @@ const MENU_ITEMS: MenuItem[] = [
     links: [
       { href: "/flow/drafts/new", label: "新規作成" },
       { href: "/flow/drafts", label: "下書き一覧" },
-      { href: "/flow/posted", label: "投稿済み" },
     ],
   },
   {

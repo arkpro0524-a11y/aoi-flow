@@ -820,11 +820,12 @@ export default function ProductVideoPanel({
       </div>
 
       <div className="rounded-2xl border border-white/10 bg-black/20" style={{ padding: UI.cardPadding }}>
-        <div className="text-white/85 font-black" style={{ fontSize: 13 }}>ステータス</div>
+        <div className="text-white/85 font-black" style={{ fontSize: 13 }}>保存</div>
+        <div className="mt-2 text-white/60" style={{ fontSize: 12, lineHeight: 1.6 }}>
+          下書きの状態管理は下書き一覧の「作成中 / 投稿中 / 投稿済み」ボタンで行います。
+        </div>
         <div className="mt-3 flex flex-wrap gap-2">
-          <Btn variant="ghost" disabled={!uid || busy} onClick={() => void onSaveDraft()}>保存</Btn>
-          <Btn variant={d.phase === "ready" ? "primary" : "secondary"} disabled={!uid || busy} onClick={() => onSetPhase("ready")}>投稿待ちへ</Btn>
-          <Btn variant={d.phase === "posted" ? "primary" : "secondary"} disabled={!uid || busy} onClick={() => onSetPhase("posted")}>投稿済みへ</Btn>
+          <Btn variant="ghost" disabled={!uid || busy} onClick={() => void onSaveDraft()}>保存する</Btn>
         </div>
       </div>
     </div>

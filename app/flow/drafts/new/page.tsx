@@ -737,6 +737,26 @@ export default function NewDraftPage() {
               <Chip>{previewLabel}</Chip>
               {c.isOwner ? <Chip>内部表示 ON</Chip> : null}
               {UI.showLoadingText && c.loadBusy ? <Chip>読み込み中</Chip> : null}
+              <button
+                type="button"
+                onClick={() => {
+                  void c.saveDraft();
+                }}
+                disabled={c.busy}
+                style={{
+                  borderRadius: 999,
+                  border: "1px solid rgba(147,197,253,.34)",
+                  background: "linear-gradient(135deg,#2563eb,#1d4ed8)",
+                  color: "white",
+                  padding: "8px 14px",
+                  fontSize: 12,
+                  fontWeight: 900,
+                  boxShadow: "0 12px 34px rgba(37,99,235,.22)",
+                  opacity: c.busy ? 0.55 : 1,
+                }}
+              >
+                保存する
+              </button>
             </div>
           </div>
 

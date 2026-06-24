@@ -1,19 +1,12 @@
 // /app/flow/library/page.tsx
 // ユーザーごとのライブラリ。
-// 下書きごとに閉じ込めていた画像を、ユーザー単位で再利用できるようにします。
-// 既存の下書き・SELL CHECK・PRODUCT SELECTOR などの機能は削除せず、画像資産管理だけを追加します。
+// Firebase Storage の読み込み・アップロード・削除機能は残し、表示だけを小型カード中心の管理画面へ整理します。
 
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
 import { onAuthStateChanged } from "firebase/auth";
-import {
-  deleteObject,
-  getDownloadURL,
-  listAll,
-  ref,
-  uploadBytes,
-} from "firebase/storage";
+import { deleteObject, getDownloadURL, listAll, ref, uploadBytes } from "firebase/storage";
 import { auth, storage } from "@/firebase";
 import { useToast } from "@/components/ToastProvider";
 
@@ -33,34 +26,23 @@ const LIBRARY_GROUPS: Array<{
   description: string;
   folder: (uid: string) => string;
 }> = [
-  {
-    kind: "aiBackground",
-    title: "AI生成背景",
-    description: "AI背景生成で作成した背景です。商品/背景合成の背景選択から再利用します。",
-    folder: (uid) => `users/${uid}/bg-stock`,
-  },
-  {
-    kind: "templateBackground",
-    title: "テンプレ背景",
-    description: "販売向けに整えたテンプレ背景を保管します。今後、テンプレ背景の共通保存先として使います。",
-    folder: (uid) => `users/${uid}/asset-library/template-backgrounds`,
-  },
-  {
-    kind: "uploaded",
-    title: "手動アップロード",
-    description: "別下書きでも使いたい画像を手動で保管します。",
-    folder: (uid) => `users/${uid}/asset-library/uploaded`,
-  },
+  { kind: "aiBackground", title: "AI背景", description: "AI背景生成で作成した背景です。", folder: (uid) => `users/${uid}/bg-stock` },
+  { kind: "templateBackground", title: "テンプレ背景", description: "販売向けに整えたテンプレ背景です。", folder: (uid) => `users/${uid}/asset-library/template-backgrounds` },
+  { kind: "uploaded", title: "商品画像", description: "別下書きでも使いたい画像です。", folder: (uid) => `users/${uid}/asset-library/uploaded` },
 ];
 
 function kindLabel(kind: LibraryKind) {
-  if (kind === "aiBackground") return "AI生成";
-  if (kind === "templateBackground") return "テンプレ";
-  return "手動保存";
+  if (kind === "aiBackground") return "背景画像";
+  if (kind === "templateBackground") return "テンプレ背景";
+  return "商品画像";
 }
 
 function safeFileName(name: string) {
   return name.replace(/[^a-zA-Z0-9_.-]/g, "_");
+}
+
+function formatCount(n: number) {
+  return n.toLocaleString("ja-JP");
 }
 
 export default function ImageLibraryPage() {
@@ -68,23 +50,40 @@ export default function ImageLibraryPage() {
   const [uid, setUid] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
-  const [deletingPath, setDeletingPath] = useState<string>("");
+  const [deletingPath, setDeletingPath] = useState("");
   const [assets, setAssets] = useState<LibraryAsset[]>([]);
   const [activeKind, setActiveKind] = useState<LibraryKind | "all">("all");
   const [uploadKind, setUploadKind] = useState<LibraryKind>("uploaded");
+  const [queryText, setQueryText] = useState("");
+  const [sortMode, setSortMode] = useState<"new" | "name">("new");
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (u) => {
-      setUid(u?.uid ?? null);
-    });
-
+    const unsub = onAuthStateChanged(auth, (u) => setUid(u?.uid ?? null));
     return () => unsub();
   }, []);
 
+  const counts = useMemo(() => {
+    return {
+      all: assets.length,
+      uploaded: assets.filter((x) => x.kind === "uploaded").length,
+      aiBackground: assets.filter((x) => x.kind === "aiBackground").length,
+      templateBackground: assets.filter((x) => x.kind === "templateBackground").length,
+    };
+  }, [assets]);
+
   const visibleAssets = useMemo(() => {
-    if (activeKind === "all") return assets;
-    return assets.filter((asset) => asset.kind === activeKind);
-  }, [activeKind, assets]);
+    const q = queryText.trim().toLowerCase();
+    const filtered = assets.filter((asset) => {
+      const kindOk = activeKind === "all" || asset.kind === activeKind;
+      const queryOk = !q || `${asset.label} ${kindLabel(asset.kind)}`.toLowerCase().includes(q);
+      return kindOk && queryOk;
+    });
+
+    return filtered.sort((a, b) => {
+      if (sortMode === "name") return a.label.localeCompare(b.label, "ja");
+      return b.sourcePath.localeCompare(a.sourcePath, "ja");
+    });
+  }, [activeKind, assets, queryText, sortMode]);
 
   async function loadLibrary(currentUid: string) {
     setLoading(true);
@@ -93,60 +92,36 @@ export default function ImageLibraryPage() {
       const next: LibraryAsset[] = [];
 
       for (const group of LIBRARY_GROUPS) {
-        const folderPath = group.folder(currentUid);
-        const folderRef = ref(storage, folderPath);
+        const folderRef = ref(storage, group.folder(currentUid));
         const listed = await listAll(folderRef).catch(() => ({ items: [] as any[] }));
 
         for (const item of listed.items) {
           const url = await getDownloadURL(item).catch(() => "");
           if (!url) continue;
-
-          next.push({
-            id: `${group.kind}-${item.fullPath}`,
-            kind: group.kind,
-            label: item.name,
-            url,
-            sourcePath: item.fullPath,
-          });
+          next.push({ id: `${group.kind}-${item.fullPath}`, kind: group.kind, label: item.name, url, sourcePath: item.fullPath });
         }
       }
 
       // 既存下書きのテンプレ背景もテンプレ背景として表示します。
-      // 過去生成分は users/{uid}/drafts/{draftId}/template-bg に保存されているため、
-      // 共通ライブラリだけを見ても0件に見えてしまいます。
-      const draftRoot = await listAll(ref(storage, `users/${currentUid}/drafts`)).catch(() => ({
-        prefixes: [] as any[],
-      }));
+      const draftRoot = await listAll(ref(storage, `users/${currentUid}/drafts`)).catch(() => ({ prefixes: [] as any[] }));
 
       for (const draftPrefix of draftRoot.prefixes || []) {
         if (!draftPrefix?.fullPath) continue;
-
-        const templateFolder = await listAll(ref(storage, `${draftPrefix.fullPath}/template-bg`)).catch(() => ({
-          items: [] as any[],
-        }));
+        const templateFolder = await listAll(ref(storage, `${draftPrefix.fullPath}/template-bg`)).catch(() => ({ items: [] as any[] }));
 
         for (const item of templateFolder.items || []) {
           const url = await getDownloadURL(item).catch(() => "");
           if (!url) continue;
-
-          next.push({
-            id: `templateBackground-${item.fullPath}`,
-            kind: "templateBackground",
-            label: item.name,
-            url,
-            sourcePath: item.fullPath,
-          });
+          next.push({ id: `templateBackground-${item.fullPath}`, kind: "templateBackground", label: item.name, url, sourcePath: item.fullPath });
         }
       }
 
       const seen = new Set<string>();
-      setAssets(
-        next.filter((asset) => {
-          if (seen.has(asset.url)) return false;
-          seen.add(asset.url);
-          return true;
-        })
-      );
+      setAssets(next.filter((asset) => {
+        if (seen.has(asset.url)) return false;
+        seen.add(asset.url);
+        return true;
+      }));
     } catch (e) {
       console.error(e);
       toast.push("画像ライブラリの取得に失敗しました");
@@ -162,7 +137,6 @@ export default function ImageLibraryPage() {
       setLoading(false);
       return;
     }
-
     void loadLibrary(uid);
   }, [uid]);
 
@@ -176,11 +150,9 @@ export default function ImageLibraryPage() {
 
       for (const file of Array.from(files)) {
         if (!file.type.startsWith("image/")) continue;
-
         const name = safeFileName(file.name);
         const path = `${targetGroup.folder(uid)}/${Date.now()}_${name}`;
-        const sref = ref(storage, path);
-        await uploadBytes(sref, file, { contentType: file.type || "image/png" });
+        await uploadBytes(ref(storage, path), file, { contentType: file.type || "image/png" });
       }
 
       toast.push("画像をライブラリへ保存しました");
@@ -214,176 +186,78 @@ export default function ImageLibraryPage() {
   }
 
   return (
-    <div className="space-y-5">
-      <section className="rounded-[2rem] border border-white/12 bg-black/18 p-5 md:p-7">
-        <div className="text-xs font-black tracking-[0.35em] text-white/55">
-          AOI FLOW / KNOWLEDGE LIBRARY
+    <div className="text-white" style={{ display: "grid", gap: 18 }}>
+      <style>{`
+        .library-glass { border: 1px solid rgba(125,211,252,.12); background: linear-gradient(135deg, rgba(8,32,50,.74), rgba(7,22,36,.58)); box-shadow: 0 22px 70px rgba(0,0,0,.22), inset 0 1px 0 rgba(255,255,255,.04); backdrop-filter: blur(18px); }
+        .library-chip { border: 1px solid rgba(125,211,252,.12); background: rgba(255,255,255,.055); color: rgba(255,255,255,.88); }
+        .library-chip-active { background: linear-gradient(135deg, rgba(37,99,235,.70), rgba(14,165,233,.32)); border-color: rgba(147,197,253,.35); }
+        .library-input { border: 1px solid rgba(125,211,252,.14); background: rgba(5,18,31,.62); color: rgba(255,255,255,.90); outline: none; }
+        .library-mini-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap:10px; }
+        .library-mini-card { border:1px solid rgba(125,211,252,.12); background:linear-gradient(180deg, rgba(255,255,255,.075), rgba(7,22,36,.72)); border-radius:16px; overflow:hidden; min-width:0; }
+        .library-mini-img { width:100%; height:70px; object-fit:cover; display:block; background:rgba(0,0,0,.26); }
+        @media (min-width: 1280px){ .library-mini-grid { grid-template-columns: repeat(auto-fill, minmax(124px, 1fr)); } .library-mini-img { height:76px; } }
+      `}</style>
+
+      <header style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(260px,520px)", gap: 18, alignItems: "center" }}>
+        <div>
+          <h1 style={{ fontSize: 30, fontWeight: 900, letterSpacing: ".08em" }}>ライブラリ</h1>
+          <p style={{ marginTop: 8, fontSize: 14, color: "rgba(255,255,255,.66)" }}>作成したコンテンツ・データを一元管理できます</p>
         </div>
-        <h1 className="mt-3 text-3xl font-black tracking-[0.12em] text-white md:text-4xl">
-          画像ライブラリ
-        </h1>
-        <p className="mt-4 max-w-4xl text-sm leading-7 text-white/68">
-          ライブラリは画像保管庫だけではなく、AOI FLOWの知識保管庫です。
-          市場カード、市場データ、学習データ、理論DB、成功事例、失敗事例、画像ライブラリを同じ場所から確認します。
-        </p>
+        <div className="library-glass" style={{ borderRadius: 999, padding: "12px 18px", display: "flex", gap: 10, alignItems: "center" }}>
+          <input value={queryText} onChange={(e) => setQueryText(e.target.value)} placeholder="検索（タイトル・タグ・メモなど）" style={{ flex: 1, background: "transparent", color: "white", outline: "none", border: 0, fontSize: 14 }} />
+          <span style={{ color: "rgba(255,255,255,.45)" }}>⌕</span>
+        </div>
+      </header>
+
+      <section style={{ display: "grid", gridTemplateColumns: "repeat(6, minmax(0,1fr))", gap: 10 }}>
+        <button type="button" onClick={() => setActiveKind("all")} className={`library-chip ${activeKind === "all" ? "library-chip-active" : ""}`} style={{ borderRadius: 18, padding: 14, textAlign: "left" }}><b>すべて</b><div>{formatCount(counts.all)}</div></button>
+        <button type="button" onClick={() => setActiveKind("uploaded")} className={`library-chip ${activeKind === "uploaded" ? "library-chip-active" : ""}`} style={{ borderRadius: 18, padding: 14, textAlign: "left" }}><b>商品画像</b><div>{formatCount(counts.uploaded)}</div></button>
+        <button type="button" onClick={() => setActiveKind("aiBackground")} className={`library-chip ${activeKind === "aiBackground" ? "library-chip-active" : ""}`} style={{ borderRadius: 18, padding: 14, textAlign: "left" }}><b>AI背景</b><div>{formatCount(counts.aiBackground)}</div></button>
+        <button type="button" onClick={() => setActiveKind("templateBackground")} className={`library-chip ${activeKind === "templateBackground" ? "library-chip-active" : ""}`} style={{ borderRadius: 18, padding: 14, textAlign: "left" }}><b>テンプレ背景</b><div>{formatCount(counts.templateBackground)}</div></button>
+        <a href="/flow/market-research" className="library-chip" style={{ borderRadius: 18, padding: 14, color: "white", textDecoration: "none" }}><b>市場DB</b><div>移動</div></a>
+        <a href="/flow/sell-check/outcomes" className="library-chip" style={{ borderRadius: 18, padding: 14, color: "white", textDecoration: "none" }}><b>学習DB</b><div>確認</div></a>
       </section>
 
-      <section className="rounded-[2rem] border border-white/12 bg-black/18 p-5 md:p-6">
-        <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
-          <a href="/flow/market-research" className="rounded-2xl border border-white/12 bg-white/[0.06] p-4 text-white no-underline">
-            <div className="text-sm font-black">市場カード</div>
-            <p className="mt-2 text-xs leading-6 text-white/60">市場の要約情報と観測履歴</p>
-          </a>
-          <a href="/flow/market-research" className="rounded-2xl border border-white/12 bg-white/[0.06] p-4 text-white no-underline">
-            <div className="text-sm font-black">市場データ</div>
-            <p className="mt-2 text-xs leading-6 text-white/60">Market Research DB</p>
-          </a>
-          <a href="/flow/market-research" className="rounded-2xl border border-white/12 bg-white/[0.06] p-4 text-white no-underline">
-            <div className="text-sm font-black">学習データ</div>
-            <p className="mt-2 text-xs leading-6 text-white/60">Learning DB / 学習データ管理</p>
-          </a>
-          <a href="/flow/market-research" className="rounded-2xl border border-white/12 bg-white/[0.06] p-4 text-white no-underline">
-            <div className="text-sm font-black">理論DB</div>
-            <p className="mt-2 text-xs leading-6 text-white/60">市場理論・デザイン理論</p>
-          </a>
-          <a href="/flow/market-research" className="rounded-2xl border border-white/12 bg-white/[0.06] p-4 text-white no-underline">
-            <div className="text-sm font-black">成功事例</div>
-            <p className="mt-2 text-xs leading-6 text-white/60">売却・利益化できた事例</p>
-          </a>
-          <a href="/flow/market-research" className="rounded-2xl border border-white/12 bg-white/[0.06] p-4 text-white no-underline">
-            <div className="text-sm font-black">失敗事例</div>
-            <p className="mt-2 text-xs leading-6 text-white/60">見送り・売れなかった事例</p>
-          </a>
-          <div className="rounded-2xl border border-cyan-200/20 bg-cyan-200/[0.08] p-4 text-white">
-            <div className="text-sm font-black">画像ライブラリ</div>
-            <p className="mt-2 text-xs leading-6 text-white/60">下の既存画像保管機能をそのまま使用</p>
-          </div>
-          <a href="/flow/market-research" className="rounded-2xl border border-white/12 bg-white/[0.06] p-4 text-white no-underline">
-            <div className="text-sm font-black">学習データ管理</div>
-            <p className="mt-2 text-xs leading-6 text-white/60">市場研究ラボ内の収納表示へ移動</p>
-          </a>
+      <section className="library-glass" style={{ borderRadius: 24, padding: 14, display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", justifyContent: "space-between" }}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+          <select value={activeKind} onChange={(e) => setActiveKind(e.target.value as LibraryKind | "all")} className="library-input" style={{ borderRadius: 14, padding: "10px 12px" }}>
+            <option value="all">すべてのタイプ</option>
+            {LIBRARY_GROUPS.map((group) => <option key={group.kind} value={group.kind}>{group.title}</option>)}
+          </select>
+          <select value={sortMode} onChange={(e) => setSortMode(e.target.value as "new" | "name")} className="library-input" style={{ borderRadius: 14, padding: "10px 12px" }}>
+            <option value="new">更新日が新しい順</option>
+            <option value="name">名前順</option>
+          </select>
+          <select value={uploadKind} onChange={(e) => setUploadKind(e.target.value as LibraryKind)} disabled={!uid || uploading} className="library-input" style={{ borderRadius: 14, padding: "10px 12px" }}>
+            <option value="uploaded">手動アップロード</option>
+            <option value="templateBackground">テンプレ背景</option>
+            <option value="aiBackground">AI生成背景</option>
+          </select>
+          <label className="library-input" style={{ borderRadius: 14, padding: "10px 12px", cursor: "pointer" }}>
+            ファイルをアップロード
+            <input type="file" accept="image/*" multiple disabled={!uid || uploading} onChange={async (e) => { await uploadFiles(e.currentTarget.files); e.currentTarget.value = ""; }} style={{ display: "none" }} />
+          </label>
         </div>
+        <button type="button" onClick={() => uid && loadLibrary(uid)} className="library-input" style={{ borderRadius: 14, padding: "10px 14px", fontWeight: 900 }}>再読み込み</button>
       </section>
-
-      <section className="rounded-[1.5rem] border border-white/12 bg-black/18 p-4">
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <div>
-            <div className="text-sm font-black text-white/90">画像を追加</div>
-            <div className="mt-1 text-xs leading-5 text-white/55">
-              PC/スマホから背景・テンプレ・参照画像を保存できます。既存の下書き画像は削除しません。
-            </div>
-          </div>
-
-          <div className="flex flex-col gap-2 md:flex-row md:items-center">
-            <select
-              value={uploadKind}
-              onChange={(e) => setUploadKind(e.target.value as LibraryKind)}
-              disabled={!uid || uploading}
-              className="rounded-xl border border-white/12 bg-white/10 px-3 py-2 text-sm text-white/85"
-            >
-              <option value="uploaded">手動アップロード</option>
-              <option value="templateBackground">テンプレ背景</option>
-              <option value="aiBackground">AI生成背景</option>
-            </select>
-
-            <input
-              type="file"
-              accept="image/*"
-              multiple
-              disabled={!uid || uploading}
-              onChange={async (e) => {
-                await uploadFiles(e.currentTarget.files);
-                e.currentTarget.value = "";
-              }}
-              className="rounded-xl border border-white/12 bg-white/10 px-3 py-2 text-sm text-white/85"
-            />
-          </div>
-        </div>
-      </section>
-
-      <div className="flex flex-wrap gap-2">
-        <button
-          type="button"
-          onClick={() => setActiveKind("all")}
-          className={`rounded-full border px-4 py-2 text-xs font-black ${
-            activeKind === "all"
-              ? "border-cyan-200/45 bg-cyan-200/15 text-white"
-              : "border-white/12 bg-white/8 text-white/62"
-          }`}
-        >
-          すべて {assets.length}
-        </button>
-
-        {LIBRARY_GROUPS.map((group) => {
-          const count = assets.filter((asset) => asset.kind === group.kind).length;
-          return (
-            <button
-              key={group.kind}
-              type="button"
-              onClick={() => setActiveKind(group.kind)}
-              className={`rounded-full border px-4 py-2 text-xs font-black ${
-                activeKind === group.kind
-                  ? "border-cyan-200/45 bg-cyan-200/15 text-white"
-                  : "border-white/12 bg-white/8 text-white/62"
-              }`}
-            >
-              {group.title} {count}
-            </button>
-          );
-        })}
-      </div>
 
       {loading ? (
-        <div className="rounded-2xl border border-white/12 bg-black/18 p-5 text-sm text-white/70">
-          読み込み中...
-        </div>
+        <div className="library-glass" style={{ borderRadius: 24, padding: 24, color: "rgba(255,255,255,.7)" }}>読み込み中...</div>
       ) : visibleAssets.length === 0 ? (
-        <div className="rounded-2xl border border-white/12 bg-black/18 p-5 text-sm leading-7 text-white/70">
-          まだ画像がありません。背景生成後、または手動アップロード後にここへ表示されます。
-        </div>
+        <div className="library-glass" style={{ borderRadius: 24, padding: 24, color: "rgba(255,255,255,.7)" }}>まだ画像がありません。背景生成後、または手動アップロード後にここへ表示されます。</div>
       ) : (
-        <section className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-5">
+        <section className="library-mini-grid">
           {visibleAssets.map((asset) => (
-            <article
-              key={asset.id}
-              className="overflow-hidden rounded-[1.35rem] border border-white/12 bg-black/18"
-            >
-              <a href={asset.url} target="_blank" rel="noreferrer" className="block">
-                <img
-                  src={asset.url}
-                  alt={asset.label}
-                  loading="lazy"
-                  decoding="async"
-                  className="h-40 w-full bg-black/30 object-cover md:h-48"
-                  draggable={false}
-                />
+            <article key={asset.id} className="library-mini-card">
+              <a href={asset.url} target="_blank" rel="noreferrer" style={{ display: "block", position: "relative" }}>
+                <img src={asset.url} alt={asset.label} loading="lazy" decoding="async" className="library-mini-img" draggable={false} />
+                <span style={{ position: "absolute", left: 6, bottom: 6, borderRadius: 7, background: "rgba(0,0,0,.48)", padding: "3px 6px", fontSize: 10, fontWeight: 900 }}>{kindLabel(asset.kind)}</span>
               </a>
-
-              <div className="space-y-2 p-3">
-                <div className="inline-flex rounded-full border border-white/12 bg-white/10 px-2 py-1 text-[11px] font-black text-white/75">
-                  {kindLabel(asset.kind)}
-                </div>
-                <div className="truncate text-xs font-bold text-white/78" title={asset.label}>
-                  {asset.label}
-                </div>
-
-                <div className="flex flex-wrap gap-2">
-                  <a
-                    href={asset.url}
-                    download
-                    className="inline-flex rounded-full border border-white/12 bg-white/10 px-3 py-1.5 text-xs font-black text-white/75 transition hover:bg-white/18"
-                  >
-                    表示 / DL
-                  </a>
-
-                  <button
-                    type="button"
-                    disabled={deletingPath === asset.sourcePath}
-                    onClick={() => void deleteAsset(asset)}
-                    className="inline-flex rounded-full border border-red-200/30 bg-red-500/15 px-3 py-1.5 text-xs font-black text-red-100 transition hover:bg-red-500/25 disabled:opacity-50"
-                  >
-                    削除
-                  </button>
+              <div style={{ padding: 8, display: "grid", gap: 6 }}>
+                <div title={asset.label} style={{ fontSize: 11, fontWeight: 900, color: "rgba(255,255,255,.9)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{asset.label}</div>
+                <div style={{ display: "flex", gap: 5 }}>
+                  <a href={asset.url} download style={{ flex: 1, borderRadius: 999, border: "1px solid rgba(255,255,255,.12)", background: "rgba(255,255,255,.08)", color: "rgba(255,255,255,.78)", textAlign: "center", padding: "4px 6px", fontSize: 10, fontWeight: 900, textDecoration: "none" }}>表示</a>
+                  <button type="button" disabled={deletingPath === asset.sourcePath} onClick={() => void deleteAsset(asset)} style={{ flex: 1, borderRadius: 999, border: "1px solid rgba(248,113,113,.32)", background: "rgba(239,68,68,.16)", color: "#fecaca", padding: "4px 6px", fontSize: 10, fontWeight: 900 }}>削除</button>
                 </div>
               </div>
             </article>

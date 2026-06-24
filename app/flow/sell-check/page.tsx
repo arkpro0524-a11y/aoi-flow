@@ -1669,6 +1669,17 @@ export default function SellCheckPage() {
     }
   }
 
+  const latestDiagnosisLog = diagnosisLogs[0] || null;
+  const latestDiagnosisResult = result || (latestDiagnosisLog ? toSellCheckResultFromDiagnosisLog(latestDiagnosisLog) : null);
+  const latestDiagnosisImageUrl = result
+    ? sourceMode === "draft"
+      ? selectedDraft?.imageUrl
+      : previewUrls[0]
+    : latestDiagnosisLog?.imageUrl;
+  const latestDiagnosisTitle = result
+    ? title || selectedDraft?.title || "診断中の商品"
+    : latestDiagnosisLog?.title || "保存済み診断";
+
   return (
     <div className="sell-check-root space-y-5">
       <style>{`
@@ -1678,8 +1689,19 @@ export default function SellCheckPage() {
         .sell-check-root section,
         .sell-check-root .soft-panel {
           border-color: rgba(125, 211, 252, 0.10) !important;
+          background: linear-gradient(135deg, rgba(8,32,50,.62), rgba(6,18,31,.50)) !important;
           box-shadow: 0 24px 80px rgba(0,0,0,.22), inset 0 1px 0 rgba(255,255,255,.035);
+          backdrop-filter: blur(18px);
         }
+        .sell-check-root * {
+          border-color: rgba(125,211,252,.12) !important;
+        }
+        .sell-check-root a { text-decoration: none; }
+        .sell-check-top-grid { display:grid; grid-template-columns: minmax(0,1fr); gap:16px; }
+        @media (max-width: 1180px){ .sell-check-top-grid{ grid-template-columns:1fr; } }
+        .aoi-kpi { border:1px solid rgba(125,211,252,.12); background:rgba(255,255,255,.055); border-radius:18px; padding:14px; }
+        .aoi-blue-btn { background:linear-gradient(135deg,#2563eb,#1d4ed8); color:white; border:1px solid rgba(147,197,253,.28); box-shadow:0 12px 34px rgba(37,99,235,.22); }
+        .aoi-card { border:1px solid rgba(125,211,252,.12); background:linear-gradient(135deg,rgba(8,32,50,.75),rgba(7,22,36,.62)); border-radius:22px; box-shadow:0 18px 55px rgba(0,0,0,.22); }
         .sell-check-root input, .sell-check-root textarea, .sell-check-root select {
           width: 100%;
           background: rgba(5, 18, 31, 0.74) !important;
@@ -1709,55 +1731,70 @@ export default function SellCheckPage() {
           box-shadow: 0 22px 70px rgba(0,0,0,.22), inset 0 1px 0 rgba(255,255,255,.04);
           backdrop-filter: blur(18px);
         }
+        .sell-check-reference-grid {
+          display: grid !important;
+          grid-template-columns: minmax(280px, 380px) minmax(0, 1fr) !important;
+          gap: 16px !important;
+          align-items: stretch !important;
+        }
+        .sell-check-reference-kpis {
+          display: grid !important;
+          grid-template-columns: repeat(6, minmax(0, 1fr)) !important;
+          gap: 10px !important;
+        }
+        .sell-check-reference-panel {
+          border: 1px solid rgba(125,211,252,.12) !important;
+          background: linear-gradient(135deg, rgba(8,32,50,.70), rgba(6,18,31,.58)) !important;
+          border-radius: 20px !important;
+          box-shadow: 0 22px 70px rgba(0,0,0,.22), inset 0 1px 0 rgba(255,255,255,.04) !important;
+          backdrop-filter: blur(18px);
+        }
+        .sell-check-reference-input {
+          height: 38px !important;
+          padding: 0 12px !important;
+          font-size: 13px !important;
+          border-radius: 10px !important;
+        }
+        .sell-check-reference-area {
+          min-height: 70px !important;
+          padding: 10px 12px !important;
+          font-size: 13px !important;
+          border-radius: 10px !important;
+        }
+        .sell-check-reference-bars {
+          display: grid !important;
+          gap: 8px !important;
+        }
+        @media (max-width: 1180px) {
+          .sell-check-reference-grid { grid-template-columns: 1fr !important; }
+          .sell-check-reference-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+        }
       `}</style>
-      <section className="soft-panel rounded-[2rem] border bg-black/18 p-5 md:p-6">
-        <div className="text-xs font-black tracking-[0.32em] text-white/50">
-          SELL CHECK / STRUCTURE
-        </div>
-        <h2 className="mt-2 text-2xl font-black tracking-[0.12em] text-white">
-          DB判定 → 理論判定 → 統合判定
-        </h2>
-        <p className="mt-3 text-sm leading-7 text-white/65">
-          売れる診断は単独ツールではなく、市場研究ラボで蓄積したMarket DB・Learning DB・Theory DBを参照し、
-          既存SELL CHECKロジックを削除せずに最終判断を補助する画面です。
-        </p>
-        <div className="mt-5 grid gap-3 lg:grid-cols-3">
-          <div className="rounded-2xl border border-white/12 bg-white/[0.06] p-4">
-            <div className="text-sm font-black text-white">① DB判定</div>
-            <p className="mt-2 text-xs leading-6 text-white/62">
-              過去市場、類似市場、類似商品、成功事例、失敗事例、theoryDB内容を確認します。
-            </p>
+      <div className="sell-check-top-grid">
+        <div className="space-y-4">
+          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+            <div>
+              <h1 className="text-3xl font-black tracking-wide text-white">売れる診断</h1>
+              <p className="mt-2 text-sm text-white/65">市場DB・理論DB・学習DBをもとに、売れる可能性を総合診断します</p>
+            </div>
+            <div className="hidden rounded-full border border-white/10 bg-white/5 px-5 py-3 text-sm text-white/45 md:block">商品名・キーワードを入力してください　⌕</div>
           </div>
-          <div className="rounded-2xl border border-white/12 bg-white/[0.06] p-4">
-            <div className="text-sm font-black text-white">② 理論判定</div>
-            <p className="mt-2 text-xs leading-6 text-white/62">
-              市場理論、デザイン理論、市場形成、市場存在性、不足情報を確認します。
-            </p>
+
+          <div className="sell-check-reference-kpis">
+            <div className="aoi-kpi"><div className="text-xs text-white/55">今日の診断数</div><div className="mt-1 text-2xl font-black text-white">{diagnosisLogs.length || 0}<span className="ml-1 text-sm">件</span></div></div>
+            <div className="aoi-kpi"><div className="text-xs text-white/55">買い</div><div className="mt-1 text-2xl font-black text-emerald-200">{diagnosisLogs.filter((x) => String(x.action).includes("買")).length}<span className="ml-1 text-sm">件</span></div></div>
+            <div className="aoi-kpi"><div className="text-xs text-white/55">保留</div><div className="mt-1 text-2xl font-black text-yellow-100">{diagnosisLogs.filter((x) => String(x.action).includes("保留")).length}<span className="ml-1 text-sm">件</span></div></div>
+            <div className="aoi-kpi"><div className="text-xs text-white/55">見送り</div><div className="mt-1 text-2xl font-black text-red-100">{diagnosisLogs.filter((x) => String(x.action).includes("見送り")).length}<span className="ml-1 text-sm">件</span></div></div>
+            <div className="aoi-kpi"><div className="text-xs text-white/55">平均スコア</div><div className="mt-1 text-2xl font-black text-white">{stats?.averageScore ?? "—"}<span className="ml-1 text-sm">点</span></div></div>
+            <div className="aoi-kpi"><div className="text-xs text-white/55">診断DB件数</div><div className="mt-1 text-2xl font-black text-white">{stats?.total ?? "—"}<span className="ml-1 text-sm">件</span></div></div>
           </div>
-          <div className="rounded-2xl border border-white/12 bg-white/[0.06] p-4">
-            <div className="text-sm font-black text-white">③ 統合判定</div>
-            <p className="mt-2 text-xs leading-6 text-white/62">
-              DB判定＋理論判定＋商品画像を統合し、買い・見送り・保留、安全価格、攻め価格、利益予測、回転予測を確認します。
-            </p>
-          </div>
-        </div>
-      </section>
 
+          <details className="aoi-card p-4">
+            <summary className="cursor-pointer text-sm font-black text-white/80">SELL CHECK / STRUCTURE　DB判定 → 理論判定 → 統合判定</summary>
+            <p className="mt-3 text-sm leading-7 text-white/62">売れる診断は単独ツールではなく、市場研究ラボで蓄積したMarket DB・Learning DB・Theory DBを参照し、既存SELL CHECKロジックを削除せずに最終判断を補助する画面です。</p>
+          </details>
 
-      <div className="border-b border-white/10 pb-4">
-        <h1 className="text-2xl font-black tracking-wide">売れる診断</h1>
-        <p className="mt-2 text-sm text-white/65">
-          商品画像・価格・カテゴリ・状態に加えて、商品名・説明文・キーワードを使って診断します。
-          売却済みデータを主軸にし、販売中データは競合在庫として補正します。
-        </p>
-
-        <div className="mt-3">
-          <Link
-            href="/flow/sell-check/outcomes"
-            className="inline-flex rounded-full border border-white/15 bg-white/10 px-4 py-2 text-xs font-black text-white"
-          >
-            仕入れ・売却 実務ログを開く
-          </Link>
+          <Link href="/flow/sell-check/outcomes" className="inline-flex rounded-2xl border border-white/12 bg-white/8 px-4 py-2 text-xs font-black text-white/75">仕入れ・売却 実務ログを開く</Link>
         </div>
       </div>
 
@@ -1843,7 +1880,145 @@ export default function SellCheckPage() {
       ) : null}
 
       {diagnosisMode === "single" ? (
-      <div className="grid grid-cols-1 gap-5 xl:grid-cols-[1.1fr_0.9fr]">
+        <section className="sell-check-reference-grid">
+          <div className="sell-check-reference-panel p-4">
+            <div className="text-base font-black text-white">新規診断を開始</div>
+            <p className="mt-1 text-xs leading-5 text-white/55">商品情報を入力して、売れる可能性を診断します。</p>
+
+            <div className="mt-4 grid gap-3">
+              <label className="block">
+                <span className="mb-1 block text-xs font-bold text-white/65">商品名・テーマ</span>
+                <input value={title} onChange={(e) => setTitle(e.target.value)} className="sell-check-reference-input" placeholder="例）英国ヴィンテージ食器" />
+              </label>
+
+              <label className="block">
+                <span className="mb-1 block text-xs font-bold text-white/65">カテゴリ</span>
+                <select value={category} onChange={(e) => setCategory(e.target.value)} className="sell-check-reference-input">
+                  {CATEGORY_OPTIONS.map((x) => <option key={x.value} value={x.value}>{x.label}</option>)}
+                </select>
+              </label>
+
+              <div className="grid grid-cols-2 gap-3">
+                <label className="block">
+                  <span className="mb-1 block text-xs font-bold text-white/65">想定販売価格</span>
+                  <input value={price} onChange={(e) => setPrice(e.target.value)} inputMode="numeric" className="sell-check-reference-input" placeholder="例）6800" />
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-xs font-bold text-white/65">販売予定プラットフォーム</span>
+                  <select className="sell-check-reference-input" value="mercari" onChange={() => undefined}>
+                    <option value="mercari">メルカリ</option>
+                    <option value="other">その他</option>
+                  </select>
+                </label>
+              </div>
+
+              <label className="block">
+                <span className="mb-1 block text-xs font-bold text-white/65">説明文・キーワード</span>
+                <textarea value={memo || keywords} onChange={(e) => { setMemo(e.target.value); setKeywords(e.target.value); }} className="sell-check-reference-area" placeholder="状態、付属品、年代、メーカー、傷や汚れなど" />
+              </label>
+
+              <div className="rounded-2xl border border-white/10 bg-black/25 p-3">
+                <div className="mb-2 flex flex-wrap gap-2">
+                  <button type="button" onClick={() => setSourceMode("draft")} className={sourceMode === "draft" ? "rounded-full bg-white px-3 py-1 text-xs font-black text-black" : "rounded-full bg-white/10 px-3 py-1 text-xs font-black text-white/70"}>AOI FLOW画像</button>
+                  <button type="button" onClick={() => setSourceMode("manual")} className={sourceMode === "manual" ? "rounded-full bg-white px-3 py-1 text-xs font-black text-black" : "rounded-full bg-white/10 px-3 py-1 text-xs font-black text-white/70"}>手動アップロード</button>
+                </div>
+
+                {sourceMode === "draft" ? (
+                  <select value={selectedDraftId} onChange={(e) => setSelectedDraftId(e.target.value)} className="sell-check-reference-input">
+                    {drafts.length === 0 ? <option value="">画像付き下書きなし</option> : drafts.map((d) => <option key={d.id} value={d.id}>{phaseLabel(d.phase)} / {d.title}</option>)}
+                  </select>
+                ) : (
+                  <label className="flex cursor-pointer items-center justify-center rounded-xl border border-dashed border-white/15 bg-white/5 px-3 py-4 text-center text-xs font-bold text-white/60">
+                    <input
+                      type="file"
+                      accept="image/png,image/jpeg,image/gif,image/webp"
+                      multiple
+                      className="hidden"
+                      onChange={(e) => {
+                        const selected = Array.from(e.target.files ?? []).slice(0, 8);
+                        const { supported, rejected } = filterSupportedImageFiles(selected);
+                        setImageFiles(supported);
+                        const msg = unsupportedImageMessage(rejected);
+                        if (msg) setError(msg);
+                        e.currentTarget.value = "";
+                      }}
+                    />
+                    {previewUrls.length > 0 ? `画像 ${previewUrls.length}枚を選択中` : "画像・スクショをアップロード"}
+                  </label>
+                )}
+              </div>
+
+              {error ? <div className="rounded-xl border border-red-300/20 bg-red-500/10 p-2 text-xs text-red-100">{error}</div> : null}
+
+              <button type="button" onClick={analyze} disabled={busy} className="aoi-blue-btn rounded-2xl px-4 py-3 text-sm font-black disabled:opacity-50">
+                {busy ? "診断中..." : "診断を開始する"}
+              </button>
+            </div>
+          </div>
+
+          <div className="sell-check-reference-panel p-4">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div>
+                <div className="text-base font-black text-white">最新の診断結果</div>
+                <p className="mt-1 text-xs text-white/55">直近の売れる診断だけを表示します。学習データ管理とは別です。</p>
+              </div>
+              <button type="button" onClick={() => loadDiagnosisLogs()} className="rounded-full border border-white/10 bg-white/8 px-3 py-2 text-xs font-black text-white/70">履歴を再読込</button>
+            </div>
+
+            {!latestDiagnosisResult ? (
+              <div className="rounded-2xl border border-white/10 bg-white/5 p-5 text-sm text-white/60">まだ診断していません。左側で画像と条件を入力してください。</div>
+            ) : (
+              <div>
+                <div className="grid gap-4 lg:grid-cols-[150px_1fr_140px]">
+                  <div className="overflow-hidden rounded-2xl border border-white/10 bg-black/25">
+                    {latestDiagnosisImageUrl ? <img src={latestDiagnosisImageUrl} alt="最新診断画像" className="h-[140px] w-full object-cover" /> : <div className="flex h-[140px] items-center justify-center text-xs text-white/40">画像なし</div>}
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-lg font-black leading-7 text-white">{latestDiagnosisTitle}</div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-bold text-white/70">{category}</span>
+                      <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-bold text-white/70">{condition}</span>
+                    </div>
+                    <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">
+                      <InfoCard label="推奨価格" value={`${formatYen(latestDiagnosisResult.suggestedPriceMin)}〜${formatYen(latestDiagnosisResult.suggestedPriceMax)}`} />
+                      <InfoCard label="平均/中央値" value={`${formatYen(marketAveragePrice(latestDiagnosisResult))}`} />
+                      <InfoCard label="回転目安" value={priceRotationLabel(latestDiagnosisResult)} />
+                      <InfoCard label="利益予測" value={latestDiagnosisResult.profitAnalysis ? formatYen(latestDiagnosisResult.profitAnalysis.estimatedNetProfit) : "—"} />
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-center">
+                    <div className="flex h-28 w-28 items-center justify-center rounded-full border-4 border-emerald-300/60 bg-emerald-400/10 text-center">
+                      <div>
+                        <div className="text-3xl font-black text-white">{latestDiagnosisResult.score}</div>
+                        <div className="text-xs font-bold text-emerald-100">点</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-4 sell-check-reference-bars">
+                  {sellCheckResultMetricSet(latestDiagnosisResult).map((m) => (
+                    <div key={m.label} className="grid grid-cols-[92px_1fr_36px] items-center gap-3 text-xs text-white/70">
+                      <div>{m.label}</div>
+                      <div className="h-2 overflow-hidden rounded-full bg-white/10"><div className="h-full rounded-full bg-emerald-300" style={{ width: `${Math.max(0, Math.min(100, m.product))}%` }} /></div>
+                      <div className="text-right">{m.product}</div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="mt-4 grid grid-cols-3 gap-3 text-center">
+                  <div className="rounded-2xl border border-emerald-300/20 bg-emerald-400/10 p-3 text-sm font-black text-emerald-100">買い</div>
+                  <div className="rounded-2xl border border-yellow-300/20 bg-yellow-400/10 p-3 text-sm font-black text-yellow-100">保留</div>
+                  <div className="rounded-2xl border border-red-300/20 bg-red-400/10 p-3 text-sm font-black text-red-100">見送り</div>
+                </div>
+              </div>
+            )}
+          </div>
+        </section>
+      ) : null}
+
+      {diagnosisMode === "single" ? (
+      <div style={{ display: "none" }} aria-hidden="true">
         <section className="soft-panel rounded-3xl border bg-black/30 p-5">
           <div className="mb-4">
             <div className="text-lg font-black">1. 診断対象</div>

@@ -80,8 +80,7 @@ export default function FlowShell({ user, onLogout, children }: Props) {
       return (
         pathname === "/flow/drafts/new" ||
         pathname.startsWith("/flow/drafts/") ||
-        pathname === "/flow/drafts" ||
-        pathname === "/flow/posted"
+        pathname === "/flow/drafts"
       );
     }
     if (href === "/flow/library") return pathname === "/flow/library";

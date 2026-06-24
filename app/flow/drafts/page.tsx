@@ -21,7 +21,8 @@ import { auth, db } from "@/firebase";
 import { useToast } from "@/components/ToastProvider";
 
 type Brand = "vento" | "riva";
-type Phase = "draft";
+type Phase = "draft" | "ready" | "posted";
+type PhaseFilter = "all" | Phase;
 type ViewMode = "card" | "list" | "compact";
 
 type DraftRow = {
@@ -136,6 +137,8 @@ export default function DraftsPage() {
   const [deleteBusyId, setDeleteBusyId] = useState("");
   const [orderBusy, setOrderBusy] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>("card");
+  const [phaseFilter, setPhaseFilter] = useState<PhaseFilter>("all");
+  const [phaseBusyId, setPhaseBusyId] = useState("");
 
   const isAdmin = useMemo(() => isAdminUid(uid), [uid]);
 
@@ -159,7 +162,7 @@ export default function DraftsPage() {
             id: docu.id,
             userId: currentUid,
             brand,
-            phase: data.phase === "draft" || !data.phase ? "draft" : "draft",
+            phase: data.phase === "ready" ? "ready" : data.phase === "posted" ? "posted" : "draft",
             title: normalizeText(data.title),
             ecTitle: normalizeText(data.ecTitle),
             productName: normalizeText(data.productName),
@@ -353,6 +356,68 @@ export default function DraftsPage() {
     );
   }
 
+  const phaseCounts = useMemo(() => {
+    return {
+      all: rows.length,
+      draft: rows.filter((row) => row.phase === "draft").length,
+      ready: rows.filter((row) => row.phase === "ready").length,
+      posted: rows.filter((row) => row.phase === "posted").length,
+    };
+  }, [rows]);
+
+  const filteredRows = useMemo(() => {
+    if (phaseFilter === "all") return rows;
+    return rows.filter((row) => row.phase === phaseFilter);
+  }, [phaseFilter, rows]);
+
+  function phaseLabel(phase: Phase) {
+    if (phase === "ready") return "投稿中";
+    if (phase === "posted") return "投稿済み";
+    return "作成中";
+  }
+
+  function phaseButtonClass(target: PhaseFilter) {
+    const active = phaseFilter === target;
+    if (target === "draft") return active ? "border-cyan-200/70 bg-cyan-300/20 text-cyan-50 shadow-[0_0_22px_rgba(34,211,238,.35)]" : "border-cyan-200/20 bg-cyan-300/8 text-cyan-100/75 hover:bg-cyan-300/15";
+    if (target === "ready") return active ? "border-amber-200/70 bg-amber-300/20 text-amber-50 shadow-[0_0_22px_rgba(251,191,36,.35)]" : "border-amber-200/20 bg-amber-300/8 text-amber-100/75 hover:bg-amber-300/15";
+    if (target === "posted") return active ? "border-emerald-200/70 bg-emerald-300/20 text-emerald-50 shadow-[0_0_22px_rgba(16,185,129,.35)]" : "border-emerald-200/20 bg-emerald-300/8 text-emerald-100/75 hover:bg-emerald-300/15";
+    return active ? "border-blue-200/70 bg-blue-500/30 text-white shadow-[0_0_22px_rgba(59,130,246,.35)]" : "border-white/15 bg-white/10 text-white/70 hover:bg-white/20";
+  }
+
+  async function updateDraftPhase(draftId: string, phase: Phase) {
+    setPhaseBusyId(draftId);
+    try {
+      await updateDoc(doc(db, "drafts", draftId), { phase });
+      setRows((prev) => prev.map((row) => row.id === draftId ? { ...row, phase } : row));
+      toast.push(`状態を「${phaseLabel(phase)}」にしました`);
+    } catch (e) {
+      console.error(e);
+      toast.push("状態の更新に失敗しました");
+    } finally {
+      setPhaseBusyId("");
+    }
+  }
+
+  function renderPhaseButtons(d: DraftRow) {
+    const base = "rounded-full border px-3 py-1.5 text-[11px] font-black transition disabled:opacity-45";
+    return (
+      <div className="flex flex-wrap items-center gap-1.5">
+        {(["draft", "ready", "posted"] as Phase[]).map((phase) => (
+          <button
+            key={phase}
+            type="button"
+            disabled={phaseBusyId === d.id || d.phase === phase}
+            onClick={() => void updateDraftPhase(d.id, phase)}
+            className={`${base} ${d.phase === phase ? phaseButtonClass(phase) : "border-white/12 bg-white/8 text-white/62 hover:bg-white/14"}`}
+            title={`この下書きを${phaseLabel(phase)}にする`}
+          >
+            {phaseLabel(phase)}
+          </button>
+        ))}
+      </div>
+    );
+  }
+
   function renderOrderButtons(d: DraftRow, index: number) {
     return (
       <div className="flex items-center gap-1">
@@ -496,8 +561,15 @@ export default function DraftsPage() {
                 下書き一覧
               </div>
               <div className="text-sm text-white/60 mt-1">
-                DRAFT のみ表示：{rows.length} 件 / 題名は商品名を優先表示
+                下書き管理：{filteredRows.length} / {rows.length} 件表示 / 題名は商品名を優先表示
               </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <button type="button" onClick={() => setPhaseFilter("all")} className={`rounded-full border px-3 py-2 text-xs font-black transition ${phaseButtonClass("all")}`}>すべて {phaseCounts.all}</button>
+              <button type="button" onClick={() => setPhaseFilter("draft")} className={`rounded-full border px-3 py-2 text-xs font-black transition ${phaseButtonClass("draft")}`}>作成中 {phaseCounts.draft}</button>
+              <button type="button" onClick={() => setPhaseFilter("ready")} className={`rounded-full border px-3 py-2 text-xs font-black transition ${phaseButtonClass("ready")}`}>投稿中 {phaseCounts.ready}</button>
+              <button type="button" onClick={() => setPhaseFilter("posted")} className={`rounded-full border px-3 py-2 text-xs font-black transition ${phaseButtonClass("posted")}`}>投稿済み {phaseCounts.posted}</button>
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
@@ -539,12 +611,12 @@ export default function DraftsPage() {
         </div>
 
         <div className="overflow-y-auto space-y-3" style={{ padding: PAGE_PAD }}>
-          {rows.length === 0 ? (
+          {filteredRows.length === 0 ? (
             <div className="rounded-2xl border border-white/10 bg-black/10 p-5 text-sm text-white/75">
               下書きがまだありません。
             </div>
           ) : (
-            rows.map((d, index) => {
+            filteredRows.map((d, index) => {
               const displayTitle = resolveDisplayTitle(d);
 
               if (viewMode === "list") {
@@ -569,12 +641,13 @@ export default function DraftsPage() {
                           {displayTitle}
                         </div>
                         <div className="mt-1 text-xs text-white/50 truncate">
-                          {d.brand.toUpperCase()} / {d.ecTitle ? "商品名" : d.title ? "題名" : d.caption_final ? "生成文" : "未入力"}
+                          {d.brand.toUpperCase()} / {phaseLabel(d.phase)} / {d.ecTitle ? "商品名" : d.title ? "題名" : d.caption_final ? "生成文" : "未入力"}
                         </div>
                       </Link>
 
                       <div className="flex items-center justify-end gap-2">
                         {renderOrderButtons(d, index)}
+                        {renderPhaseButtons(d)}
                         <button
                           type="button"
                           disabled={deleteBusyId === d.id}
@@ -607,6 +680,7 @@ export default function DraftsPage() {
 
                       <div className="flex items-center justify-end gap-2">
                         {renderOrderButtons(d, index)}
+                        {renderPhaseButtons(d)}
                         <button
                           type="button"
                           disabled={deleteBusyId === d.id}
@@ -669,6 +743,7 @@ export default function DraftsPage() {
 
                       <div className="flex items-center justify-end gap-2">
                         {renderOrderButtons(d, index)}
+                        {renderPhaseButtons(d)}
 
                         <button
                           type="button"
@@ -733,6 +808,7 @@ export default function DraftsPage() {
 
                       <div className="flex flex-wrap gap-2">
                         {renderOrderButtons(d, index)}
+                        {renderPhaseButtons(d)}
 
                         <button
                           type="button"

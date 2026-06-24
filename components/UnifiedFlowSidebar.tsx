@@ -136,7 +136,7 @@ export default function UnifiedFlowSidebar(props: Props) {
   const pathname = usePathname();
 
   const isMarket = pathname === "/flow/market-research";
-  const isProduct = pathname === "/flow/drafts/new" || pathname === "/flow/drafts" || pathname === "/flow/posted";
+  const isProduct = pathname === "/flow/drafts/new" || pathname === "/flow/drafts";
   const isSell = pathname === "/flow/sell-check";
   const isLibrary = pathname === "/flow/library";
   const isSettings = pathname === "/flow/brands";
@@ -332,9 +332,6 @@ export default function UnifiedFlowSidebar(props: Props) {
             </Link>
             <Link href="/flow/drafts" style={{ ...subButtonBase, ...(pathname === "/flow/drafts" ? subActive : {}) }}>
               下書き一覧
-            </Link>
-            <Link href="/flow/posted" style={{ ...subButtonBase, ...(pathname === "/flow/posted" ? subActive : {}) }}>
-              投稿済み
             </Link>
           </div>
         ) : null}
