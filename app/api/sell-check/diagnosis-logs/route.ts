@@ -136,3 +136,55 @@ export async function GET(req: NextRequest) {
     );
   }
 }
+
+
+export async function DELETE(req: NextRequest) {
+  try {
+    const uid = await getUidFromRequest(req);
+
+    if (!uid) {
+      return NextResponse.json(
+        { ok: false, error: "ログイン確認が必要です" },
+        { status: 401 },
+      );
+    }
+
+    const url = new URL(req.url);
+    const id = safeString(url.searchParams.get("id"));
+
+    if (!id) {
+      return NextResponse.json(
+        { ok: false, error: "削除する診断履歴IDがありません" },
+        { status: 400 },
+      );
+    }
+
+    const ref = getAdminDb().collection("sellCheckDiagnosisLogs").doc(id);
+    const snap = await ref.get();
+
+    if (!snap.exists) {
+      return NextResponse.json(
+        { ok: false, error: "診断履歴が見つかりません" },
+        { status: 404 },
+      );
+    }
+
+    const data = snap.data() || {};
+    if (safeString(data.uid) !== uid) {
+      return NextResponse.json(
+        { ok: false, error: "この診断履歴を削除する権限がありません" },
+        { status: 403 },
+      );
+    }
+
+    await ref.delete();
+
+    return NextResponse.json({ ok: true, deletedId: id });
+  } catch (e) {
+    console.error(e);
+    return NextResponse.json(
+      { ok: false, error: "診断履歴の削除に失敗しました" },
+      { status: 500 },
+    );
+  }
+}

@@ -545,6 +545,166 @@ function diagnosisMetricSet(log: DiagnosisLog): { label: string; product: number
   ];
 }
 
+function sellCheckResultMetricSet(result: SellCheckResult): { label: string; product: number; market: number }[] {
+  const legacyScoreBreakdown = result.scoreBreakdown as (typeof result.scoreBreakdown & { profitScore?: number; rotationScore?: number }) | undefined;
+  const legacyRotationAnalysis = result.rotationLearningAnalysis as (typeof result.rotationLearningAnalysis & { rotationScore?: number }) | undefined;
+
+  const priceScore = metricValue(result.scoreBreakdown?.priceScore ?? legacyScoreBreakdown?.profitScore ?? result.score, 60);
+  const designScore = metricValue(result.imageAnalysis?.overallImageScore ?? result.scoreBreakdown?.imageScore ?? result.score, 60);
+  const demandScore = metricValue(result.marketAnalysis?.demandScore ?? result.scoreBreakdown?.marketScore ?? result.score, 60);
+  const supplyScore = metricValue(result.marketAnalysis?.marketSupplyScore ?? 55, 55);
+  const trendScore = metricValue(result.marketAnalysis?.trendScore ?? 58, 58);
+  const rotationScore =
+    result.sellSpeed === "fast" ? 88 :
+    result.sellSpeed === "normal" ? 68 :
+    result.sellSpeed === "slow" ? 44 :
+    result.sellSpeed === "collector_wait" ? 38 :
+    metricValue(legacyRotationAnalysis?.rotationScore ?? legacyScoreBreakdown?.rotationScore, 55);
+
+  return [
+    { label: "価格", product: priceScore, market: metricValue((result.similarData as any)?.marketPriceScore ?? (result.similarData as any)?.priceScore, 65) },
+    { label: "回転", product: rotationScore, market: metricValue((result.similarData as any)?.marketRotationScore ?? (result.similarData as any)?.rotationScore, 60) },
+    { label: "デザイン", product: designScore, market: metricValue((result.similarData as any)?.marketDesignScore ?? (result.similarData as any)?.designScore, 60) },
+    { label: "需要", product: demandScore, market: metricValue((result.similarData as any)?.marketDemandScore ?? (result.similarData as any)?.demandScore, 58) },
+    { label: "供給", product: supplyScore, market: metricValue((result.similarData as any)?.marketSupplyScore ?? (result.similarData as any)?.supplyScore, 55) },
+    { label: "トレンド", product: trendScore, market: metricValue((result.similarData as any)?.marketTrendScore ?? (result.similarData as any)?.trendScore, 58) },
+  ];
+}
+
+function SellCheckResultRadarChart({ result }: { result: SellCheckResult }) {
+  const metrics = sellCheckResultMetricSet(result);
+  const size = 300;
+  const center = size / 2;
+  const radius = 105;
+
+  const point = (value: number, index: number) => {
+    const angle = -Math.PI / 2 + (Math.PI * 2 * index) / metrics.length;
+    const r = (metricValue(value) / 100) * radius;
+    return [center + Math.cos(angle) * r, center + Math.sin(angle) * r] as const;
+  };
+
+  const polygon = (key: "product" | "market") => metrics.map((m, i) => point(m[key], i).join(",")).join(" ");
+
+  return (
+    <div className="glass-card rounded-[1.5rem] p-4">
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <div className="text-sm font-black text-white">市場平均との比較</div>
+        <div className="flex gap-3 text-[11px] font-bold text-white/55">
+          <span className="text-emerald-300">● あなたの商品</span>
+          <span className="text-blue-300">● 市場平均</span>
+        </div>
+      </div>
+      <svg viewBox={`0 0 ${size} ${size}`} className="mx-auto block h-[250px] w-full max-w-[330px]">
+        {[0.25, 0.5, 0.75, 1].map((ratio) => {
+          const points = metrics.map((_, i) => point(ratio * 100, i).join(",")).join(" ");
+          return <polygon key={ratio} points={points} fill="none" stroke="rgba(255,255,255,.12)" strokeWidth="1" />;
+        })}
+        {metrics.map((m, i) => {
+          const [x, y] = point(100, i);
+          return (
+            <g key={m.label}>
+              <line x1={center} y1={center} x2={x} y2={y} stroke="rgba(255,255,255,.10)" strokeWidth="1" />
+              <text x={x} y={y} fill="rgba(255,255,255,.76)" fontSize="12" fontWeight="700" textAnchor={x < center - 10 ? "end" : x > center + 10 ? "start" : "middle"} dominantBaseline="middle">{m.label}</text>
+            </g>
+          );
+        })}
+        <polygon points={polygon("market")} fill="rgba(59,130,246,.16)" stroke="rgba(96,165,250,.92)" strokeWidth="3" strokeDasharray="7 6" />
+        <polygon points={polygon("product")} fill="rgba(34,197,94,.20)" stroke="rgba(74,222,128,.95)" strokeWidth="3" />
+        {metrics.map((m, i) => {
+          const [x, y] = point(m.product, i);
+          const [mx, my] = point(m.market, i);
+          return (
+            <g key={`${m.label}-points`}>
+              <circle cx={mx} cy={my} r="4" fill="rgba(96,165,250,.95)" />
+              <circle cx={x} cy={y} r="4" fill="rgba(74,222,128,.95)" />
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
+function SellCheckCurrentResultDashboard(props: { result: SellCheckResult; imageUrl?: string; title: string; listedPrice?: string | number }) {
+  const result = props.result;
+  const metrics = sellCheckResultMetricSet(result);
+  const marketAvg = marketAveragePrice(result);
+  const currentSimilarData = result.similarData as (typeof result.similarData & { medianPrice?: number; marketPriceScore?: number; priceScore?: number; marketRotationScore?: number; rotationScore?: number; marketDesignScore?: number; designScore?: number; marketDemandScore?: number; demandScore?: number; marketSupplyScore?: number; supplyScore?: number; marketTrendScore?: number; trendScore?: number }) | undefined;
+  const marketMedian = currentSimilarData?.medianSoldPrice || currentSimilarData?.medianPrice;
+  const displayTitle = props.title || result.targetSummary || result.textAnalysis?.productType || "診断した商品";
+
+  return (
+    <div className="glass-card overflow-hidden rounded-[2rem] p-5 md:p-6">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="text-xs font-black uppercase tracking-[0.24em] text-cyan-100/55">SELL CHECK RESULT</div>
+          <h3 className="mt-2 text-2xl font-black leading-tight text-white">{displayTitle}</h3>
+          <p className="mt-2 max-w-3xl text-sm leading-7 text-white/63">{result.scoreExplanation || result.targetSummary || "価格・画像・説明文・市場データを合わせて、売れやすさを診断しました。"}</p>
+        </div>
+        <div className="rounded-2xl border border-emerald-300/25 bg-emerald-400/10 px-4 py-2 text-sm font-black text-emerald-50">
+          {result.action || result.rankLabel || fallbackRankLabel(result.rank)}
+        </div>
+      </div>
+
+      <div className="mt-5 grid gap-4 lg:grid-cols-[220px_1fr]">
+        <div className="overflow-hidden rounded-[1.4rem] border border-white/10 bg-black/30">
+          {props.imageUrl ? (
+            <img src={props.imageUrl} alt={displayTitle} className="h-[190px] w-full object-cover" />
+          ) : (
+            <div className="flex h-[190px] items-center justify-center px-4 text-center text-sm font-bold text-white/45">画像なし</div>
+          )}
+        </div>
+        <div className="grid gap-3 md:grid-cols-4">
+          <div className="rounded-2xl border border-emerald-300/20 bg-emerald-400/10 p-4">
+            <div className="text-xs font-black text-white/55">総合スコア</div>
+            <div className="mt-2 text-5xl font-black text-emerald-300">{result.score}<span className="ml-1 text-lg text-white/60">点</span></div>
+            <div className="mt-2 text-sm font-black text-emerald-100/80">{result.rankLabel || fallbackRankLabel(result.rank)}</div>
+          </div>
+          <InfoCard label="推奨価格" value={`${formatYen(result.suggestedPriceMin)}〜${formatYen(result.suggestedPriceMax)}`} />
+          <InfoCard label="市場平均 / 中央値" value={`${yenOrDash(marketAvg)} / ${yenOrDash(marketMedian)}`} />
+          <InfoCard label="回転目安" value={priceRotationLabel(result)} />
+        </div>
+      </div>
+
+      <div className="mt-5 grid gap-4 lg:grid-cols-[1fr_1.05fr]">
+        <SellCheckResultRadarChart result={result} />
+        <div className="glass-card rounded-[1.5rem] p-4">
+          <div className="mb-3 text-sm font-black text-white">項目別スコア比較</div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[520px] border-collapse text-sm text-white">
+              <thead className="text-left text-xs text-white/55">
+                <tr>
+                  <th className="border-b border-white/10 px-3 py-3">診断項目</th>
+                  <th className="border-b border-white/10 px-3 py-3">あなたの商品</th>
+                  <th className="border-b border-white/10 px-3 py-3">市場平均</th>
+                  <th className="border-b border-white/10 px-3 py-3">評価</th>
+                </tr>
+              </thead>
+              <tbody>
+                {metrics.map((m) => (
+                  <tr key={m.label}>
+                    <td className="border-b border-white/10 px-3 py-3 font-bold text-white/78">{m.label}</td>
+                    <td className="border-b border-white/10 px-3 py-3 font-black text-emerald-300">{m.product}/100</td>
+                    <td className="border-b border-white/10 px-3 py-3 font-black text-blue-300">{m.market}/100</td>
+                    <td className={`border-b border-white/10 px-3 py-3 font-black ${m.product >= m.market ? "text-emerald-300" : "text-amber-300"}`}>{m.product >= m.market ? "良い" : "要調整"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-5 rounded-[1.35rem] border border-amber-300/20 bg-amber-300/10 p-4">
+        <div className="text-sm font-black text-amber-100">小学生でもわかるまとめ</div>
+        <p className="mt-2 text-sm leading-7 text-white/72">
+          {result.score >= 75 ? "かなり売れやすい候補です。価格と写真を大きく外さなければ、出品する価値があります。" : result.score >= 55 ? "売れる可能性はあります。ただし、写真・説明文・価格のどれかを整えると、もっと売れやすくなります。" : "今のままだと少し弱いです。価格を下げる、写真を撮り直す、説明文を足すなどの調整が必要です。"}
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function DiagnosisRadarChart({ log }: { log: DiagnosisLog }) {
   const metrics = diagnosisMetricSet(log);
   const size = 300;
@@ -708,8 +868,10 @@ function SavedDiagnosisSection(props: {
   logs: DiagnosisLog[];
   loading: boolean;
   error: string;
+  deletingId: string;
   onReload: () => void;
   onSelect: (log: DiagnosisLog) => void;
+  onDelete: (log: DiagnosisLog) => void;
 }) {
   return (
     <section style={{ borderRadius: 28, border: "1px solid rgba(255,255,255,.10)", background: "rgba(255,255,255,.055)", padding: 18, boxShadow: "0 24px 80px rgba(0,0,0,.25)", backdropFilter: "blur(16px)" }}>
@@ -733,12 +895,28 @@ function SavedDiagnosisSection(props: {
           {props.logs.map((log) => {
             const thumb = log.imageUrl || log.imageUrls?.[0] || "";
             return (
-              <button
-                type="button"
+              <div
+                role="button"
+                tabIndex={0}
                 key={log.id}
                 onClick={() => props.onSelect(log)}
-                style={{ display: "block", width: "100%", overflow: "hidden", borderRadius: 18, border: "1px solid rgba(255,255,255,.12)", background: "rgba(0,0,0,.28)", padding: 0, textAlign: "left", cursor: "pointer" }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") props.onSelect(log);
+                }}
+                style={{ position: "relative", display: "block", width: "100%", overflow: "hidden", borderRadius: 18, border: "1px solid rgba(255,255,255,.12)", background: "rgba(0,0,0,.28)", padding: 0, textAlign: "left", cursor: "pointer" }}
               >
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    props.onDelete(log);
+                  }}
+                  disabled={props.deletingId === log.id}
+                  aria-label={`${log.title || "診断履歴"}を削除`}
+                  style={{ position: "absolute", top: 8, right: 8, zIndex: 2, border: "1px solid rgba(248,113,113,.35)", background: props.deletingId === log.id ? "rgba(127,29,29,.55)" : "rgba(127,29,29,.78)", color: "#fee2e2", borderRadius: 999, padding: "5px 8px", fontSize: 11, fontWeight: 900, cursor: props.deletingId === log.id ? "wait" : "pointer", boxShadow: "0 10px 24px rgba(0,0,0,.35)" }}
+                >
+                  {props.deletingId === log.id ? "削除中" : "削除"}
+                </button>
                 <div style={{ width: "100%", height: 118, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,.28)", overflow: "hidden" }}>
                   {thumb ? <img src={thumb} alt={log.title || "診断商品"} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} /> : <div style={{ padding: 10, color: "rgba(255,255,255,.72)", fontSize: 13, fontWeight: 900, textAlign: "center" }}>{log.title || "商品名未入力"}</div>}
                 </div>
@@ -749,8 +927,31 @@ function SavedDiagnosisSection(props: {
                     <span style={{ border: "1px solid rgba(74,222,128,.22)", background: "rgba(34,197,94,.12)", color: "#bbf7d0", borderRadius: 999, padding: "2px 7px", fontWeight: 900 }}>{log.score ?? 0}点</span>
                   </div>
                   <div style={{ marginTop: 5, color: "rgba(255,255,255,.52)", fontSize: 11 }}>推奨 {logPriceRange(log)}</div>
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      props.onDelete(log);
+                    }}
+                    disabled={props.deletingId === log.id}
+                    style={{
+                      width: "100%",
+                      marginTop: 9,
+                      border: "1px solid rgba(248,113,113,.42)",
+                      background: props.deletingId === log.id ? "rgba(127,29,29,.58)" : "linear-gradient(135deg, rgba(239,68,68,.86), rgba(127,29,29,.82))",
+                      color: "#fff",
+                      borderRadius: 12,
+                      padding: "7px 10px",
+                      fontSize: 12,
+                      fontWeight: 900,
+                      cursor: props.deletingId === log.id ? "wait" : "pointer",
+                      boxShadow: "0 10px 24px rgba(0,0,0,.24)",
+                    }}
+                  >
+                    {props.deletingId === log.id ? "削除中..." : "この履歴を削除"}
+                  </button>
                 </div>
-              </button>
+              </div>
             );
           })}
         </div>
@@ -867,6 +1068,7 @@ export default function SellCheckPage() {
   const [diagnosisLogsLoading, setDiagnosisLogsLoading] = useState(false);
   const [diagnosisLogsError, setDiagnosisLogsError] = useState("");
   const [selectedDiagnosisLog, setSelectedDiagnosisLog] = useState<DiagnosisLog | null>(null);
+  const [deletingDiagnosisLogId, setDeletingDiagnosisLogId] = useState("");
 
   const targetText = useMemo(() => {
     const categoryLabel =
@@ -940,6 +1142,39 @@ export default function SellCheckPage() {
       setDiagnosisLogsError(e instanceof Error ? e.message : "診断履歴の取得に失敗しました");
     } finally {
       setDiagnosisLogsLoading(false);
+    }
+  }
+
+  async function deleteDiagnosisLog(log: DiagnosisLog) {
+    if (!idToken) {
+      setDiagnosisLogsError("ログイン確認後に診断履歴を削除できます。");
+      return;
+    }
+
+    const ok = window.confirm(`「${log.title || "商品名未入力"}」の診断履歴を削除します。学習データ管理のデータは削除しません。`);
+    if (!ok) return;
+
+    setDeletingDiagnosisLogId(log.id);
+    setDiagnosisLogsError("");
+
+    try {
+      const res = await fetch(`/api/sell-check/diagnosis-logs?id=${encodeURIComponent(log.id)}`, {
+        method: "DELETE",
+        cache: "no-store",
+        headers: { Authorization: `Bearer ${idToken}` },
+      });
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok || !data?.ok) {
+        throw new Error(data?.error || "診断履歴の削除に失敗しました");
+      }
+
+      setDiagnosisLogs((current) => current.filter((item) => item.id !== log.id));
+      if (selectedDiagnosisLog?.id === log.id) setSelectedDiagnosisLog(null);
+    } catch (e) {
+      setDiagnosisLogsError(e instanceof Error ? e.message : "診断履歴の削除に失敗しました");
+    } finally {
+      setDeletingDiagnosisLogId("");
     }
   }
 
@@ -1437,20 +1672,45 @@ export default function SellCheckPage() {
   return (
     <div className="sell-check-root space-y-5">
       <style>{`
+        .sell-check-root {
+          color-scheme: dark;
+        }
+        .sell-check-root section,
+        .sell-check-root .soft-panel {
+          border-color: rgba(125, 211, 252, 0.10) !important;
+          box-shadow: 0 24px 80px rgba(0,0,0,.22), inset 0 1px 0 rgba(255,255,255,.035);
+        }
         .sell-check-root input, .sell-check-root textarea, .sell-check-root select {
-          background: rgba(0, 0, 0, 0.45) !important;
+          width: 100%;
+          background: rgba(5, 18, 31, 0.74) !important;
           color: rgba(255,255,255,.92) !important;
-          border-color: rgba(255,255,255,.12) !important;
+          border: 1px solid rgba(125,211,252,.13) !important;
           border-radius: 14px !important;
+          box-shadow: inset 0 1px 0 rgba(255,255,255,.04) !important;
+          outline: none !important;
+        }
+        .sell-check-root input:focus, .sell-check-root textarea:focus, .sell-check-root select:focus {
+          border-color: rgba(96,165,250,.56) !important;
+          box-shadow: 0 0 0 3px rgba(37,99,235,.18), inset 0 1px 0 rgba(255,255,255,.05) !important;
         }
         .sell-check-root input::placeholder, .sell-check-root textarea::placeholder {
-          color: rgba(255,255,255,.35) !important;
+          color: rgba(255,255,255,.34) !important;
         }
         .sell-check-root img {
           max-width: 100%;
         }
+        .sell-check-root .legacy-white-line-fix,
+        .sell-check-root .legacy-white-line-fix * {
+          border-color: rgba(125,211,252,.10) !important;
+        }
+        .sell-check-root .glass-card {
+          border: 1px solid rgba(125,211,252,.10);
+          background: linear-gradient(135deg, rgba(8,32,50,.72), rgba(7,22,36,.60));
+          box-shadow: 0 22px 70px rgba(0,0,0,.22), inset 0 1px 0 rgba(255,255,255,.04);
+          backdrop-filter: blur(18px);
+        }
       `}</style>
-      <section className="rounded-[2rem] border border-white/15 bg-black/18 p-5 md:p-6">
+      <section className="soft-panel rounded-[2rem] border bg-black/18 p-5 md:p-6">
         <div className="text-xs font-black tracking-[0.32em] text-white/50">
           SELL CHECK / STRUCTURE
         </div>
@@ -1584,7 +1844,7 @@ export default function SellCheckPage() {
 
       {diagnosisMode === "single" ? (
       <div className="grid grid-cols-1 gap-5 xl:grid-cols-[1.1fr_0.9fr]">
-        <section className="rounded-3xl border border-white/10 bg-black/30 p-5">
+        <section className="soft-panel rounded-3xl border bg-black/30 p-5">
           <div className="mb-4">
             <div className="text-lg font-black">1. 診断対象</div>
             <div className="mt-1 text-sm text-white/60">
@@ -1851,7 +2111,7 @@ export default function SellCheckPage() {
           </div>
         </section>
 
-        <section className="rounded-3xl border border-white/10 bg-black/30 p-5">
+        <section className="soft-panel rounded-3xl border bg-black/30 p-5">
           <div className="mb-4">
             <div className="text-lg font-black">2. 診断結果</div>
             <div className="mt-1 text-sm text-white/60">
@@ -1865,38 +2125,12 @@ export default function SellCheckPage() {
             </div>
           ) : (
             <div className="space-y-4">
-              <div className="rounded-3xl border border-white/10 bg-white/8 p-5">
-                <div className="text-sm text-white/55">
-                  {result.scoreLabel || fallbackScoreLabel(result.score)}
-                </div>
-
-                <div className="mt-2 flex items-end gap-3">
-                  <div className="text-5xl font-black">{result.score}</div>
-                  <div className="pb-2 text-xl font-black text-white/70">/ 100</div>
-                  <div className="ml-auto rounded-full bg-white px-4 py-2 text-lg font-black text-black">
-                    {result.rank}
-                  </div>
-                </div>
-
-                <div className="mt-3 text-base font-black">
-                  {result.rankLabel || fallbackRankLabel(result.rank)}
-                </div>
-
-                <div className="mt-2 text-sm text-white/65">
-                  {result.scoreExplanation ||
-                    `${result.score}/100 は即売確率ではなく、価格・画像・説明文・市場価値・類似データを合わせた総合診断値です。`}
-                </div>
-
-                <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
-                  <InfoCard label="売れ行き目安" value={result.sellSpeedLabel || "—"} />
-                  <InfoCard label="市場タイプ" value={result.marketTypeLabel || "—"} />
-                  <InfoCard label="データ信頼度" value={result.confidenceLabel || "—"} />
-                </div>
-
-                <div className="mt-3 text-lg font-black">{result.action}</div>
-              </div>
-
-              <SellCheckInsightPanel result={result} listedPrice={price} />
+              <SellCheckCurrentResultDashboard
+                result={result}
+                imageUrl={sourceMode === "draft" ? selectedDraft?.imageUrl : previewUrls[0]}
+                title={title}
+                listedPrice={price}
+              />
 
               <div className="rounded-2xl border border-white/10 bg-black/35 p-4">
                 <div className="text-sm font-bold text-white/55">推奨価格帯</div>
@@ -2286,15 +2520,17 @@ export default function SellCheckPage() {
         logs={diagnosisLogs}
         loading={diagnosisLogsLoading}
         error={diagnosisLogsError}
+        deletingId={deletingDiagnosisLogId}
         onReload={() => loadDiagnosisLogs()}
         onSelect={(log) => setSelectedDiagnosisLog(log)}
+        onDelete={(log) => deleteDiagnosisLog(log)}
       />
 
       {selectedDiagnosisLog ? (
         <DiagnosisDetailPopup log={selectedDiagnosisLog} onClose={() => setSelectedDiagnosisLog(null)} />
       ) : null}
 
-      <section className="rounded-3xl border border-white/10 bg-black/30 p-5">
+      <section className="soft-panel rounded-3xl border bg-black/30 p-5">
         <div className="mb-4">
           <div className="text-lg font-black">3. 学習状況 管理パネル</div>
           <div className="mt-1 text-sm text-white/60">
