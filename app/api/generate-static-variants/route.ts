@@ -6,10 +6,6 @@ import { buildAoiFlowGenerationMarketContext } from "@/lib/marketFusion";
 
 export const runtime = "nodejs";
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY!,
-});
-
 type Purpose = "sales" | "branding" | "trust" | "story";
 type StrategyType = "direct" | "branding" | "proof";
 
@@ -109,7 +105,9 @@ export async function POST(req: NextRequest) {
     });
 
     if (!vision) return bad("vision is required");
-    if (!process.env.OPENAI_API_KEY) return bad("OPENAI_API_KEY missing", 500);
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) return bad("OPENAI_API_KEY missing", 500);
+    const openai = new OpenAI({ apiKey });
 
     // =========================
     // ③ OpenAI生成（3戦略固定）

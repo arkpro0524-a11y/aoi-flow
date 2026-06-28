@@ -1,0 +1,36 @@
+name: aoi-flow-cutout-engine-v3
+
+services:
+  cutout-engine-v3:
+    build:
+      context: ./cutout-engine-v3
+      dockerfile: Dockerfile
+    image: aoi-flow-cutout-engine-v3:latest
+    container_name: aoi-flow-cutout-engine-v3
+    environment:
+      CUTOUT_ENGINE_ORDER: birefnet
+      CUTOUT_READY_ON_START: "true"
+      CUTOUT_MAX_IMAGE_SIDE: "2200"
+      CUTOUT_MIN_QUALITY: "35"
+      BIREFNET_INFERENCE_SIZE: "1024"
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import json,urllib.request; d=json.load(urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3)); raise SystemExit(0 if d.get('ready') is True and d.get('provider') == 'docker' and d.get('version') == 'v3' else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    restart: unless-stopped
+
+  burn-api:
+    profiles:
+      - video
+    build:
+      context: ./burn-api
+      dockerfile: Dockerfile
+    image: aoi-flow-burn-api:latest
+    container_name: aoi-flow-burn-api
+    ports:
+      - "8088:8088"
+    restart: unless-stopped

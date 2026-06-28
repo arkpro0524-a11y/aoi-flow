@@ -13,13 +13,50 @@ import {
 } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
 
+const fallbackProjectId = "aoi-flow-local-build";
+
+type FirebaseConfigKey =
+  | "NEXT_PUBLIC_FIREBASE_API_KEY"
+  | "NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN"
+  | "NEXT_PUBLIC_FIREBASE_PROJECT_ID"
+  | "NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET"
+  | "NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID"
+  | "NEXT_PUBLIC_FIREBASE_APP_ID";
+
+const requiredFirebaseEnv: FirebaseConfigKey[] = [
+  "NEXT_PUBLIC_FIREBASE_API_KEY",
+  "NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN",
+  "NEXT_PUBLIC_FIREBASE_PROJECT_ID",
+  "NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET",
+  "NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID",
+  "NEXT_PUBLIC_FIREBASE_APP_ID",
+];
+
+const missingFirebaseEnv = requiredFirebaseEnv.filter((key) => !process.env[key]);
+const usingBuildFallback = missingFirebaseEnv.length > 0;
+
+if (usingBuildFallback && typeof window !== "undefined" && process.env.NODE_ENV === "production") {
+  throw new Error(
+    `Firebase environment variables are missing in production: ${missingFirebaseEnv.join(", ")}`
+  );
+}
+
 const firebaseConfig = {
-  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY!,
-  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN!,
-  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID!,
-  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET!,
-  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID!,
-  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID!,
+  apiKey:
+    process.env.NEXT_PUBLIC_FIREBASE_API_KEY ||
+    "AIzaSyDUMMY_LOCAL_BUILD_KEY_DO_NOT_USE",
+  authDomain:
+    process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN ||
+    `${fallbackProjectId}.firebaseapp.com`,
+  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || fallbackProjectId,
+  storageBucket:
+    process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET ||
+    `${fallbackProjectId}.appspot.com`,
+  messagingSenderId:
+    process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID || "000000000000",
+  appId:
+    process.env.NEXT_PUBLIC_FIREBASE_APP_ID ||
+    "1:000000000000:web:0000000000000000000000",
 };
 
 const app = getApps().length ? getApps()[0] : initializeApp(firebaseConfig);

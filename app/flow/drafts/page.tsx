@@ -446,395 +446,456 @@ export default function DraftsPage() {
   return (
     <>
       <style jsx>{`
-        .cardPC {
-          display: none;
-        }
-        .cardMobile {
-          display: block;
-        }
-
-        @media (min-width: 1024px) {
-          .cardPC {
-            display: block;
-          }
-          .cardMobile {
-            display: none;
-          }
+        .draftsShell {
+          min-height: 100%;
+          padding: 18px 22px 24px;
+          color: rgba(255, 255, 255, 0.94);
         }
 
-        .mWrap {
-          padding: ${CARD_PAD}px;
+        .draftsHeader {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 18px;
+          padding: 2px 2px 20px;
+        }
+
+        .draftsTitle {
+          font-size: ${HEADER_TITLE_PX}px;
+          line-height: 1.2;
+          font-weight: 900;
+          letter-spacing: 0.02em;
+        }
+
+        .draftsLead {
+          margin-top: 5px;
+          font-size: 13px;
+          color: rgba(255, 255, 255, 0.62);
+        }
+
+        .draftsPanel {
+          border: 1px solid rgba(148, 199, 255, 0.14);
+          border-radius: 18px;
+          background:
+            radial-gradient(circle at 20% 0%, rgba(28, 79, 130, 0.24), transparent 38%),
+            linear-gradient(180deg, rgba(6, 28, 50, 0.64), rgba(3, 20, 37, 0.5));
+          box-shadow: 0 24px 70px rgba(0, 0, 0, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+          padding: 16px 20px 30px;
+        }
+
+        .draftsToolbar {
           display: grid;
-          grid-template-columns: 1fr;
-          gap: 10px;
+          grid-template-columns: minmax(360px, 508px) 1fr;
+          gap: 18px;
+          align-items: center;
         }
-        .mTop {
+
+        .phaseTabs {
+          display: grid;
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+          overflow: hidden;
+          border-radius: 10px;
+          border: 1px solid rgba(255, 255, 255, 0.11);
+          background: rgba(3, 18, 34, 0.34);
+        }
+
+        .phaseTab {
+          min-height: 44px;
+          border-right: 1px solid rgba(255, 255, 255, 0.08);
+          font-size: 14px;
+          font-weight: 800;
+          color: rgba(255, 255, 255, 0.7);
+          transition: 160ms ease;
+        }
+
+        .phaseTab:last-child {
+          border-right: 0;
+        }
+
+        .phaseTabActive {
+          background: linear-gradient(180deg, rgba(37, 99, 235, 0.78), rgba(29, 78, 216, 0.72));
+          color: white;
+          box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), 0 10px 28px rgba(37, 99, 235, 0.26);
+        }
+
+        .rightTools {
+          display: flex;
+          justify-content: flex-end;
+          align-items: center;
+          gap: 10px;
+          flex-wrap: wrap;
+        }
+
+        .viewPill {
+          display: inline-flex;
+          align-items: center;
+          overflow: hidden;
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          border-radius: 8px;
+          background: rgba(6, 26, 47, 0.54);
+        }
+
+        .viewButton {
+          height: 40px;
+          min-width: 46px;
+          padding: 0 12px;
+          border-right: 1px solid rgba(255, 255, 255, 0.08);
+          color: rgba(255, 255, 255, 0.62);
+          font-size: 12px;
+          font-weight: 900;
+        }
+
+        .viewButton:last-child {
+          border-right: 0;
+        }
+
+        .viewButtonActive {
+          background: rgba(37, 99, 235, 0.35);
+          color: white;
+          box-shadow: inset 0 0 0 1px rgba(96, 165, 250, 0.42);
+        }
+
+        .countRow {
           display: flex;
           align-items: center;
           justify-content: space-between;
-          gap: 12px;
+          gap: 16px;
+          margin-top: 18px;
+          color: rgba(255, 255, 255, 0.9);
+          font-size: 15px;
+          font-weight: 800;
         }
-        .mPlate {
-          height: 56px;
-          width: 100%;
+
+        .draftGrid {
+          margin-top: 26px;
+          display: grid;
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+          gap: 20px;
         }
-        .mThumb {
-          width: 100%;
-          aspect-ratio: 1 / 1;
-          height: auto;
+
+        .draftCard {
+          position: relative;
+          overflow: hidden;
+          border-radius: 8px;
+          border: 1px solid rgba(148, 199, 255, 0.16);
+          background: rgba(8, 35, 61, 0.78);
+          box-shadow: 0 15px 40px rgba(0, 0, 0, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+          transition: 160ms ease;
         }
-        .mCaption {
-          font-size: 16px;
-          line-height: 1.25;
+
+        .draftCard:hover {
+          transform: translateY(-1px);
+          border-color: rgba(96, 165, 250, 0.38);
+          background: rgba(10, 42, 72, 0.86);
+        }
+
+        .cardImageLink {
+          position: relative;
+          height: ${THUMB_BOX}px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          overflow: hidden;
+          background: rgba(255, 255, 255, 0.055);
+        }
+
+        .phaseBadge {
+          position: absolute;
+          left: 12px;
+          top: 12px;
+          z-index: 2;
+          border-radius: 999px;
+          padding: 5px 12px;
+          font-size: 12px;
+          line-height: 1;
           font-weight: 900;
-          color: rgba(255, 255, 255, 0.95);
+          color: white;
+          box-shadow: 0 8px 22px rgba(0, 0, 0, 0.2);
+        }
+
+        .phaseBadgeDraft {
+          background: rgba(37, 99, 235, 0.92);
+        }
+
+        .phaseBadgeReady {
+          background: rgba(217, 119, 6, 0.95);
+        }
+
+        .phaseBadgePosted {
+          background: rgba(22, 163, 74, 0.95);
+        }
+
+        .cardBody {
+          padding: 16px 18px 16px;
+        }
+
+        .cardTitle {
+          display: block;
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          color: rgba(255, 255, 255, 0.96);
+          font-size: 16px;
+          line-height: 1.35;
+          font-weight: 900;
+        }
+
+        .cardMeta {
+          margin-top: 7px;
+          color: rgba(255, 255, 255, 0.58);
+          font-size: 13px;
+          line-height: 1.35;
           white-space: nowrap;
           overflow: hidden;
           text-overflow: ellipsis;
         }
 
-        .pcWrap {
-          height: ${CARD_H}px;
-          padding: ${CARD_PAD}px;
+        .cardActions {
+          margin-top: 12px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+        }
+
+        .actionCluster {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          flex-wrap: wrap;
+        }
+
+        .smallActionButton {
+          border-radius: 999px;
+          border: 1px solid rgba(255, 255, 255, 0.13);
+          background: rgba(255, 255, 255, 0.07);
+          padding: 6px 10px;
+          font-size: 11px;
+          font-weight: 900;
+          color: rgba(255, 255, 255, 0.8);
+          transition: 160ms ease;
+        }
+
+        .smallActionButton:hover {
+          background: rgba(255, 255, 255, 0.14);
+        }
+
+        .smallActionButton:disabled {
+          opacity: 0.4;
+        }
+
+        .listStack {
+          margin-top: 20px;
           display: grid;
-          grid-template-columns: ${BRAND_W}px ${THUMB_BOX}px 1fr 168px;
-          column-gap: ${COL_GAP}px;
+          gap: 10px;
+        }
+
+        .listItem {
+          border-radius: 12px;
+          border: 1px solid rgba(148, 199, 255, 0.14);
+          background: rgba(8, 35, 61, 0.68);
+          padding: 12px;
+          display: grid;
+          grid-template-columns: 76px minmax(0, 1fr) auto;
+          gap: 14px;
           align-items: center;
         }
-        .pcCaption {
-          font-size: ${TITLE_PX}px;
-          line-height: 1.15;
-          font-weight: 900;
-          color: rgba(255, 255, 255, 0.95);
-          white-space: nowrap;
+
+        .listThumb {
+          height: 76px;
+          width: 76px;
           overflow: hidden;
-          text-overflow: ellipsis;
+          border-radius: 10px;
+          background: rgba(255, 255, 255, 0.06);
+          display: flex;
+          align-items: center;
+          justify-content: center;
         }
-        .listWrap {
-          min-height: 92px;
+
+        .compactItem {
+          border-radius: 12px;
+          border: 1px solid rgba(148, 199, 255, 0.14);
+          background: rgba(8, 35, 61, 0.68);
           padding: 12px 14px;
           display: grid;
-          grid-template-columns: 76px 1fr 168px;
-          gap: 12px;
-          align-items: center;
-        }
-        .compactWrap {
-          min-height: 52px;
-          padding: 10px 14px;
-          display: grid;
-          grid-template-columns: 1fr 168px;
+          grid-template-columns: minmax(0, 1fr) auto;
           gap: 12px;
           align-items: center;
         }
 
-        @media (max-width: 820px) {
-          .listWrap,
-          .compactWrap,
-          .pcWrap {
-            grid-template-columns: 1fr !important;
-            height: auto !important;
-            min-height: 0 !important;
-          }
-          .cardPC {
-            display: none !important;
-          }
-          .cardMobile {
-            display: block !important;
-          }
-          .mCaption,
-          .pcCaption {
-            white-space: normal !important;
-            overflow-wrap: anywhere !important;
+        @media (max-width: 1280px) {
+          .draftGrid {
+            grid-template-columns: repeat(3, minmax(0, 1fr));
           }
         }
 
+        @media (max-width: 980px) {
+          .draftsShell {
+            padding: 14px;
+          }
+
+          .draftsHeader,
+          .draftsToolbar {
+            grid-template-columns: 1fr;
+          }
+
+          .rightTools {
+            justify-content: flex-start;
+          }
+
+          .draftGrid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+        }
+
+        @media (max-width: 640px) {
+          .draftsPanel {
+            padding: 12px;
+          }
+
+          .phaseTabs {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+
+          .draftGrid {
+            grid-template-columns: 1fr;
+          }
+
+          .listItem,
+          .compactItem {
+            grid-template-columns: 1fr;
+          }
+        }
       `}</style>
 
-      <div className="h-full flex flex-col">
-        <div
-          className="shrink-0 border-b border-white/10 bg-black/10 rounded-2xl"
-          style={{ padding: PAGE_PAD }}
-        >
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <div style={{ fontSize: HEADER_TITLE_PX, fontWeight: 900 }}>
-                下書き一覧
-              </div>
-              <div className="text-sm text-white/60 mt-1">
-                下書き管理：{filteredRows.length} / {rows.length} 件表示 / 題名は商品名を優先表示
-              </div>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2">
-              <button type="button" onClick={() => setPhaseFilter("all")} className={`rounded-full border px-3 py-2 text-xs font-black transition ${phaseButtonClass("all")}`}>すべて {phaseCounts.all}</button>
-              <button type="button" onClick={() => setPhaseFilter("draft")} className={`rounded-full border px-3 py-2 text-xs font-black transition ${phaseButtonClass("draft")}`}>作成中 {phaseCounts.draft}</button>
-              <button type="button" onClick={() => setPhaseFilter("ready")} className={`rounded-full border px-3 py-2 text-xs font-black transition ${phaseButtonClass("ready")}`}>投稿中 {phaseCounts.ready}</button>
-              <button type="button" onClick={() => setPhaseFilter("posted")} className={`rounded-full border px-3 py-2 text-xs font-black transition ${phaseButtonClass("posted")}`}>投稿済み {phaseCounts.posted}</button>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setViewMode("card")}
-                className={`rounded-full border px-3 py-2 text-xs font-black transition ${
-                  viewMode === "card"
-                    ? "border-emerald-200/50 bg-emerald-300/20 text-white"
-                    : "border-white/15 bg-white/10 text-white/70 hover:bg-white/20"
-                }`}
-              >
-                カード
-              </button>
-              <button
-                type="button"
-                onClick={() => setViewMode("list")}
-                className={`rounded-full border px-3 py-2 text-xs font-black transition ${
-                  viewMode === "list"
-                    ? "border-emerald-200/50 bg-emerald-300/20 text-white"
-                    : "border-white/15 bg-white/10 text-white/70 hover:bg-white/20"
-                }`}
-              >
-                リスト
-              </button>
-              <button
-                type="button"
-                onClick={() => setViewMode("compact")}
-                className={`rounded-full border px-3 py-2 text-xs font-black transition ${
-                  viewMode === "compact"
-                    ? "border-emerald-200/50 bg-emerald-300/20 text-white"
-                    : "border-white/15 bg-white/10 text-white/70 hover:bg-white/20"
-                }`}
-              >
-                コンパクト
-              </button>
+      <div className="draftsShell">
+        <div className="draftsHeader">
+          <div>
+            <div className="draftsTitle">下書き一覧</div>
+            <div className="draftsLead">
+              下書き管理：{filteredRows.length} / {rows.length} 件表示 / 題名は商品名を優先表示
             </div>
           </div>
         </div>
 
-        <div className="overflow-y-auto space-y-3" style={{ padding: PAGE_PAD }}>
+        <div className="draftsPanel">
+          <div className="draftsToolbar">
+            <div className="phaseTabs">
+              <button type="button" onClick={() => setPhaseFilter("all")} className={`phaseTab ${phaseFilter === "all" ? "phaseTabActive" : ""}`}>すべて {phaseCounts.all}</button>
+              <button type="button" onClick={() => setPhaseFilter("draft")} className={`phaseTab ${phaseFilter === "draft" ? "phaseTabActive" : ""}`}>作成中 {phaseCounts.draft}</button>
+              <button type="button" onClick={() => setPhaseFilter("ready")} className={`phaseTab ${phaseFilter === "ready" ? "phaseTabActive" : ""}`}>投稿中 {phaseCounts.ready}</button>
+              <button type="button" onClick={() => setPhaseFilter("posted")} className={`phaseTab ${phaseFilter === "posted" ? "phaseTabActive" : ""}`}>投稿済み {phaseCounts.posted}</button>
+            </div>
+
+            <div className="rightTools">
+              <div className="viewPill">
+                <button type="button" onClick={() => setViewMode("card")} className={`viewButton ${viewMode === "card" ? "viewButtonActive" : ""}`}>カード</button>
+                <button type="button" onClick={() => setViewMode("list")} className={`viewButton ${viewMode === "list" ? "viewButtonActive" : ""}`}>リスト</button>
+                <button type="button" onClick={() => setViewMode("compact")} className={`viewButton ${viewMode === "compact" ? "viewButtonActive" : ""}`}>コンパクト</button>
+              </div>
+            </div>
+          </div>
+
+          <div className="countRow">
+            <div>全 {filteredRows.length} 件</div>
+          </div>
+
           {filteredRows.length === 0 ? (
-            <div className="rounded-2xl border border-white/10 bg-black/10 p-5 text-sm text-white/75">
+            <div className="mt-6 rounded-2xl border border-white/10 bg-black/10 p-5 text-sm text-white/75">
               下書きがまだありません。
             </div>
+          ) : viewMode === "list" ? (
+            <div className="listStack">
+              {filteredRows.map((d, index) => {
+                const displayTitle = resolveDisplayTitle(d);
+
+                return (
+                  <div key={d.id} className="listItem">
+                    <Link href={`/flow/drafts/new?id=${encodeURIComponent(d.id)}`} className="listThumb">
+                      {renderThumb(d, true)}
+                    </Link>
+
+                    <Link href={`/flow/drafts/new?id=${encodeURIComponent(d.id)}`} className="min-w-0">
+                      <div className="cardTitle">{displayTitle}</div>
+                      <div className="cardMeta">
+                        {d.brand.toUpperCase()} / {phaseLabel(d.phase)} / {d.ecTitle ? "商品名" : d.title ? "題名" : d.caption_final ? "生成文" : "未入力"}
+                      </div>
+                    </Link>
+
+                    <div className="actionCluster justify-end">
+                      {renderOrderButtons(d, index)}
+                      {renderPhaseButtons(d)}
+                      <button type="button" disabled={deleteBusyId === d.id} onClick={() => void softDeleteDraft(d.id)} className="smallActionButton">非表示</button>
+                      {isAdmin ? (
+                        <button type="button" disabled={deleteBusyId === d.id} onClick={() => void hardDeleteDraft(d.id)} className="smallActionButton border-red-300/25 bg-red-500/15 text-red-100">完全削除</button>
+                      ) : null}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : viewMode === "compact" ? (
+            <div className="listStack">
+              {filteredRows.map((d, index) => {
+                const displayTitle = resolveDisplayTitle(d);
+
+                return (
+                  <div key={d.id} className="compactItem">
+                    <Link href={`/flow/drafts/new?id=${encodeURIComponent(d.id)}`} className="cardTitle">
+                      {displayTitle}
+                    </Link>
+
+                    <div className="actionCluster justify-end">
+                      {renderOrderButtons(d, index)}
+                      {renderPhaseButtons(d)}
+                      <button type="button" disabled={deleteBusyId === d.id} onClick={() => void softDeleteDraft(d.id)} className="smallActionButton">非表示</button>
+                      {isAdmin ? (
+                        <button type="button" disabled={deleteBusyId === d.id} onClick={() => void hardDeleteDraft(d.id)} className="smallActionButton border-red-300/25 bg-red-500/15 text-red-100">完全削除</button>
+                      ) : null}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           ) : (
-            filteredRows.map((d, index) => {
-              const displayTitle = resolveDisplayTitle(d);
+            <div className="draftGrid">
+              {filteredRows.map((d, index) => {
+                const displayTitle = resolveDisplayTitle(d);
+                const badgeClass = d.phase === "ready" ? "phaseBadgeReady" : d.phase === "posted" ? "phaseBadgePosted" : "phaseBadgeDraft";
 
-              if (viewMode === "list") {
                 return (
-                  <div
-                    key={d.id}
-                    className="group rounded-2xl border border-white/12 bg-black/10 transition hover:bg-black/20"
-                  >
-                    <div className="listWrap">
-                      <Link
-                        href={`/flow/drafts/new?id=${encodeURIComponent(d.id)}`}
-                        className="h-[76px] w-[76px] rounded-xl bg-white/6 overflow-hidden flex items-center justify-center ring-1 ring-white/10"
-                      >
-                        {renderThumb(d, true)}
-                      </Link>
+                  <div key={d.id} className="draftCard">
+                    <Link href={`/flow/drafts/new?id=${encodeURIComponent(d.id)}`} className="cardImageLink">
+                      <span className={`phaseBadge ${badgeClass}`}>{phaseLabel(d.phase)}</span>
+                      {renderThumb(d)}
+                    </Link>
 
-                      <Link
-                        href={`/flow/drafts/new?id=${encodeURIComponent(d.id)}`}
-                        className="min-w-0"
-                      >
-                        <div className="text-lg font-black text-white/95 truncate">
-                          {displayTitle}
-                        </div>
-                        <div className="mt-1 text-xs text-white/50 truncate">
-                          {d.brand.toUpperCase()} / {phaseLabel(d.phase)} / {d.ecTitle ? "商品名" : d.title ? "題名" : d.caption_final ? "生成文" : "未入力"}
-                        </div>
-                      </Link>
-
-                      <div className="flex items-center justify-end gap-2">
-                        {renderOrderButtons(d, index)}
-                        {renderPhaseButtons(d)}
-                        <button
-                          type="button"
-                          disabled={deleteBusyId === d.id}
-                          onClick={() => void softDeleteDraft(d.id)}
-                          className="rounded-full border border-white/15 bg-white/10 px-3 py-2 text-xs font-black text-white/80 transition hover:bg-white/20 disabled:opacity-50"
-                        >
-                          非表示
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                );
-              }
-
-              if (viewMode === "compact") {
-                return (
-                  <div
-                    key={d.id}
-                    className="group rounded-2xl border border-white/12 bg-black/10 transition hover:bg-black/20"
-                  >
-                    <div className="compactWrap">
-                      <Link
-                        href={`/flow/drafts/new?id=${encodeURIComponent(d.id)}`}
-                        className="min-w-0"
-                      >
-                        <div className="text-base font-black text-white/95 truncate">
-                          {displayTitle}
-                        </div>
-                      </Link>
-
-                      <div className="flex items-center justify-end gap-2">
-                        {renderOrderButtons(d, index)}
-                        {renderPhaseButtons(d)}
-                        <button
-                          type="button"
-                          disabled={deleteBusyId === d.id}
-                          onClick={() => void softDeleteDraft(d.id)}
-                          className="rounded-full border border-white/15 bg-white/10 px-3 py-2 text-xs font-black text-white/80 transition hover:bg-white/20 disabled:opacity-50"
-                        >
-                          非表示
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                );
-              }
-
-              return (
-                <div
-                  key={d.id}
-                  className="group rounded-2xl border border-white/12 bg-black/10 transition hover:bg-black/20"
-                >
-                  <div className="cardPC">
-                    <div className="pcWrap">
-                      <Link
-                        href={`/flow/drafts/new?id=${encodeURIComponent(d.id)}`}
-                        className={PLATE_CLASS}
-                        style={{ height: PLATE_H }}
-                      >
-                        <span
-                          style={{
-                            fontSize: BRAND_PX,
-                            fontWeight: 900,
-                            letterSpacing: "0.30em",
-                            color: "#000",
-                          }}
-                        >
-                          {d.brand.toUpperCase()}
-                        </span>
-                      </Link>
-
-                      <Link
-                        href={`/flow/drafts/new?id=${encodeURIComponent(d.id)}`}
-                        className="rounded-xl bg-white/6 overflow-hidden flex items-center justify-center ring-1 ring-white/10"
-                        style={{
-                          width: THUMB_BOX,
-                          height: THUMB_BOX,
-                          padding: THUMB_PAD,
-                        }}
-                      >
-                        {renderThumb(d)}
-                      </Link>
-
-                      <Link
-                        href={`/flow/drafts/new?id=${encodeURIComponent(d.id)}`}
-                        style={{ minWidth: 0 }}
-                      >
-                        <div className="pcCaption">{displayTitle}</div>
-                        <div className="mt-2 text-xs text-white/50 truncate">
-                          {d.ecTitle ? "EC商品タイトルを表示" : d.title ? "下書きタイトルを表示" : d.caption_final ? "生成文章を表示" : "商品名未入力"}
-                        </div>
-                      </Link>
-
-                      <div className="flex items-center justify-end gap-2">
-                        {renderOrderButtons(d, index)}
-                        {renderPhaseButtons(d)}
-
-                        <button
-                          type="button"
-                          disabled={deleteBusyId === d.id}
-                          onClick={() => void softDeleteDraft(d.id)}
-                          className="rounded-full border border-white/15 bg-white/10 px-3 py-2 text-xs font-black text-white/80 transition hover:bg-white/20 disabled:opacity-50"
-                        >
-                          非表示
-                        </button>
-
-                        {isAdmin ? (
-                          <button
-                            type="button"
-                            disabled={deleteBusyId === d.id}
-                            onClick={() => void hardDeleteDraft(d.id)}
-                            className="rounded-full border border-red-300/25 bg-red-500/15 px-3 py-2 text-xs font-black text-red-100 transition hover:bg-red-500/25 disabled:opacity-50"
-                          >
-                            完全削除
-                          </button>
-                        ) : null}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="cardMobile">
-                    <div className="mWrap">
-                      <Link
-                        href={`/flow/drafts/new?id=${encodeURIComponent(d.id)}`}
-                        className="mTop"
-                      >
-                        <div className={`${PLATE_CLASS} mPlate`}>
-                          <span
-                            style={{
-                              fontSize: 16,
-                              fontWeight: 900,
-                              letterSpacing: "0.25em",
-                              color: "#000",
-                            }}
-                          >
-                            {d.brand.toUpperCase()}
-                          </span>
-                        </div>
-                        <div className="text-xl text-white/35 group-hover:text-white/80 transition text-right">
-                          →
-                        </div>
-                      </Link>
-
-                      <Link
-                        href={`/flow/drafts/new?id=${encodeURIComponent(d.id)}`}
-                        className="mThumb rounded-xl bg-white/6 overflow-hidden flex items-center justify-center ring-1 ring-white/10"
-                        style={{ padding: THUMB_PAD }}
-                      >
-                        {renderThumb(d)}
-                      </Link>
-
-                      <Link
-                        href={`/flow/drafts/new?id=${encodeURIComponent(d.id)}`}
-                        className="mCaption"
-                      >
+                    <div className="cardBody">
+                      <Link href={`/flow/drafts/new?id=${encodeURIComponent(d.id)}`} className="cardTitle">
                         {displayTitle}
                       </Link>
+                      <div className="cardMeta">
+                        {d.ecTitle ? "EC商品タイトルを表示" : d.title ? "下書きタイトルを表示" : d.caption_final ? "生成文章を表示" : "商品名未入力"}
+                      </div>
 
-                      <div className="flex flex-wrap gap-2">
-                        {renderOrderButtons(d, index)}
-                        {renderPhaseButtons(d)}
-
-                        <button
-                          type="button"
-                          disabled={deleteBusyId === d.id}
-                          onClick={() => void softDeleteDraft(d.id)}
-                          className="rounded-full border border-white/15 bg-white/10 px-3 py-2 text-xs font-black text-white/80 transition hover:bg-white/20 disabled:opacity-50"
-                        >
-                          非表示
-                        </button>
-
-                        {isAdmin ? (
-                          <button
-                            type="button"
-                            disabled={deleteBusyId === d.id}
-                            onClick={() => void hardDeleteDraft(d.id)}
-                            className="rounded-full border border-red-300/25 bg-red-500/15 px-3 py-2 text-xs font-black text-red-100 transition hover:bg-red-500/25 disabled:opacity-50"
-                          >
-                            完全削除
-                          </button>
-                        ) : null}
+                      <div className="cardActions">
+                        <div className="actionCluster">
+                          {renderOrderButtons(d, index)}
+                          {renderPhaseButtons(d)}
+                        </div>
+                        <div className="actionCluster justify-end">
+                          <button type="button" disabled={deleteBusyId === d.id} onClick={() => void softDeleteDraft(d.id)} className="smallActionButton">非表示</button>
+                          {isAdmin ? (
+                            <button type="button" disabled={deleteBusyId === d.id} onClick={() => void hardDeleteDraft(d.id)} className="smallActionButton border-red-300/25 bg-red-500/15 text-red-100">完全削除</button>
+                          ) : null}
+                        </div>
                       </div>
                     </div>
                   </div>
-                </div>
-              );
-            })
+                );
+              })}
+            </div>
           )}
         </div>
       </div>

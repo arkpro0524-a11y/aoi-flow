@@ -1,0 +1,53 @@
+# AOI FLOW Cutout Docker v2
+#
+# 使い方:
+# 1) 軽量・通常用 rembg最新版構成
+#    docker compose -f docker-compose.cutout.yml up --build cutout-rembg
+#
+# 2) 高品質検証用 BiRefNet構成
+#    docker compose -f docker-compose.cutout.yml --profile quality up --build cutout-birefnet
+#
+# Next.js側の.env.local:
+# 通常Dockerを使う場合:
+#   CUTOUT_PROVIDER=docker
+#   CUTOUT_API_URL=http://localhost:8080/cutout
+#
+# BiRefNetを試す場合:
+#   CUTOUT_PROVIDER=docker
+#   CUTOUT_API_URL=http://localhost:8081/cutout
+#
+services:
+  cutout-rembg:
+    build:
+      context: ./cutout-api-rembg
+    container_name: aoi-flow-cutout-rembg
+    ports:
+      - "8080:8080"
+    environment:
+      # 商品向けに従来u2netではなく isnet-general-use を標準にします。
+      CUTOUT_REMBG_MODEL: isnet-general-use
+      CUTOUT_MAX_IMAGE_SIDE: "2400"
+    volumes:
+      # モデルを毎回ダウンロードしないためのキャッシュです。
+      - cutout-rembg-cache:/root/.u2net
+    restart: unless-stopped
+
+  cutout-birefnet:
+    profiles: ["quality"]
+    build:
+      context: ./cutout-api-birefnet
+    container_name: aoi-flow-cutout-birefnet
+    ports:
+      - "8081:8081"
+    environment:
+      BIREFNET_MODEL_ID: ZhengPeng7/BiRefNet
+      BIREFNET_INFERENCE_SIZE: "1024"
+      CUTOUT_MAX_IMAGE_SIDE: "1800"
+    volumes:
+      # Hugging Faceモデルキャッシュです。
+      - cutout-hf-cache:/root/.cache/huggingface
+    restart: unless-stopped
+
+volumes:
+  cutout-rembg-cache:
+  cutout-hf-cache:

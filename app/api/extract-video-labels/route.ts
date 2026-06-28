@@ -5,11 +5,14 @@ import OpenAI from "openai";
 import { requireUserFromAuthHeader } from "@/app/api/_firebase/admin";
 import type { VideoLabels } from "@/lib/videoDecision/labels";
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
-
 export async function POST(req: Request) {
   await requireUserFromAuthHeader(req);
   const { vision, keywords } = await req.json();
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    return NextResponse.json({ error: "OPENAI_API_KEY missing" }, { status: 500 });
+  }
+  const openai = new OpenAI({ apiKey });
 
   const res = await openai.chat.completions.create({
     model: "gpt-4o-mini",
